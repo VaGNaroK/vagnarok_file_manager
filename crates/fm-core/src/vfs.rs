@@ -1,0 +1,39 @@
+use std::path::{Path, PathBuf};
+
+use thiserror::Error;
+use tokio_util::sync::CancellationToken;
+
+use crate::domain::{DirectorySnapshot, DriveInfo, VolumeSpace};
+
+/// Erros de sistema de arquivos tratados de forma explícita na camada de UI.
+#[derive(Debug, Error, Clone)]
+pub enum FsError {
+    #[error("caminho não encontrado: {0}")]
+    NotFound(PathBuf),
+    #[error("permissão negada ao acessar: {0}")]
+    PermissionDenied(PathBuf),
+    #[error("operação cancelada")]
+    Cancelled,
+    #[error("falha de I/O em {path}: {message}")]
+    Io { path: PathBuf, message: String },
+}
+
+/// Abstração assíncrona de sistema de arquivos (LocalFs hoje; ArchiveVfs / SftpVfs no futuro).
+#[async_trait::async_trait]
+pub trait VfsProvider: Send + Sync {
+    async fn list_dir(
+        &self,
+        path: &Path,
+        request_id: u64,
+        cancel: CancellationToken,
+    ) -> Result<DirectorySnapshot, FsError>;
+
+    async fn list_drives(&self) -> Result<Vec<DriveInfo>, FsError>;
+    async fn volume_space(&self, path: &Path) -> Result<Option<VolumeSpace>, FsError>;
+    async fn create_dir(&self, path: &Path) -> Result<(), FsError>;
+    async fn create_file(&self, path: &Path) -> Result<(), FsError>;
+    async fn rename(&self, from: &Path, to: &Path) -> Result<(), FsError>;
+    async fn move_to_trash(&self, paths: &[PathBuf]) -> Result<(), FsError>;
+    async fn delete_permanent(&self, paths: &[PathBuf]) -> Result<(), FsError>;
+    async fn open_default(&self, path: &Path) -> Result<(), FsError>;
+}

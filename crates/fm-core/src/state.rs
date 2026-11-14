@@ -1,0 +1,351 @@
+use std::collections::HashSet;
+use std::path::PathBuf;
+
+use compact_str::CompactString;
+use serde::{Deserialize, Serialize};
+
+use crate::domain::{
+    DirectoryTelemetry, EntryId, FileEntry, FolderSummary, SelectedFileTelemetry, SortSpec,
+    ViewMode,
+};
+
+/// Identificador único de uma aba aberta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TabId(pub u64);
+
+/// Modificadores relevantes para regras de seleção de itens.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SelectionModifiers {
+    pub ctrl: bool,
+    pub shift: bool,
+}
+
+/// Fonte única de verdade para seleção de itens dentro de uma aba.
+#[derive(Debug, Clone, Default)]
+pub struct SelectionState {
+    pub selected_ids: HashSet<EntryId>,
+    pub anchor: Option<usize>,
+    pub focused: Option<usize>,
+}
+
+impl SelectionState {
+    /// Limpa toda a seleção e foco.
+    pub fn clear(&mut self) {
+        self.selected_ids.clear();
+        self.anchor = None;
+        self.focused = None;
+    }
+
+    /// Seleciona exatamente um índice e atualiza âncora/foco.
+    pub fn select_single(&mut self, index: usize, entries: &[FileEntry]) {
+        self.selected_ids.clear();
+        if let Some(entry) = entries.get(index) {
+            self.selected_ids.insert(entry.id);
+            self.anchor = Some(index);
+            self.focused = Some(index);
+        }
+    }
+
+    /// Aplica seleção respeitando `Ctrl` (toggle) e `Shift` (intervalo contínuo).
+    pub fn apply_click(
+        &mut self,
+        index: usize,
+        modifiers: SelectionModifiers,
+        entries: &[FileEntry],
+    ) {
+        let Some(target) = entries.get(index) else {
+            return;
+        };
+
+        if modifiers.shift {
+            let start = self.anchor.unwrap_or(index).min(index);
+            let end = self.anchor.unwrap_or(index).max(index);
+            if !modifiers.ctrl {
+                self.selected_ids.clear();
+            }
+            for item in entries.iter().take(end + 1).skip(start) {
+                self.selected_ids.insert(item.id);
+            }
+            self.focused = Some(index);
+            if self.anchor.is_none() {
+                self.anchor = Some(index);
+            }
+        } else if modifiers.ctrl {
+            if !self.selected_ids.remove(&target.id) {
+                self.selected_ids.insert(target.id);
+            }
+            self.anchor = Some(index);
+            self.focused = Some(index);
+        } else {
+            self.select_single(index, entries);
+        }
+    }
+
+    /// Retorna quantidade de itens selecionados presentes no slice atual.
+    pub fn count(&self) -> usize {
+        self.selected_ids.len()
+    }
+
+    /// Soma os tamanhos em bytes dos itens selecionados.
+    pub fn selected_bytes(&self, entries: &[FileEntry]) -> u64 {
+        entries
+            .iter()
+            .filter(|e| self.selected_ids.contains(&e.id))
+            .map(|e| e.size_bytes)
+            .fold(0u64, u64::saturating_add)
+    }
+
+    /// Retorna o único item selecionado, caso haja exatamente 1 seleção válida.
+    pub fn single_selected<'a>(&self, entries: &'a [FileEntry]) -> Option<&'a FileEntry> {
+        if self.selected_ids.len() != 1 {
+            return None;
+        }
+        let id = self.selected_ids.iter().next()?;
+        entries.iter().find(|e| e.id == *id)
+    }
+}
+
+/// Estado completo de uma aba de navegação.
+#[derive(Debug, Clone)]
+pub struct TabState {
+    pub id: TabId,
+    pub title: CompactString,
+    pub current_path: PathBuf,
+    pub history_back: Vec<PathBuf>,
+    pub history_forward: Vec<PathBuf>,
+    pub view_mode: ViewMode,
+    pub sort: SortSpec,
+    pub show_hidden: bool,
+    pub filter_query: String,
+    pub raw_entries: Vec<FileEntry>,
+    pub visible_entries: Vec<FileEntry>,
+    pub selection: SelectionState,
+    pub telemetry: DirectoryTelemetry,
+    pub selected_telemetry: Option<SelectedFileTelemetry>,
+    pub active_request_id: u64,
+    pub is_loading: bool,
+    pub last_error: Option<String>,
+}
+
+impl TabState {
+    /// Cria uma nova aba apontando para `initial_path`.
+    pub fn new(id: TabId, initial_path: PathBuf) -> Self {
+        let title = initial_path
+            .file_name()
+            .map(|n| CompactString::from(n.to_string_lossy().as_ref()))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| CompactString::from(initial_path.to_string_lossy().as_ref()));
+
+        Self {
+            id,
+            title,
+            current_path: initial_path,
+            history_back: Vec::new(),
+            history_forward: Vec::new(),
+            view_mode: ViewMode::Grid,
+            sort: SortSpec::default(),
+            show_hidden: false,
+            filter_query: String::new(),
+            raw_entries: Vec::new(),
+            visible_entries: Vec::new(),
+            selection: SelectionState::default(),
+            telemetry: DirectoryTelemetry::default(),
+            selected_telemetry: None,
+            active_request_id: 0,
+            is_loading: false,
+            last_error: None,
+        }
+    }
+
+    /// Reaplica filtro, visibilidade de ocultos e ordenação sobre `raw_entries`.
+    pub fn recompute_visible(&mut self) {
+        let query = self.filter_query.trim().to_ascii_lowercase();
+        let mut filtered: Vec<FileEntry> = self
+            .raw_entries
+            .iter()
+            .filter(|entry| self.show_hidden || !entry.is_hidden)
+            .filter(|entry| {
+                query.is_empty() || entry.name.to_ascii_lowercase().contains(&query)
+            })
+            .cloned()
+            .collect();
+
+        filtered.sort_by(|a, b| self.sort.compare(a, b));
+        self.telemetry.folder_stats = FolderSummary::from_entries(&filtered);
+        self.visible_entries = filtered;
+
+        // Remove seleções que deixaram de existir após filtro ou reload.
+        let valid_ids: HashSet<EntryId> = self.visible_entries.iter().map(|e| e.id).collect();
+        self.selection
+            .selected_ids
+            .retain(|id| valid_ids.contains(id));
+    }
+
+    /// Navega para `next_path`, registrando o atual no histórico de retorno.
+    pub fn push_navigation(&mut self, next_path: PathBuf) {
+        if self.current_path != next_path {
+            let previous = std::mem::replace(&mut self.current_path, next_path);
+            self.history_back.push(previous);
+            self.history_forward.clear();
+        }
+        self.title = self
+            .current_path
+            .file_name()
+            .map(|n| CompactString::from(n.to_string_lossy().as_ref()))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                CompactString::from(self.current_path.to_string_lossy().as_ref())
+            });
+        self.selection.clear();
+        self.selected_telemetry = None;
+        self.filter_query.clear();
+        self.last_error = None;
+    }
+
+    pub fn can_go_back(&self) -> bool {
+        !self.history_back.is_empty()
+    }
+
+    pub fn can_go_forward(&self) -> bool {
+        !self.history_forward.is_empty()
+    }
+}
+
+/// Presets oficiais de tema conforme Spec 02.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ThemePreset {
+    #[default]
+    AetherLight,
+    ObsidianFlow,
+}
+
+impl ThemePreset {
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::AetherLight => Self::ObsidianFlow,
+            Self::ObsidianFlow => Self::AetherLight,
+        }
+    }
+}
+
+/// Idiomas suportados pela camada de UI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Language {
+    #[default]
+    PtBr,
+    EnUs,
+}
+
+impl Language {
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::PtBr => Self::EnUs,
+            Self::EnUs => Self::PtBr,
+        }
+    }
+}
+
+/// Modo de decoração de janela (especialmente relevante para tiling WMs no Linux).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum WindowDecorationsMode {
+    #[default]
+    NativeWm,
+    IntegratedCsd,
+}
+
+/// Preferências persistíveis da aplicação.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppConfig {
+    pub theme: ThemePreset,
+    pub language: Language,
+    pub show_hero_card: bool,
+    pub show_inspector: bool,
+    pub sidebar_collapsed: bool,
+    pub window_decorations: WindowDecorationsMode,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            theme: ThemePreset::AetherLight,
+            language: Language::PtBr,
+            show_hero_card: true,
+            show_inspector: false,
+            sidebar_collapsed: false,
+            window_decorations: WindowDecorationsMode::NativeWm,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{EntryKind, PermissionsMeta};
+
+    fn make_entries(count: usize) -> Vec<FileEntry> {
+        (0..count)
+            .map(|i| FileEntry {
+                id: EntryId(i as u64 + 1),
+                name: CompactString::from(format!("item_{i}.txt")),
+                path: PathBuf::from(format!("/tmp/item_{i}.txt")),
+                extension: Some(CompactString::new("txt")),
+                kind: EntryKind::File,
+                size_bytes: 100 * (i as u64 + 1),
+                modified_at: None,
+                is_hidden: false,
+                permissions: PermissionsMeta::PosixMode(0o644),
+                child_count: None,
+                mime_badge: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn range_and_ctrl_selection_work_consistently() {
+        let entries = make_entries(5);
+        let mut sel = SelectionState::default();
+
+        sel.apply_click(1, SelectionModifiers::default(), &entries);
+        assert_eq!(sel.count(), 1);
+        assert_eq!(sel.selected_bytes(&entries), 200);
+
+        sel.apply_click(
+            3,
+            SelectionModifiers {
+                ctrl: false,
+                shift: true,
+            },
+            &entries,
+        );
+        assert_eq!(sel.count(), 3);
+        assert_eq!(sel.selected_bytes(&entries), 200 + 300 + 400);
+
+        sel.apply_click(
+            2,
+            SelectionModifiers {
+                ctrl: true,
+                shift: false,
+            },
+            &entries,
+        );
+        assert_eq!(sel.count(), 2);
+        assert_eq!(sel.selected_bytes(&entries), 200 + 400);
+    }
+
+    #[test]
+    fn hidden_filter_updates_visible_entries_and_clears_hidden_selection() {
+        let mut tab = TabState::new(TabId(1), PathBuf::from("/tmp"));
+        let mut entries = make_entries(2);
+        entries[1].is_hidden = true;
+        tab.raw_entries = entries;
+        tab.show_hidden = true;
+        tab.recompute_visible();
+        tab.selection.select_single(1, &tab.visible_entries);
+        assert_eq!(tab.selection.count(), 1);
+
+        tab.show_hidden = false;
+        tab.recompute_visible();
+        assert_eq!(tab.visible_entries.len(), 1);
+        assert_eq!(tab.selection.count(), 0);
+    }
+}

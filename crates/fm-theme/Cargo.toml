@@ -1,0 +1,9 @@
+[package]
+name = "fm-theme"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fm-core.workspace = true
+iced.workspace = true

@@ -1,0 +1,48 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fm-core",
+    "crates/fm-fs",
+    "crates/fm-index",
+    "crates/fm-telemetry",
+    "crates/fm-preview",
+    "crates/fm-theme",
+    "crates/fm-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.88"
+
+[workspace.dependencies]
+async-trait = "0.1"
+compact_str = { version = "0.10", features = ["serde"] }
+iced = { version = "0.14", features = ["wgpu", "tokio", "image", "svg", "advanced", "linux-theme-detection", "x11", "wayland"] }
+lucide-icons = { version = "1.72", features = ["iced"] }
+mimalloc = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+tokio = { version = "1.54", features = ["rt-multi-thread", "fs", "sync", "time"] }
+tokio-util = "0.7"
+toml = "1.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+fm-core = { path = "crates/fm-core" }
+fm-fs = { path = "crates/fm-fs" }
+fm-index = { path = "crates/fm-index" }
+fm-telemetry = { path = "crates/fm-telemetry" }
+fm-preview = { path = "crates/fm-preview" }
+fm-theme = { path = "crates/fm-theme" }
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

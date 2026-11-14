@@ -1,0 +1,19 @@
+[package]
+name = "fm-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+compact_str.workspace = true
+fm-core.workspace = true
+fm-fs.workspace = true
+fm-index.workspace = true
+fm-preview.workspace = true
+fm-telemetry.workspace = true
+fm-theme.workspace = true
+iced.workspace = true
+lucide-icons.workspace = true
+mimalloc.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
