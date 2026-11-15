@@ -74,3 +74,42 @@ pub fn entry_icon<'a>(
         }
     }
 }
+
+/// Sanitiza quebras de linha e caracteres de controle em nomes/caminhos para exibição em linha única.
+pub fn sanitize_single_line(raw: &str) -> String {
+    if !raw.chars().any(char::is_control) {
+        return raw.to_owned();
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut prev_space = false;
+    for ch in raw.chars() {
+        if ch.is_control() {
+            if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.push(ch);
+            prev_space = ch == ' ';
+        }
+    }
+    out.trim().to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_single_line;
+
+    #[test]
+    fn sanitizes_embedded_newlines_into_single_spaces() {
+        assert_eq!(
+            sanitize_single_line("Crash Team Racing\nTurbocharged"),
+            "Crash Team Racing Turbocharged"
+        );
+        assert_eq!(
+            sanitize_single_line("/home/user/Crash Team Racing \r\nTurbocharged"),
+            "/home/user/Crash Team Racing Turbocharged"
+        );
+        assert_eq!(sanitize_single_line("normal_dir"), "normal_dir");
+    }
+}

@@ -3313,10 +3313,12 @@ fn prepare_tab_for_load(tab: &mut TabState, request_id: u64) {
 }
 
 fn display_tab_title(path: &std::path::Path) -> CompactString {
-    path.file_name()
-        .map(|n| CompactString::from(n.to_string_lossy().as_ref()))
+    let raw = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| CompactString::from(path.to_string_lossy().as_ref()))
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    CompactString::from(views::sanitize_single_line(&raw))
 }
 
 fn basic_file_telemetry(entry: &fm_core::FileEntry) -> SelectedFileTelemetry {

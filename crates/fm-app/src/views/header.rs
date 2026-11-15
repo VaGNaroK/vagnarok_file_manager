@@ -12,6 +12,7 @@ use lucide_icons::iced::{
 };
 
 use crate::app::{App, Message, path_input_id, search_input_id};
+use crate::views::sanitize_single_line;
 
 pub fn view<'a>(
     app: &'a App,
@@ -50,11 +51,10 @@ fn tab_strip_row<'a>(app: &'a App, palette: ThemePalette) -> Element<'a, Message
             .style(styles::ghost_button(palette, 4.0))
             .on_press(Message::TabClose(tab_id));
 
-        let label = text(t.title.as_str()).size(12).font(if is_active {
-            FONT_UI_SEMIBOLD
-        } else {
-            FONT_UI
-        });
+        let label = text(sanitize_single_line(t.title.as_str()))
+            .size(12)
+            .font(if is_active { FONT_UI_SEMIBOLD } else { FONT_UI })
+            .wrapping(text::Wrapping::None);
 
         let tab_btn = button(row![label, close_btn].spacing(6).align_y(Center))
             .padding([4, 10])
@@ -196,7 +196,7 @@ fn navigation_row<'a>(
         .spacing(6)
         .align_y(Center),
     )
-    .width(Length::Fixed(360.0))
+    .width(Length::Fixed(310.0))
     .padding([2, 10])
     .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 9999.0));
 
@@ -288,11 +288,11 @@ fn unified_breadcrumb<'a>(
                 }
                 std::path::Component::Normal(part) => {
                     acc.push(part);
-                    Some((part.to_string_lossy().into_owned(), acc.clone()))
+                    Some((sanitize_single_line(&part.to_string_lossy()), acc.clone()))
                 }
                 std::path::Component::Prefix(prefix) => {
-                    let s = prefix.as_os_str().to_string_lossy().into_owned();
-                    acc.push(&s);
+                    let s = sanitize_single_line(&prefix.as_os_str().to_string_lossy());
+                    acc.push(prefix.as_os_str());
                     Some((s, acc.clone()))
                 }
                 _ => None,
@@ -309,7 +309,8 @@ fn unified_breadcrumb<'a>(
                     palette.text_primary
                 } else {
                     palette.text_secondary
-                });
+                })
+                .wrapping(text::Wrapping::None);
             let is_menu_open = app
                 .breadcrumb_menu
                 .as_ref()

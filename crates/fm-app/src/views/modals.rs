@@ -17,7 +17,7 @@ use lucide_icons::iced::{
 };
 
 use crate::app::{ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, dialog_input_id};
-use crate::views::entry_icon;
+use crate::views::{entry_icon, sanitize_single_line};
 
 pub fn dialog_modal<'a>(
     dialog: &'a ActiveDialog,
@@ -337,7 +337,7 @@ pub fn dialog_modal<'a>(
             let mut info_rows = column![
                 prop_row(
                     strings.location_label,
-                    entry.path.to_string_lossy().into_owned(),
+                    sanitize_single_line(&entry.path.to_string_lossy()),
                 ),
                 prop_row(strings.col_type, type_desc),
                 prop_row(strings.col_size, size_desc),
@@ -420,7 +420,7 @@ pub fn dialog_modal<'a>(
             column![
                 row![
                     icon_widget,
-                    text(entry.name.as_str())
+                    text(sanitize_single_line(entry.name.as_str()))
                         .size(16)
                         .font(FONT_UI_SEMIBOLD)
                         .color(palette.text_primary),
@@ -768,10 +768,11 @@ pub fn breadcrumb_menu_overlay<'a>(
                 button(
                     row![
                         icon_folder().size(14).color(palette.accent_primary),
-                        text(entry.name.as_str())
+                        text(sanitize_single_line(entry.name.as_str()))
                             .size(12)
                             .font(FONT_UI)
-                            .color(palette.text_primary),
+                            .color(palette.text_primary)
+                            .wrapping(text::Wrapping::None),
                     ]
                     .spacing(8)
                     .align_y(Center),
@@ -787,12 +788,13 @@ pub fn breadcrumb_menu_overlay<'a>(
     let menu_card = container(
         column![
             row![
-                text(
-                    root.file_name()
+                text(sanitize_single_line(
+                    &root
+                        .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .filter(|s| !s.is_empty())
                         .unwrap_or_else(|| root.to_string_lossy().into_owned()),
-                )
+                ))
                 .size(11)
                 .font(FONT_MONO_BOLD)
                 .color(palette.text_muted),

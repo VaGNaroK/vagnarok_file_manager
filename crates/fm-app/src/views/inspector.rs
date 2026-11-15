@@ -11,7 +11,7 @@ use iced::{ContentFit, Element, Length, Padding};
 use lucide_icons::iced::{icon_file_text, icon_folder, icon_search, icon_x};
 
 use crate::app::{App, Message, deep_search_input_id, thumbnail_key_for_entry};
-use crate::views::entry_icon;
+use crate::views::{entry_icon, sanitize_single_line};
 
 pub fn drawer<'a>(
     app: &'a App,
@@ -81,11 +81,11 @@ pub fn drawer<'a>(
                             palette.border,
                             12.0
                         )),
-                    text(entry.name.as_str())
+                    text(sanitize_single_line(entry.name.as_str()))
                         .size(15)
                         .font(FONT_UI_BOLD)
                         .color(palette.text_primary),
-                    text(entry.path.to_string_lossy().into_owned())
+                    text(sanitize_single_line(&entry.path.to_string_lossy()))
                         .size(11)
                         .font(FONT_MONO)
                         .color(palette.text_muted),
@@ -206,8 +206,8 @@ pub fn quicklook_modal<'a>(
         .and_then(|st| st.preview_snippet.as_deref());
 
     let title = entry
-        .map(|e| e.name.as_str())
-        .unwrap_or(strings.quicklook_title);
+        .map(|e| sanitize_single_line(e.name.as_str()))
+        .unwrap_or_else(|| strings.quicklook_title.to_owned());
 
     let img_handle = entry.and_then(|e| {
         app.quicklook_image
@@ -255,7 +255,7 @@ pub fn quicklook_modal<'a>(
         let (icon_widget, _) = entry_icon(e, palette, 56.0);
         column![
             icon_widget,
-            text(e.name.as_str())
+            text(sanitize_single_line(e.name.as_str()))
                 .size(16)
                 .font(FONT_UI_BOLD)
                 .color(palette.text_primary),
@@ -365,11 +365,11 @@ pub fn deep_search_modal<'a>(
             let hit_row = row![
                 icon,
                 column![
-                    text(hit.name.as_str())
+                    text(sanitize_single_line(hit.name.as_str()))
                         .size(13)
                         .font(FONT_UI_SEMIBOLD)
                         .color(palette.text_primary),
-                    text(hit.relative_path.as_str())
+                    text(sanitize_single_line(hit.relative_path.as_str()))
                         .size(11)
                         .font(FONT_MONO)
                         .color(palette.text_muted),

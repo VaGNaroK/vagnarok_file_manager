@@ -21,13 +21,13 @@ use lucide_icons::iced::{
 use crate::app::{
     App, Message, canvas_scroll_id, selected_id_set_contains, thumbnail_key_for_entry,
 };
-use crate::views::entry_icon;
 use crate::views::modals::format_transfer_summary;
 use crate::views::virtualized::{
     DETAIL_ROW_HEIGHT, DETAIL_ROW_STEP, GRID_BAND_SPACING, GRID_GAP, GridBand,
     build_tab_grid_bands, clamp_grid_card_width, compute_band_window_with_row_height,
     compute_fixed_window, grid_card_height, grid_columns_for_width,
 };
+use crate::views::{entry_icon, sanitize_single_line};
 
 pub fn view<'a>(
     app: &'a App,
@@ -151,10 +151,11 @@ fn action_bar<'a>(
     strings: Strings,
 ) -> Element<'a, Message> {
     let mut left_info = row![
-        text(tab.title.as_str())
+        text(sanitize_single_line(tab.title.as_str()))
             .size(14)
             .font(FONT_UI_SEMIBOLD)
-            .color(palette.text_primary),
+            .color(palette.text_primary)
+            .wrapping(text::Wrapping::None),
     ]
     .spacing(10)
     .align_y(Center);
@@ -527,12 +528,14 @@ fn hero_card<'a>(
     strings: Strings,
 ) -> Element<'a, Message> {
     let stats = tab.telemetry.folder_stats;
-    let folder_name = tab
+    let folder_name_raw = tab
         .current_path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| tab.current_path.to_string_lossy().into_owned());
+    let folder_name = sanitize_single_line(&folder_name_raw);
+    let path_display = sanitize_single_line(&tab.current_path.to_string_lossy());
     let fs_badge = tab.fs_type.as_deref().unwrap_or(strings.root_fs);
 
     let left = row![
@@ -548,10 +551,14 @@ fn hero_card<'a>(
             )),
         column![
             row![
-                text(folder_name)
-                    .size(18)
-                    .font(FONT_UI_BOLD)
-                    .color(palette.text_primary),
+                container(
+                    text(folder_name)
+                        .size(18)
+                        .font(FONT_UI_BOLD)
+                        .color(palette.text_primary)
+                        .wrapping(text::Wrapping::None),
+                )
+                .clip(true),
                 container(
                     text(fs_badge)
                         .size(11)
@@ -568,14 +575,18 @@ fn hero_card<'a>(
             ]
             .spacing(8)
             .align_y(Center),
-            text(tab.current_path.to_string_lossy().into_owned())
-                .size(12)
-                .font(FONT_MONO)
-                .color(palette.text_secondary),
+            single_line_label(
+                text(path_display)
+                    .size(12)
+                    .font(FONT_MONO)
+                    .color(palette.text_secondary),
+            ),
         ]
-        .spacing(3),
+        .spacing(3)
+        .width(Length::Fill),
     ]
     .spacing(14)
+    .width(Length::Fill)
     .align_y(Center);
 
     let (size_label, size_value) = if let Some(rs) = tab.telemetry.recursive_size {
@@ -611,7 +622,7 @@ fn hero_card<'a>(
     .spacing(28)
     .align_y(Center);
 
-    container(row![left, space::horizontal(), metrics].align_y(Center))
+    container(row![left, metrics].spacing(18).align_y(Center))
         .width(Length::Fill)
         .padding([14, 20])
         .style(styles::hero_card(palette))
@@ -833,7 +844,7 @@ fn grid_item_card<'a>(
         format_bytes(entry.size_bytes).to_string()
     };
 
-    let display_name = truncate_label(&entry.name, label_chars);
+    let display_name = truncate_label(&sanitize_single_line(&entry.name), label_chars);
     let name_widget: Element<'a, Message> = if selected {
         container(
             text(display_name)
@@ -1038,8 +1049,10 @@ fn detail_table_view<'a>(
             ),
         ]
         .align_y(Center)
+        .width(Length::Fill)
         .padding([4, 8]),
     )
+    .width(Length::Fill)
     .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 8.0));
 
     let win = compute_fixed_window(
@@ -1082,7 +1095,7 @@ fn detail_table_view<'a>(
             row![
                 icon_widget,
                 single_line_label(
-                    text(entry.name.as_str())
+                    text(sanitize_single_line(entry.name.as_str()))
                         .size(13)
                         .font(if selected { FONT_UI_SEMIBOLD } else { FONT_UI })
                         .color(palette.text_primary),
@@ -1132,6 +1145,7 @@ fn detail_table_view<'a>(
             .width(Length::FillPortion(p[4]))
             .clip(true),
         ]
+        .width(Length::Fill)
         .align_y(Center);
 
         let row_btn = button(row_content)
@@ -1201,13 +1215,15 @@ fn columns_view<'a>(
                 .on_press(Message::NavigateUp),
                 container(
                     row![
-                        text(tab.title.as_str())
-                            .size(13)
-                            .font(FONT_UI_SEMIBOLD)
-                            .color(palette.accent_primary),
-                        space::horizontal(),
+                        single_line_label(
+                            text(sanitize_single_line(tab.title.as_str()))
+                                .size(13)
+                                .font(FONT_UI_SEMIBOLD)
+                                .color(palette.accent_primary),
+                        ),
                         icon_chevron_right().size(14).color(palette.accent_primary),
                     ]
+                    .spacing(6)
                     .align_y(Center),
                 )
                 .padding([6, 8])
@@ -1227,18 +1243,19 @@ fn columns_view<'a>(
         cols_row = cols_row.push(col_fallback);
     } else {
         for (anc_path, anc_entries) in &app.column_ancestors {
-            let anc_title = anc_path
+            let anc_title_raw = anc_path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| anc_path.to_string_lossy().into_owned());
+            let anc_title = sanitize_single_line(&anc_title_raw);
             let mut list = column![
-                button(
+                button(single_line_label(
                     text(anc_title)
                         .size(11)
                         .font(FONT_MONO_BOLD)
                         .color(palette.text_muted),
-                )
+                ),)
                 .padding([2, 4])
                 .style(styles::ghost_button(palette, 4.0))
                 .on_press(Message::NavigateTo(anc_path.clone())),
@@ -1250,13 +1267,15 @@ fn columns_view<'a>(
                 let (c_icon, _) = entry_icon(child, palette, 14.0);
                 let mut r = row![
                     c_icon,
-                    single_line_label(text(child.name.as_str()).size(12).font(
-                        if is_on_active_chain {
-                            FONT_UI_SEMIBOLD
-                        } else {
-                            FONT_UI
-                        }
-                    )),
+                    single_line_label(
+                        text(sanitize_single_line(child.name.as_str()))
+                            .size(12)
+                            .font(if is_on_active_chain {
+                                FONT_UI_SEMIBOLD
+                            } else {
+                                FONT_UI
+                            }),
+                    ),
                 ]
                 .spacing(6)
                 .align_y(Center);
@@ -1298,12 +1317,12 @@ fn columns_view<'a>(
         6,
     );
 
-    let mut active_col = column![
-        text(tab.title.as_str())
+    let mut active_col = column![single_line_label(
+        text(sanitize_single_line(tab.title.as_str()))
             .size(11)
             .font(FONT_MONO_BOLD)
-            .color(palette.text_muted)
-    ]
+            .color(palette.text_muted),
+    ),]
     .spacing(4);
 
     if win.top_spacer > 0.0 {
@@ -1317,7 +1336,7 @@ fn columns_view<'a>(
         let mut r = row![
             icon_widget,
             single_line_label(
-                text(entry.name.as_str())
+                text(sanitize_single_line(entry.name.as_str()))
                     .size(13)
                     .font(if selected { FONT_UI_SEMIBOLD } else { FONT_UI })
                     .color(palette.text_primary),
@@ -1391,19 +1410,19 @@ fn columns_view<'a>(
                         .align_y(Center)
                         .into()
                     } else {
-                        let mut sub_list = column![
-                            text(selected.name.as_str())
+                        let mut sub_list = column![single_line_label(
+                            text(sanitize_single_line(selected.name.as_str()))
                                 .size(11)
                                 .font(FONT_MONO_BOLD)
                                 .color(palette.text_muted),
-                        ]
+                        ),]
                         .spacing(4);
                         for child in children.iter().take(200) {
                             let (c_icon, _) = entry_icon(child, palette, 14.0);
                             let mut r = row![
                                 c_icon,
                                 single_line_label(
-                                    text(child.name.as_str())
+                                    text(sanitize_single_line(child.name.as_str()))
                                         .size(12)
                                         .color(palette.text_primary),
                                 ),
@@ -1472,7 +1491,7 @@ fn columns_view<'a>(
 
             let mut preview_col = column![
                 preview_visual,
-                text(selected.name.as_str())
+                text(sanitize_single_line(selected.name.as_str()))
                     .size(14)
                     .font(FONT_UI_SEMIBOLD)
                     .color(palette.text_primary),

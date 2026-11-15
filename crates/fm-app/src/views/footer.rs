@@ -4,9 +4,9 @@ use iced::Alignment::Center;
 use iced::widget::{Space, container, row, space, text};
 use iced::{Color, Element, Length, Padding};
 
-use crate::app::App;
-use crate::app::Message;
+use crate::app::{App, Message};
 use crate::views::modals::format_transfer_summary;
+use crate::views::sanitize_single_line;
 
 pub fn view<'a>(
     app: &'a App,
@@ -24,10 +24,11 @@ pub fn view<'a>(
                 strings.selected_none.to_owned()
             } else if sel_count == 1 {
                 if let Some(entry) = tab.selection.single_selected(&tab.visible_entries) {
+                    let clean_name = sanitize_single_line(entry.name.as_str());
                     if entry.kind.is_dir_like() {
-                        format!("1 ({})", entry.name)
+                        format!("1 ({clean_name})")
                     } else {
-                        format!("1 ({} • {})", entry.name, format_bytes(entry.size_bytes))
+                        format!("1 ({clean_name} • {})", format_bytes(entry.size_bytes))
                     }
                 } else {
                     strings.selected_none.to_owned()
