@@ -285,6 +285,10 @@ pub struct AppConfig {
     pub show_inspector: bool,
     pub sidebar_collapsed: bool,
     pub window_decorations: WindowDecorationsMode,
+    #[serde(default)]
+    pub default_view_mode: ViewMode,
+    #[serde(default)]
+    pub favorites: Vec<PathBuf>,
 }
 
 impl Default for AppConfig {
@@ -296,6 +300,8 @@ impl Default for AppConfig {
             show_inspector: false,
             sidebar_collapsed: false,
             window_decorations: WindowDecorationsMode::NativeWm,
+            default_view_mode: ViewMode::Grid,
+            favorites: Vec::new(),
         }
     }
 }

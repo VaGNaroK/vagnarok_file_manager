@@ -2,6 +2,7 @@ pub mod canvas;
 pub mod footer;
 pub mod header;
 pub mod inspector;
+pub mod modals;
 pub mod sidebar;
 pub mod virtualized;
 

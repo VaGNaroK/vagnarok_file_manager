@@ -1,4 +1,4 @@
-use fm_core::{Strings, TabState, format_bytes};
+use fm_core::{CopyMode, Strings, TabState, format_bytes};
 use fm_theme::{FONT_MONO, Spacing, ThemePalette, styles};
 use iced::Alignment::Center;
 use iced::widget::{Space, container, row, space, text};
@@ -6,6 +6,7 @@ use iced::{Color, Element, Length, Padding};
 
 use crate::app::App;
 use crate::app::Message;
+use crate::views::modals::format_transfer_summary;
 
 pub fn view<'a>(
     app: &'a App,
@@ -102,6 +103,29 @@ pub fn view<'a>(
     .align_y(Center);
 
     let mut right = row![].spacing(12).align_y(Center);
+    if let Some(job) = &app.active_transfer {
+        right = right.push(
+            text(format!(
+                "{} {}",
+                strings.transferring,
+                format_transfer_summary(job.bytes_done, job.bytes_total)
+            ))
+            .size(11)
+            .font(FONT_MONO)
+            .color(palette.accent_primary),
+        );
+    } else if let Some(clip) = &app.clipboard {
+        let tag = match clip.mode {
+            CopyMode::Copy => strings.clipboard_copy_tag,
+            CopyMode::Move => strings.clipboard_cut_tag,
+        };
+        right = right.push(
+            text(format!("{tag}: {}", clip.paths.len()))
+                .size(11)
+                .font(FONT_MONO)
+                .color(palette.text_secondary),
+        );
+    }
     if let Some(notice) = &app.status_notice {
         right = right.push(
             text(notice.as_str())

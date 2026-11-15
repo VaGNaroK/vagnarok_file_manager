@@ -5,7 +5,7 @@ use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Element, Length, Padding};
 use lucide_icons::iced::{
     icon_database, icon_download, icon_folder, icon_hard_drive, icon_home, icon_image,
-    icon_monitor, icon_panel_left, icon_settings, icon_terminal, icon_trash_2,
+    icon_monitor, icon_panel_left, icon_settings, icon_star, icon_terminal, icon_trash_2,
 };
 
 use crate::app::{App, Message, SidebarTarget};
@@ -88,10 +88,35 @@ pub fn view<'a>(
         sections = sections.push(drives_col);
     }
 
-    if let Some(trash_path) = &app.places.trash {
-        if !collapsed {
-            sections = sections.push(section_header(strings.tags_and_system, palette));
+    let has_tags_or_trash = !app.config.favorites.is_empty() || app.places.trash.is_some();
+    if has_tags_or_trash && !collapsed {
+        sections = sections.push(section_header(strings.tags_and_system, palette));
+    }
+
+    if !app.config.favorites.is_empty() {
+        let mut fav_col = column![].spacing(2);
+        for fav_path in &app.config.favorites {
+            let label = fav_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| fav_path.to_string_lossy().into_owned());
+            let active = app
+                .current_tab()
+                .is_some_and(|t| &t.current_path == fav_path);
+            fav_col = fav_col.push(sidebar_btn_owned(
+                icon_star().size(15).color(palette.accent_tertiary),
+                label,
+                collapsed,
+                active,
+                palette,
+                Message::NavigateTo(fav_path.clone()),
+            ));
         }
+        sections = sections.push(fav_col);
+    }
+
+    if let Some(trash_path) = &app.places.trash {
         let active = app
             .current_tab()
             .is_some_and(|t| &t.current_path == trash_path);
@@ -112,7 +137,7 @@ pub fn view<'a>(
             collapsed,
             false,
             palette,
-            Message::ToggleHeroCard,
+            Message::OpenPreferences,
         ),
         button(icon_panel_left().size(15))
             .padding([6, 8])

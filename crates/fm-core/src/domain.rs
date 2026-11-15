@@ -202,6 +202,51 @@ pub enum ViewMode {
     Columns,
 }
 
+/// Operação de transferência na área de transferência ou fila do `CopyEngine`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyMode {
+    Copy,
+    Move,
+}
+
+/// Política para tratamento de conflitos de nome durante cópia/movimentação.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConflictPolicy {
+    #[default]
+    RenameAuto,
+    Overwrite,
+    Skip,
+}
+
+/// Estado atual de um job em andamento no `CopyEngine`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JobState {
+    Running,
+    Completed,
+    Cancelled,
+    Failed(String),
+}
+
+/// Progresso emitido em streaming para operações de cópia/movimentação.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobProgress {
+    pub job_id: u64,
+    pub mode: CopyMode,
+    pub bytes_done: u64,
+    pub bytes_total: u64,
+    pub items_done: usize,
+    pub items_total: usize,
+    pub current_item: CompactString,
+    pub state: JobState,
+}
+
+/// Itens armazenados para Colar (`Ctrl+C` / `Ctrl+X`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipboardTransfer {
+    pub mode: CopyMode,
+    pub paths: Vec<PathBuf>,
+}
+
 /// Campo de ordenação de entradas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SortField {

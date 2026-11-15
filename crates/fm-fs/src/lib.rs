@@ -2,6 +2,12 @@
 //!
 //! Implementações específicas de SO ficam confinadas em submódulos `#[cfg(target_os = ...)]`.
 
+pub mod config;
+pub mod copy_engine;
+
+pub use config::{config_file_path, load_config, save_config};
+pub use copy_engine::run_transfer_job;
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
@@ -156,17 +162,41 @@ impl VfsProvider for LocalFs {
     }
 
     async fn move_to_trash(&self, paths: &[PathBuf]) -> Result<(), FsError> {
-        Err(FsError::Io {
-            path: paths.first().cloned().unwrap_or_default(),
-            message: "lixeira será integrada na Fase P3".to_owned(),
+        let targets = paths.to_vec();
+        if targets.is_empty() {
+            return Ok(());
+        }
+        tokio::task::spawn_blocking(move || {
+            trash::delete_all(&targets).map_err(|err| FsError::Io {
+                path: targets.first().cloned().unwrap_or_default(),
+                message: format!("falha ao enviar para a lixeira: {err}"),
+            })
         })
+        .await
+        .map_err(|err| FsError::Io {
+            path: PathBuf::new(),
+            message: err.to_string(),
+        })?
     }
 
     async fn delete_permanent(&self, paths: &[PathBuf]) -> Result<(), FsError> {
-        Err(FsError::Io {
-            path: paths.first().cloned().unwrap_or_default(),
-            message: "exclusão permanente será integrada na Fase P3".to_owned(),
+        let targets = paths.to_vec();
+        tokio::task::spawn_blocking(move || {
+            for target in &targets {
+                let meta = std::fs::symlink_metadata(target).map_err(|e| map_io_err(target, e))?;
+                if meta.is_dir() {
+                    std::fs::remove_dir_all(target).map_err(|e| map_io_err(target, e))?;
+                } else {
+                    std::fs::remove_file(target).map_err(|e| map_io_err(target, e))?;
+                }
+            }
+            Ok(())
         })
+        .await
+        .map_err(|err| FsError::Io {
+            path: PathBuf::new(),
+            message: err.to_string(),
+        })?
     }
 
     async fn open_default(&self, path: &Path) -> Result<(), FsError> {

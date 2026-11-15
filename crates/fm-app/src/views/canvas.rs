@@ -1,6 +1,6 @@
 use fm_core::{
-    FileEntry, Language, SelectionModifiers, SortDirection, SortField, Strings, TabState, ViewMode,
-    format_age, format_bytes,
+    CopyMode, FileEntry, JobProgress, Language, SelectionModifiers, SortDirection, SortField,
+    Strings, TabState, ViewMode, format_age, format_bytes,
 };
 use fm_theme::{
     FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_BOLD, FONT_UI_SEMIBOLD, ThemePalette, styles,
@@ -11,14 +11,16 @@ use iced::widget::{
 };
 use iced::{Color, ContentFit, Element, Length, Padding};
 use lucide_icons::iced::{
-    icon_arrow_up_down, icon_chevron_right, icon_eye, icon_eye_off, icon_info, icon_plus,
-    icon_terminal,
+    icon_arrow_up_down, icon_chevron_right, icon_clipboard_paste, icon_copy, icon_eye,
+    icon_eye_off, icon_info, icon_pencil, icon_plus, icon_scissors, icon_star, icon_terminal,
+    icon_trash_2, icon_x,
 };
 
 use crate::app::{
     App, Message, canvas_scroll_id, selected_id_set_contains, thumbnail_key_for_entry,
 };
 use crate::views::entry_icon;
+use crate::views::modals::format_transfer_summary;
 use crate::views::virtualized::{
     DETAIL_ROW_HEIGHT, DETAIL_ROW_STEP, GRID_BAND_SPACING, GridBand, build_grid_bands,
     compute_band_window, compute_fixed_window,
@@ -40,6 +42,9 @@ pub fn view<'a>(
     let mut header_stack = column![action_bar(app, tab, palette, strings)].spacing(14);
     if app.config.show_hero_card {
         header_stack = header_stack.push(hero_card(tab, palette, strings));
+    }
+    if let Some(job) = &app.active_transfer {
+        header_stack = header_stack.push(transfer_banner(job, palette, strings));
     }
 
     let body: Element<'a, Message> = if tab.is_loading {
@@ -200,7 +205,70 @@ fn action_bar<'a>(
     )
     .padding([6, 14])
     .style(styles::pill_primary_button(palette))
-    .on_press(Message::Noop);
+    .on_press(Message::OpenCreateDialog(true));
+
+    let sel_count = tab.selection.count();
+    let mut ops_row = row![].spacing(4).align_y(Center);
+    if sel_count > 0 {
+        ops_row = ops_row
+            .push(
+                button(icon_copy().size(14).color(palette.text_primary))
+                    .padding([6, 8])
+                    .style(styles::pill_secondary_button(palette))
+                    .on_press(Message::CopySelected),
+            )
+            .push(
+                button(icon_scissors().size(14).color(palette.text_primary))
+                    .padding([6, 8])
+                    .style(styles::pill_secondary_button(palette))
+                    .on_press(Message::CutSelected),
+            );
+        if sel_count == 1 {
+            ops_row = ops_row.push(
+                button(icon_pencil().size(14).color(palette.text_primary))
+                    .padding([6, 8])
+                    .style(styles::pill_secondary_button(palette))
+                    .on_press(Message::OpenRenameDialog),
+            );
+        }
+        ops_row = ops_row.push(
+            button(icon_trash_2().size(14).color(palette.status_error))
+                .padding([6, 8])
+                .style(styles::pill_secondary_button(palette))
+                .on_press(Message::RequestDelete(false)),
+        );
+    }
+
+    if let Some(clip) = &app.clipboard {
+        let label = format!("{} ({})", strings.paste, clip.paths.len());
+        let paste_color = match clip.mode {
+            CopyMode::Copy => palette.accent_primary,
+            CopyMode::Move => palette.status_warning,
+        };
+        ops_row = ops_row.push(
+            button(
+                row![
+                    icon_clipboard_paste().size(13).color(paste_color),
+                    text(label).size(12).color(paste_color),
+                ]
+                .spacing(5)
+                .align_y(Center),
+            )
+            .padding([6, 10])
+            .style(styles::pill_secondary_button(palette))
+            .on_press(Message::PasteClipboard),
+        );
+    }
+
+    let is_fav = app.config.favorites.contains(&tab.current_path);
+    let fav_btn = button(icon_star().size(15).color(if is_fav {
+        palette.accent_tertiary
+    } else {
+        palette.text_secondary
+    }))
+    .padding([6, 8])
+    .style(styles::ghost_button(palette, 9999.0))
+    .on_press(Message::ToggleFavoriteActive);
 
     let sort_btn = button(
         row![
@@ -245,11 +313,86 @@ fn action_bar<'a>(
     row![
         left_info,
         space::horizontal(),
-        row![new_btn, sort_btn, sort_dir_btn, hidden_btn, info_btn]
-            .spacing(8)
-            .align_y(Center),
+        row![
+            new_btn,
+            ops_row,
+            sort_btn,
+            sort_dir_btn,
+            hidden_btn,
+            fav_btn,
+            info_btn
+        ]
+        .spacing(8)
+        .align_y(Center),
     ]
     .align_y(Center)
+    .into()
+}
+
+fn transfer_banner<'a>(
+    job: &'a JobProgress,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let ratio = if job.bytes_total == 0 {
+        0.0
+    } else {
+        (job.bytes_done as f32 / job.bytes_total as f32).clamp(0.0, 1.0)
+    };
+    let filled = (ratio * 1000.0).round() as u16;
+    let remaining = 1000u16.saturating_sub(filled);
+
+    let bar = container(
+        row![
+            container(Space::new().width(Length::Fill).height(4))
+                .width(Length::FillPortion(filled.max(1)))
+                .style(move |_| styles::panel_surface(
+                    palette.accent_primary,
+                    Color::TRANSPARENT,
+                    9999.0
+                )),
+            Space::new()
+                .width(Length::FillPortion(remaining.max(1)))
+                .height(4),
+        ]
+        .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .padding(1)
+    .style(move |_| styles::panel_surface(palette.surface_high, palette.border, 9999.0));
+
+    let mode_tag = match job.mode {
+        CopyMode::Copy => strings.copy,
+        CopyMode::Move => strings.cut,
+    };
+    let summary = format_transfer_summary(job.bytes_done, job.bytes_total);
+
+    container(
+        column![
+            row![
+                text(format!("{mode_tag}: {}", job.current_item))
+                    .size(12)
+                    .font(FONT_UI_SEMIBOLD)
+                    .color(palette.text_primary),
+                space::horizontal(),
+                text(format!("{summary} ({}/{})", job.items_done, job.items_total))
+                    .size(11)
+                    .font(FONT_MONO)
+                    .color(palette.accent_primary),
+                button(icon_x().size(13))
+                    .padding([2, 6])
+                    .style(styles::ghost_button(palette, 6.0))
+                    .on_press(Message::CancelTransfer),
+            ]
+            .spacing(8)
+            .align_y(Center),
+            bar,
+        ]
+        .spacing(6),
+    )
+    .width(Length::Fill)
+    .padding([10, 14])
+    .style(move |_| styles::panel_surface(palette.surface_low, palette.accent_border, 10.0))
     .into()
 }
 
@@ -745,21 +888,34 @@ fn columns_view<'a>(
 
     let col1 = container(
         column![
-            text(parent_name)
-                .size(11)
-                .font(FONT_MONO_BOLD)
-                .color(palette.text_muted),
-            row![
-                text(tab.title.as_str())
-                    .size(13)
-                    .font(FONT_UI_SEMIBOLD)
-                    .color(palette.accent_primary),
-                space::horizontal(),
-                icon_chevron_right().size(14).color(palette.accent_primary),
-            ]
-            .align_y(Center),
+            button(
+                text(parent_name)
+                    .size(11)
+                    .font(FONT_MONO_BOLD)
+                    .color(palette.text_muted),
+            )
+            .padding([3, 6])
+            .style(styles::ghost_button(palette, 6.0))
+            .on_press(Message::NavigateUp),
+            container(
+                row![
+                    text(tab.title.as_str())
+                        .size(13)
+                        .font(FONT_UI_SEMIBOLD)
+                        .color(palette.accent_primary),
+                    space::horizontal(),
+                    icon_chevron_right().size(14).color(palette.accent_primary),
+                ]
+                .align_y(Center),
+            )
+            .padding([6, 8])
+            .style(move |_| styles::panel_surface(
+                palette.accent_surface,
+                palette.accent_border,
+                8.0
+            )),
         ]
-        .spacing(10),
+        .spacing(8),
     )
     .width(Length::FillPortion(1))
     .height(Length::Fill)
@@ -830,46 +986,157 @@ fn columns_view<'a>(
     .padding(12)
     .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
 
-    let preview_col = if let Some(selected) = tab.selection.single_selected(&tab.visible_entries) {
-        let (icon_widget, _) = entry_icon(selected, palette, 42.0);
-        column![
-            icon_widget,
-            text(selected.name.as_str())
-                .size(14)
-                .font(FONT_UI_SEMIBOLD)
-                .color(palette.text_primary),
-            text(format_bytes(selected.size_bytes).to_string())
-                .size(12)
+    let col3: Element<'a, Message> = if let Some(selected) =
+        tab.selection.single_selected(&tab.visible_entries)
+    {
+        if selected.kind.is_dir_like() {
+            let sub_content: Element<'a, Message> = match &app.column_preview {
+                Some((dir_path, children)) if dir_path == &selected.path => {
+                    if children.is_empty() {
+                        container(
+                            text(strings.empty_subdir)
+                                .size(12)
+                                .color(palette.text_muted),
+                        )
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .align_x(Center)
+                        .align_y(Center)
+                        .into()
+                    } else {
+                        let mut sub_list = column![
+                            text(selected.name.as_str())
+                                .size(11)
+                                .font(FONT_MONO_BOLD)
+                                .color(palette.text_muted),
+                        ]
+                        .spacing(4);
+                        for child in children.iter().take(200) {
+                            let (c_icon, _) = entry_icon(child, palette, 14.0);
+                            let mut r = row![
+                                c_icon,
+                                text(child.name.as_str()).size(12).color(palette.text_primary),
+                                space::horizontal(),
+                            ]
+                            .spacing(8)
+                            .align_y(Center);
+                            if child.kind.is_dir_like() {
+                                r = r.push(icon_chevron_right().size(12).color(palette.text_muted));
+                            } else {
+                                r = r.push(
+                                    text(format_bytes(child.size_bytes).to_string())
+                                        .size(11)
+                                        .font(FONT_MONO)
+                                        .color(palette.text_muted),
+                                );
+                            }
+                            let target_path = if child.kind.is_dir_like() {
+                                child.path.clone()
+                            } else {
+                                selected.path.clone()
+                            };
+                            sub_list = sub_list.push(
+                                button(r)
+                                    .width(Length::Fill)
+                                    .padding([5, 8])
+                                    .style(styles::ghost_button(palette, 6.0))
+                                    .on_press(Message::NavigateTo(target_path)),
+                            );
+                        }
+                        scrollable(sub_list).height(Length::Fill).into()
+                    }
+                }
+                _ => container(
+                    text(strings.loading)
+                        .size(12)
+                        .font(FONT_MONO)
+                        .color(palette.text_muted),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Center)
+                .align_y(Center)
+                .into(),
+            };
+
+            container(sub_content)
+                .width(Length::FillPortion(2))
+                .height(Length::Fill)
+                .padding(12)
+                .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0))
+                .into()
+        } else {
+            let preview_visual: Element<'a, Message> = if let Some(handle) =
+                app.gpu_thumbnails.get(&thumbnail_key_for_entry(selected))
+            {
+                image(handle.clone())
+                    .width(96)
+                    .height(96)
+                    .content_fit(ContentFit::Contain)
+                    .into()
+            } else {
+                let (icon_widget, _) = entry_icon(selected, palette, 42.0);
+                icon_widget.into()
+            };
+
+            let mut preview_col = column![
+                preview_visual,
+                text(selected.name.as_str())
+                    .size(14)
+                    .font(FONT_UI_SEMIBOLD)
+                    .color(palette.text_primary),
+                text(format_bytes(selected.size_bytes).to_string())
+                    .size(12)
+                    .font(FONT_MONO)
+                    .color(palette.text_secondary),
+                text(
+                    selected
+                        .permissions
+                        .format_compact(selected.kind.is_dir_like())
+                        .as_str()
+                        .to_owned(),
+                )
+                .size(11)
                 .font(FONT_MONO)
-                .color(palette.text_secondary),
-            text(
-                selected
-                    .permissions
-                    .format_compact(selected.kind.is_dir_like())
-                    .as_str()
-                    .to_owned(),
-            )
-            .size(11)
-            .font(FONT_MONO)
-            .color(palette.text_muted),
-        ]
-        .spacing(8)
-        .align_x(Center)
+                .color(palette.text_muted),
+            ]
+            .spacing(8)
+            .align_x(Center);
+
+            if let Some(tel) = &tab.selected_telemetry
+                && let Some(mime) = &tel.mime_type
+            {
+                preview_col = preview_col.push(
+                    text(mime.as_str())
+                        .size(11)
+                        .font(FONT_MONO)
+                        .color(palette.accent_primary),
+                );
+            }
+
+            container(preview_col)
+                .width(Length::FillPortion(2))
+                .height(Length::Fill)
+                .padding(16)
+                .align_x(Center)
+                .align_y(Center)
+                .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0))
+                .into()
+        }
     } else {
-        column![
+        container(
             text(strings.inspector_empty)
                 .size(12)
-                .color(palette.text_muted)
-        ]
-    };
-
-    let col3 = container(preview_col)
+                .color(palette.text_muted),
+        )
         .width(Length::FillPortion(2))
         .height(Length::Fill)
         .padding(16)
         .align_x(Center)
         .align_y(Center)
-        .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
+        .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0))
+        .into()
+    };
 
     row![col1, col2, col3]
         .spacing(12)

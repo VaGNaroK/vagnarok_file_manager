@@ -5,9 +5,10 @@ use std::time::UNIX_EPOCH;
 
 use compact_str::CompactString;
 use fm_core::{
-    AppConfig, DirectorySnapshot, DriveInfo, EntryId, FileEntry, FolderSummary, FsError,
-    SelectedFileTelemetry, SelectionModifiers, SortField, Strings, TabId, TabState, UserPlaces,
-    VfsProvider, ViewMode, VolumeSpace,
+    AppConfig, ClipboardTransfer, ConflictPolicy, CopyMode, DirectorySnapshot, DriveInfo, EntryId,
+    FileEntry, FolderSummary, FsError, JobProgress, JobState, SelectedFileTelemetry,
+    SelectionModifiers, SortField, Strings, TabId, TabState, UserPlaces, VfsProvider, ViewMode,
+    VolumeSpace, WindowDecorationsMode,
 };
 use fm_fs::LocalFs;
 use fm_index::SearchHit;
@@ -31,8 +32,19 @@ pub fn deep_search_input_id() -> Id {
     Id::new("fm_deep_search_input")
 }
 
+pub fn dialog_input_id() -> Id {
+    Id::new("fm_dialog_input")
+}
+
 pub fn path_input_id() -> Id {
     Id::new("fm_path_input")
+}
+
+#[derive(Debug, Clone)]
+pub enum ActiveDialog {
+    CreateItem { is_dir: bool, name: String },
+    Rename { src: PathBuf, name: String },
+    ConfirmDelete { paths: Vec<PathBuf>, permanent: bool },
 }
 
 pub fn canvas_scroll_id() -> Id {
@@ -164,6 +176,33 @@ pub enum Message {
         key: ThumbnailKey,
         rgba: Option<Arc<ThumbnailRgba>>,
     },
+    OpenCreateDialog(bool),
+    OpenRenameDialog,
+    RequestDelete(bool),
+    CloseDialog,
+    DialogSetCreateIsDir(bool),
+    DialogInputChanged(String),
+    SubmitDialog,
+    CopySelected,
+    CutSelected,
+    PasteClipboard,
+    CancelTransfer,
+    TransferProgress(JobProgress),
+    FileOpFinished {
+        result: Result<(), FsError>,
+        select_after: Option<PathBuf>,
+    },
+    ColumnPreviewLoaded {
+        request_id: u64,
+        path: PathBuf,
+        entries: Vec<FileEntry>,
+    },
+    ToggleFavoriteActive,
+    OpenPreferences,
+    ClosePreferences,
+    SetDefaultViewMode(ViewMode),
+    ToggleWindowDecorations,
+    ConfigSaved(Option<String>),
     OpenDefaultFinished(Result<(), FsError>),
     WindowMinimize,
     WindowToggleMaximize,
@@ -173,7 +212,6 @@ pub enum Message {
         key: keyboard::Key,
         modifiers: keyboard::Modifiers,
     },
-    Noop,
 }
 
 pub struct App {
@@ -189,12 +227,21 @@ pub struct App {
     pub preview_request_id: u64,
     pub selection_telemetry_cancel: Option<CancellationToken>,
     pub selection_telemetry_request_id: u64,
+    pub column_preview_cancel: Option<CancellationToken>,
+    pub column_preview_request_id: u64,
+    pub column_preview: Option<(PathBuf, Vec<FileEntry>)>,
     pub deep_search_open: bool,
     pub deep_search_query: String,
     pub deep_search_loading: bool,
     pub deep_search_results: Vec<SearchHit>,
     pub deep_search_request_id: u64,
     pub deep_search_cancel: Option<CancellationToken>,
+    pub active_dialog: Option<ActiveDialog>,
+    pub prefs_open: bool,
+    pub clipboard: Option<ClipboardTransfer>,
+    pub next_job_id: u64,
+    pub active_transfer: Option<JobProgress>,
+    pub transfer_cancel: Option<CancellationToken>,
     pub pending_select_path: Option<PathBuf>,
     pub thumbnail_cache: ThumbnailCache,
     pub gpu_thumbnails: HashMap<ThumbnailKey, image::Handle>,
@@ -217,6 +264,7 @@ impl App {
     pub fn boot() -> (Self, Task<Message>) {
         let vfs = Arc::new(LocalFs::new());
         let places = fm_fs::user_places();
+        let config = fm_fs::load_config();
 
         let tab1_path = places
             .documents
@@ -229,10 +277,12 @@ impl App {
             .unwrap_or_else(|| places.home.clone());
 
         let mut tab1 = TabState::new(TabId(1), tab1_path.clone());
+        tab1.view_mode = config.default_view_mode;
         tab1.is_loading = true;
         tab1.active_request_id = 1;
 
         let mut tab2 = TabState::new(TabId(2), tab2_path.clone());
+        tab2.view_mode = config.default_view_mode;
         tab2.is_loading = true;
         tab2.active_request_id = 2;
 
@@ -246,7 +296,7 @@ impl App {
         let app = Self {
             vfs: Arc::clone(&vfs),
             places,
-            config: AppConfig::default(),
+            config,
             tabs: vec![tab1, tab2],
             active_tab: TabId(1),
             next_tab_id: 3,
@@ -256,12 +306,21 @@ impl App {
             preview_request_id: 0,
             selection_telemetry_cancel: None,
             selection_telemetry_request_id: 0,
+            column_preview_cancel: None,
+            column_preview_request_id: 0,
+            column_preview: None,
             deep_search_open: false,
             deep_search_query: String::new(),
             deep_search_loading: false,
             deep_search_results: Vec::new(),
             deep_search_request_id: 0,
             deep_search_cancel: None,
+            active_dialog: None,
+            prefs_open: false,
+            clipboard: None,
+            next_job_id: 1,
+            active_transfer: None,
+            transfer_cancel: None,
             pending_select_path: None,
             thumbnail_cache: ThumbnailCache::default(),
             gpu_thumbnails: HashMap::new(),
@@ -331,6 +390,7 @@ impl App {
                     .unwrap_or_else(|| self.places.home.clone());
 
                 let mut tab = TabState::new(id, path.clone());
+                tab.view_mode = self.config.default_view_mode;
                 tab.active_request_id = req;
                 tab.is_loading = true;
                 self.tabs.push(tab);
@@ -484,10 +544,16 @@ impl App {
                     tab.view_mode = mode;
                 }
                 self.canvas_scroll_y = 0.0;
+                let single = self
+                    .current_tab()
+                    .and_then(|t| t.selection.single_selected(&t.visible_entries))
+                    .cloned();
+                let col_task = self.maybe_load_column_preview(single.as_ref());
                 let thumb_task = self.queue_visible_thumbnails();
                 Task::batch([
                     operation::snap_to(canvas_scroll_id(), RelativeOffset::START),
                     thumb_task,
+                    col_task,
                 ])
             }
             Message::CycleSortField => {
@@ -550,30 +616,32 @@ impl App {
             }
             Message::ToggleTheme => {
                 self.config.theme = self.config.theme.toggled();
-                Task::none()
+                self.persist_config_task()
             }
             Message::ToggleLanguage => {
                 self.config.language = self.config.language.toggled();
-                Task::none()
+                self.persist_config_task()
             }
             Message::ToggleSidebar => {
                 self.config.sidebar_collapsed = !self.config.sidebar_collapsed;
-                Task::none()
+                self.persist_config_task()
             }
             Message::ToggleInspector => {
                 self.config.show_inspector = !self.config.show_inspector;
+                let persist = self.persist_config_task();
                 if self.config.show_inspector {
                     let single = self
                         .current_tab()
                         .and_then(|t| t.selection.single_selected(&t.visible_entries))
                         .cloned();
-                    return self.dispatch_selection_side_effects(single.as_ref());
+                    let side = self.dispatch_selection_side_effects(single.as_ref());
+                    return Task::batch([persist, side]);
                 }
-                Task::none()
+                persist
             }
             Message::ToggleHeroCard => {
                 self.config.show_hero_card = !self.config.show_hero_card;
-                Task::none()
+                self.persist_config_task()
             }
             Message::ToggleQuickLook => {
                 let single = self
@@ -934,6 +1002,176 @@ impl App {
                 }
                 Task::none()
             }
+            Message::OpenCreateDialog(is_dir) => {
+                self.active_dialog = Some(ActiveDialog::CreateItem {
+                    is_dir,
+                    name: String::new(),
+                });
+                operation::focus(dialog_input_id())
+            }
+            Message::OpenRenameDialog => {
+                let target = self
+                    .current_tab()
+                    .and_then(|t| t.selection.single_selected(&t.visible_entries))
+                    .map(|e| (e.path.clone(), e.name.to_string()));
+                if let Some((src, name)) = target {
+                    self.active_dialog = Some(ActiveDialog::Rename { src, name });
+                    return operation::focus(dialog_input_id());
+                }
+                Task::none()
+            }
+            Message::RequestDelete(permanent) => {
+                let paths = self.selected_paths();
+                if paths.is_empty() {
+                    return Task::none();
+                }
+                self.active_dialog = Some(ActiveDialog::ConfirmDelete { paths, permanent });
+                Task::none()
+            }
+            Message::CloseDialog => {
+                self.active_dialog = None;
+                Task::none()
+            }
+            Message::DialogSetCreateIsDir(is_dir) => {
+                if let Some(ActiveDialog::CreateItem { is_dir: cur, .. }) =
+                    &mut self.active_dialog
+                {
+                    *cur = is_dir;
+                }
+                operation::focus(dialog_input_id())
+            }
+            Message::DialogInputChanged(val) => {
+                match &mut self.active_dialog {
+                    Some(ActiveDialog::CreateItem { name, .. })
+                    | Some(ActiveDialog::Rename { name, .. }) => *name = val,
+                    _ => {}
+                }
+                Task::none()
+            }
+            Message::SubmitDialog => self.execute_active_dialog(),
+            Message::CopySelected => {
+                let paths = self.selected_paths();
+                if !paths.is_empty() {
+                    self.clipboard = Some(ClipboardTransfer {
+                        mode: CopyMode::Copy,
+                        paths,
+                    });
+                }
+                Task::none()
+            }
+            Message::CutSelected => {
+                let paths = self.selected_paths();
+                if !paths.is_empty() {
+                    self.clipboard = Some(ClipboardTransfer {
+                        mode: CopyMode::Move,
+                        paths,
+                    });
+                }
+                Task::none()
+            }
+            Message::PasteClipboard => self.start_clipboard_paste(),
+            Message::CancelTransfer => {
+                if let Some(cancel) = self.transfer_cancel.take() {
+                    cancel.cancel();
+                }
+                Task::none()
+            }
+            Message::TransferProgress(progress) => {
+                let is_active_job = self
+                    .active_transfer
+                    .as_ref()
+                    .is_none_or(|cur| cur.job_id == progress.job_id);
+                if !is_active_job {
+                    return Task::none();
+                }
+                match &progress.state {
+                    JobState::Running => {
+                        self.active_transfer = Some(progress);
+                        Task::none()
+                    }
+                    JobState::Completed => {
+                        self.active_transfer = None;
+                        self.transfer_cancel = None;
+                        self.status_notice = None;
+                        self.update(Message::RefreshActiveTab)
+                    }
+                    JobState::Cancelled => {
+                        self.active_transfer = None;
+                        self.transfer_cancel = None;
+                        self.update(Message::RefreshActiveTab)
+                    }
+                    JobState::Failed(msg) => {
+                        self.active_transfer = None;
+                        self.transfer_cancel = None;
+                        self.status_notice = Some(msg.clone());
+                        self.update(Message::RefreshActiveTab)
+                    }
+                }
+            }
+            Message::FileOpFinished {
+                result,
+                select_after,
+            } => {
+                match result {
+                    Ok(()) => {
+                        self.status_notice = None;
+                        if let Some(target) = select_after {
+                            self.pending_select_path = Some(target);
+                        }
+                        self.update(Message::RefreshActiveTab)
+                    }
+                    Err(err) => {
+                        self.status_notice = Some(err.to_string());
+                        Task::none()
+                    }
+                }
+            }
+            Message::ColumnPreviewLoaded {
+                request_id,
+                path,
+                entries,
+            } => {
+                if request_id == self.column_preview_request_id {
+                    self.column_preview = Some((path, entries));
+                }
+                Task::none()
+            }
+            Message::ToggleFavoriteActive => {
+                if let Some(cur) = self.current_tab().map(|t| t.current_path.clone()) {
+                    if let Some(pos) = self.config.favorites.iter().position(|p| p == &cur) {
+                        self.config.favorites.remove(pos);
+                    } else {
+                        self.config.favorites.push(cur);
+                    }
+                    return self.persist_config_task();
+                }
+                Task::none()
+            }
+            Message::OpenPreferences => {
+                self.prefs_open = true;
+                Task::none()
+            }
+            Message::ClosePreferences => {
+                self.prefs_open = false;
+                Task::none()
+            }
+            Message::SetDefaultViewMode(mode) => {
+                self.config.default_view_mode = mode;
+                self.persist_config_task()
+            }
+            Message::ToggleWindowDecorations => {
+                self.config.window_decorations = match self.config.window_decorations {
+                    WindowDecorationsMode::NativeWm => WindowDecorationsMode::IntegratedCsd,
+                    WindowDecorationsMode::IntegratedCsd => WindowDecorationsMode::NativeWm,
+                };
+                self.persist_config_task()
+            }
+            Message::ConfigSaved(err) => {
+                if let Some(msg) = err {
+                    self.status_notice = Some(msg);
+                }
+                Task::none()
+            }
             Message::OpenDefaultFinished(res) => {
                 self.status_notice = res.err().map(|e| e.to_string());
                 Task::none()
@@ -948,7 +1186,6 @@ impl App {
             Message::GlobalKeyPressed { key, modifiers } => {
                 self.handle_global_key(key, modifiers)
             }
-            Message::Noop => Task::none(),
         }
     }
 
@@ -1013,7 +1250,19 @@ impl App {
         .height(Length::Fill)
         .style(fm_theme::styles::canvas_container(palette));
 
-        if self.quicklook_open {
+        if let Some(dialog) = &self.active_dialog {
+            stack![
+                main_shell,
+                views::modals::dialog_modal(dialog, palette, strings),
+            ]
+            .into()
+        } else if self.prefs_open {
+            stack![
+                main_shell,
+                views::modals::preferences_modal(self, palette, strings),
+            ]
+            .into()
+        } else if self.quicklook_open {
             stack![
                 main_shell,
                 views::inspector::quicklook_modal(self, tab, palette, strings),
@@ -1069,6 +1318,10 @@ impl App {
         if let Some(cancel) = self.selection_telemetry_cancel.take() {
             cancel.cancel();
         }
+        if let Some(cancel) = self.column_preview_cancel.take() {
+            cancel.cancel();
+        }
+        self.column_preview = None;
         self.status_notice = None;
         self.canvas_scroll_y = 0.0;
         let cancel = self.reset_tab_cancel(tab_id);
@@ -1080,13 +1333,214 @@ impl App {
 
     fn dispatch_selection_side_effects(&mut self, entry: Option<&FileEntry>) -> Task<Message> {
         let tel_task = self.maybe_load_selection_telemetry(entry);
+        let col_task = self.maybe_load_column_preview(entry);
         let preview_task = if self.quicklook_open || self.config.show_inspector {
             self.maybe_load_preview(entry)
         } else {
             Task::none()
         };
         let thumb_task = self.queue_visible_thumbnails();
-        Task::batch([tel_task, preview_task, thumb_task])
+        Task::batch([tel_task, col_task, preview_task, thumb_task])
+    }
+
+    fn persist_config_task(&self) -> Task<Message> {
+        let cfg = self.config.clone();
+        Task::perform(
+            async move { fm_fs::save_config(cfg).await.err().map(|e| e.to_string()) },
+            Message::ConfigSaved,
+        )
+    }
+
+    fn selected_paths(&self) -> Vec<PathBuf> {
+        let Some(tab) = self.current_tab() else {
+            return Vec::new();
+        };
+        tab.visible_entries
+            .iter()
+            .filter(|e| tab.selection.selected_ids.contains(&e.id))
+            .map(|e| e.path.clone())
+            .collect()
+    }
+
+    fn execute_active_dialog(&mut self) -> Task<Message> {
+        let Some(dialog) = self.active_dialog.take() else {
+            return Task::none();
+        };
+        let vfs = Arc::clone(&self.vfs);
+        match dialog {
+            ActiveDialog::CreateItem { is_dir, name } => {
+                let trimmed = name.trim();
+                if trimmed.is_empty() || trimmed.contains(['/', '\\']) {
+                    self.status_notice = Some("Nome inválido.".to_owned());
+                    return Task::none();
+                }
+                let Some(dir) = self.current_tab().map(|t| t.current_path.clone()) else {
+                    return Task::none();
+                };
+                let target = dir.join(trimmed);
+                let select_target = target.clone();
+                Task::perform(
+                    async move {
+                        if is_dir {
+                            vfs.create_dir(&target).await
+                        } else {
+                            vfs.create_file(&target).await
+                        }
+                    },
+                    move |result| Message::FileOpFinished {
+                        result,
+                        select_after: Some(select_target),
+                    },
+                )
+            }
+            ActiveDialog::Rename { src, name } => {
+                let trimmed = name.trim();
+                if trimmed.is_empty() || trimmed.contains(['/', '\\']) {
+                    self.status_notice = Some("Nome inválido.".to_owned());
+                    return Task::none();
+                }
+                let Some(parent) = src.parent() else {
+                    return Task::none();
+                };
+                let dst = parent.join(trimmed);
+                if src == dst {
+                    return Task::none();
+                }
+                let select_target = dst.clone();
+                Task::perform(
+                    async move { vfs.rename(&src, &dst).await },
+                    move |result| Message::FileOpFinished {
+                        result,
+                        select_after: Some(select_target),
+                    },
+                )
+            }
+            ActiveDialog::ConfirmDelete { paths, permanent } => Task::perform(
+                async move {
+                    if permanent {
+                        vfs.delete_permanent(&paths).await
+                    } else {
+                        vfs.move_to_trash(&paths).await
+                    }
+                },
+                |result| Message::FileOpFinished {
+                    result,
+                    select_after: None,
+                },
+            ),
+        }
+    }
+
+    fn start_clipboard_paste(&mut self) -> Task<Message> {
+        let Some(dest_dir) = self.current_tab().map(|t| t.current_path.clone()) else {
+            return Task::none();
+        };
+        let Some(transfer) = self.clipboard.clone() else {
+            return Task::none();
+        };
+        if transfer.paths.is_empty() {
+            return Task::none();
+        }
+        if transfer.mode == CopyMode::Move {
+            self.clipboard = None;
+        }
+        if let Some(prev) = self.transfer_cancel.take() {
+            prev.cancel();
+        }
+        let job_id = self.next_job_id;
+        self.next_job_id += 1;
+        let cancel = CancellationToken::new();
+        self.transfer_cancel = Some(cancel.clone());
+        let mode = transfer.mode;
+        let sources = transfer.paths;
+
+        self.active_transfer = Some(JobProgress {
+            job_id,
+            mode,
+            bytes_done: 0,
+            bytes_total: 0,
+            items_done: 0,
+            items_total: sources.len(),
+            current_item: CompactString::new("..."),
+            state: JobState::Running,
+        });
+
+        let transfer_stream = stream::channel(32, async move |mut output| {
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let handle = tokio::spawn(async move {
+                let _ = fm_fs::run_transfer_job(
+                    job_id,
+                    mode,
+                    sources,
+                    dest_dir,
+                    ConflictPolicy::RenameAuto,
+                    cancel,
+                    tx,
+                )
+                .await;
+            });
+            while let Some(progress) = rx.recv().await {
+                if output.send(Message::TransferProgress(progress)).await.is_err() {
+                    break;
+                }
+            }
+            let _ = handle.await;
+        });
+
+        Task::stream(transfer_stream)
+    }
+
+    fn maybe_load_column_preview(&mut self, entry: Option<&FileEntry>) -> Task<Message> {
+        if let Some(prev) = self.column_preview_cancel.take() {
+            prev.cancel();
+        }
+        let is_columns = self
+            .current_tab()
+            .is_some_and(|t| t.view_mode == ViewMode::Columns);
+        let Some(entry) = entry else {
+            self.column_preview = None;
+            return Task::none();
+        };
+        if !is_columns || !entry.kind.is_dir_like() {
+            self.column_preview = None;
+            return Task::none();
+        }
+        if self
+            .column_preview
+            .as_ref()
+            .is_some_and(|(p, _)| p == &entry.path)
+        {
+            return Task::none();
+        }
+
+        self.column_preview_request_id += 1;
+        let req_id = self.column_preview_request_id;
+        let cancel = CancellationToken::new();
+        self.column_preview_cancel = Some(cancel.clone());
+        let target = entry.path.clone();
+        let show_hidden = self.current_tab().is_some_and(|t| t.show_hidden);
+        let sort = self.current_tab().map(|t| t.sort).unwrap_or_default();
+        let vfs = Arc::clone(&self.vfs);
+
+        Task::perform(
+            async move {
+                let Ok(snap) = vfs.list_dir(&target, req_id, cancel).await else {
+                    return (req_id, target, Vec::new());
+                };
+                let mut entries: Vec<FileEntry> = snap
+                    .entries
+                    .into_iter()
+                    .filter(|e| show_hidden || !e.is_hidden)
+                    .collect();
+                entries.sort_by(|a, b| sort.compare(a, b));
+                (req_id, target, entries)
+            },
+            |(request_id, path, entries)| Message::ColumnPreviewLoaded {
+                request_id,
+                path,
+                entries,
+            },
+        )
     }
 
     fn maybe_load_selection_telemetry(&mut self, entry: Option<&FileEntry>) -> Task<Message> {
@@ -1305,6 +1759,26 @@ impl App {
         key: keyboard::Key,
         modifiers: keyboard::Modifiers,
     ) -> Task<Message> {
+        let text_input_modal_active = self.active_dialog.is_some()
+            || self.deep_search_open
+            || self.path_editing
+            || self.prefs_open;
+        if text_input_modal_active {
+            if matches!(key.as_ref(), keyboard::Key::Named(Named::Escape)) {
+                if self.active_dialog.is_some() {
+                    return self.update(Message::CloseDialog);
+                } else if self.prefs_open {
+                    return self.update(Message::ClosePreferences);
+                } else if self.deep_search_open {
+                    return self.update(Message::CloseDeepSearch);
+                } else if self.path_editing {
+                    self.path_editing = false;
+                    return Task::none();
+                }
+            }
+            return Task::none();
+        }
+
         match key.as_ref() {
             keyboard::Key::Character("t") if modifiers.control() => self.update(Message::TabNew),
             keyboard::Key::Character("w") if modifiers.control() => {
@@ -1315,6 +1789,22 @@ impl App {
                 self.update(Message::RefreshActiveTab)
             }
             keyboard::Key::Named(Named::F5) => self.update(Message::RefreshActiveTab),
+            keyboard::Key::Named(Named::F2) => self.update(Message::OpenRenameDialog),
+            keyboard::Key::Named(Named::Delete) => {
+                self.update(Message::RequestDelete(modifiers.shift()))
+            }
+            keyboard::Key::Character("c") if modifiers.control() => {
+                self.update(Message::CopySelected)
+            }
+            keyboard::Key::Character("x") if modifiers.control() => {
+                self.update(Message::CutSelected)
+            }
+            keyboard::Key::Character("v") if modifiers.control() => {
+                self.update(Message::PasteClipboard)
+            }
+            keyboard::Key::Character("n") if modifiers.control() && modifiers.shift() => {
+                self.update(Message::OpenCreateDialog(true))
+            }
             keyboard::Key::Character("b") if modifiers.control() => {
                 self.update(Message::ToggleSidebar)
             }
@@ -1333,28 +1823,19 @@ impl App {
             keyboard::Key::Character("l") if modifiers.control() => {
                 self.update(Message::TogglePathEdit)
             }
-            keyboard::Key::Named(Named::Space)
-                if !modifiers.control() && !modifiers.alt() && !self.deep_search_open =>
-            {
+            keyboard::Key::Named(Named::Space) if !modifiers.control() && !modifiers.alt() => {
                 self.update(Message::ToggleQuickLook)
             }
             keyboard::Key::Named(Named::Escape) => {
                 if self.quicklook_open {
                     self.update(Message::CloseQuickLook)
-                } else if self.deep_search_open {
-                    self.update(Message::CloseDeepSearch)
-                } else if self.path_editing {
-                    self.path_editing = false;
-                    Task::none()
                 } else {
                     self.update(Message::FilterChanged(String::new()))
                 }
             }
             keyboard::Key::Named(Named::ArrowRight | Named::ArrowDown) => self.move_selection(1),
             keyboard::Key::Named(Named::ArrowLeft | Named::ArrowUp) => self.move_selection(-1),
-            keyboard::Key::Named(Named::Enter)
-                if !self.path_editing && !self.deep_search_open =>
-            {
+            keyboard::Key::Named(Named::Enter) => {
                 if let Some(focused) = self.current_tab().and_then(|t| t.selection.focused) {
                     return self.update(Message::ActivateEntry(focused));
                 }

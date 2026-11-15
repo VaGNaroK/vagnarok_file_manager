@@ -12,6 +12,8 @@ fm-core.workspace = true
 open.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+toml.workspace = true
+trash.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix.workspace = true

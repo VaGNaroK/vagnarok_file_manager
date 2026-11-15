@@ -1,10 +1,31 @@
 use std::collections::HashSet;
-use std::fs::Metadata;
+use std::fs::{File, Metadata};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use compact_str::CompactString;
 use fm_core::{DriveInfo, DriveKind, PermissionsMeta, VolumeSpace};
+
+/// Tenta transferência kernel-to-kernel via `copy_file_range(2)` no Linux.
+/// Retorna `None` quando o par de descritores/filesystem exige fallback para read/write em userspace.
+pub fn try_copy_file_range_chunk(
+    in_file: &File,
+    out_file: &File,
+    len: usize,
+) -> Option<std::io::Result<usize>> {
+    match rustix::fs::copy_file_range(in_file, None, out_file, None, len) {
+        Ok(bytes) => Some(Ok(bytes)),
+        Err(errno)
+            if errno == rustix::io::Errno::XDEV
+                || errno == rustix::io::Errno::NOSYS
+                || errno == rustix::io::Errno::INVAL
+                || errno == rustix::io::Errno::OPNOTSUPP =>
+        {
+            None
+        }
+        Err(errno) => Some(Err(std::io::Error::from_raw_os_error(errno.raw_os_error()))),
+    }
+}
 
 const IGNORED_FS_TYPES: &[&str] = &[
     "proc",

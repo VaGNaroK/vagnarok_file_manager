@@ -8,9 +8,10 @@ pub mod state;
 pub mod vfs;
 
 pub use domain::{
-    DirectorySnapshot, DirectoryTelemetry, DriveInfo, DriveKind, EntryId, EntryKind, FileEntry,
-    FolderSummary, PermissionsMeta, SelectedFileTelemetry, SortDirection, SortField, SortSpec,
-    UserPlaces, ViewMode, VolumeSpace, compute_entry_id, format_age, format_bytes,
+    ClipboardTransfer, ConflictPolicy, CopyMode, DirectorySnapshot, DirectoryTelemetry, DriveInfo,
+    DriveKind, EntryId, EntryKind, FileEntry, FolderSummary, JobProgress, JobState,
+    PermissionsMeta, SelectedFileTelemetry, SortDirection, SortField, SortSpec, UserPlaces,
+    ViewMode, VolumeSpace, compute_entry_id, format_age, format_bytes,
 };
 pub use i18n::Strings;
 pub use state::{
