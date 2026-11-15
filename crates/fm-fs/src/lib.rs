@@ -222,12 +222,14 @@ impl VfsProvider for LocalFs {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn make_file_entry(
     name: CompactString,
     entry_path: PathBuf,
     kind: EntryKind,
     size_bytes: u64,
     modified_at: Option<std::time::SystemTime>,
+    created_at: Option<std::time::SystemTime>,
     permissions: PermissionsMeta,
     is_hidden: bool,
 ) -> FileEntry {
@@ -250,6 +252,7 @@ pub(crate) fn make_file_entry(
         kind,
         size_bytes: if kind.is_dir_like() { 0 } else { size_bytes },
         modified_at,
+        created_at,
         is_hidden,
         permissions,
         child_count: None,
@@ -314,6 +317,7 @@ pub(crate) fn scan_directory_blocking(
 
         let size_bytes = effective_meta.len();
         let modified_at = effective_meta.modified().ok();
+        let created_at = effective_meta.created().ok();
         let (permissions, is_hidden): (PermissionsMeta, bool) =
             platform::extract_permissions_and_hidden(&name, &effective_meta);
 
@@ -323,6 +327,7 @@ pub(crate) fn scan_directory_blocking(
             kind,
             size_bytes,
             modified_at,
+            created_at,
             permissions,
             is_hidden,
         ));
@@ -410,6 +415,14 @@ mod tests {
             assert_eq!(main_entry.extension.as_deref(), Some("rs"));
             assert_eq!(main_entry.size_bytes, 12);
             assert!(!main_entry.is_hidden);
+            assert!(main_entry.modified_at.is_some());
+            let std_btime_supported = std::fs::metadata(tmp.0.join("main.rs"))
+                .ok()
+                .and_then(|m| m.created().ok())
+                .is_some();
+            if std_btime_supported {
+                assert!(main_entry.created_at.is_some());
+            }
 
             let hidden_entry = snap
                 .entries

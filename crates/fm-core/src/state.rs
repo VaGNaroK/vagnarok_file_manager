@@ -37,6 +37,16 @@ impl SelectionState {
         self.focused = None;
     }
 
+    /// Seleciona todas as entradas visíveis (`Ctrl+A`).
+    pub fn select_all(&mut self, entries: &[FileEntry]) {
+        self.selected_ids.clear();
+        for entry in entries {
+            self.selected_ids.insert(entry.id);
+        }
+        self.anchor = if entries.is_empty() { None } else { Some(0) };
+        self.focused = entries.len().checked_sub(1);
+    }
+
     /// Seleciona exatamente um índice e atualiza âncora/foco.
     pub fn select_single(&mut self, index: usize, entries: &[FileEntry]) {
         self.selected_ids.clear();
@@ -280,6 +290,8 @@ pub enum WindowDecorationsMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub theme: ThemePreset,
+    #[serde(default)]
+    pub theme_customized: bool,
     pub language: Language,
     pub show_hero_card: bool,
     pub show_inspector: bool,
@@ -295,6 +307,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             theme: ThemePreset::AetherLight,
+            theme_customized: false,
             language: Language::PtBr,
             show_hero_card: true,
             show_inspector: false,
@@ -320,6 +333,7 @@ mod tests {
                 extension: Some(CompactString::new("txt")),
                 kind: EntryKind::File,
                 size_bytes: 100 * (i as u64 + 1),
+                created_at: None,
                 modified_at: None,
                 is_hidden: false,
                 permissions: PermissionsMeta::PosixMode(0o644),
@@ -376,5 +390,21 @@ mod tests {
         tab.recompute_visible();
         assert_eq!(tab.visible_entries.len(), 1);
         assert_eq!(tab.selection.count(), 0);
+    }
+
+    #[test]
+    fn select_all_selects_every_visible_entry_and_handles_empty() {
+        let mut sel = SelectionState::default();
+        let entries = make_entries(4);
+        sel.select_all(&entries);
+        assert_eq!(sel.count(), 4);
+        assert_eq!(sel.anchor, Some(0));
+        assert_eq!(sel.focused, Some(3));
+        assert_eq!(sel.selected_bytes(&entries), 100 + 200 + 300 + 400);
+
+        sel.select_all(&[]);
+        assert_eq!(sel.count(), 0);
+        assert!(sel.anchor.is_none());
+        assert!(sel.focused.is_none());
     }
 }

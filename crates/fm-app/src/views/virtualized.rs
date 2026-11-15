@@ -167,6 +167,7 @@ mod tests {
             extension: Some(CompactString::new("rs")),
             kind: EntryKind::File,
             size_bytes: 1024,
+            created_at: None,
             modified_at: None,
             is_hidden: false,
             permissions: PermissionsMeta::PosixMode(0o644),

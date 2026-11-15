@@ -81,6 +81,9 @@ pub fn view<'a>(
         }
     };
 
+    let body = mouse_area(body)
+        .on_right_press(Message::OpenCanvasContextMenu);
+
     container(
         column![header_stack, body]
             .spacing(16)
@@ -205,7 +208,7 @@ fn action_bar<'a>(
     )
     .padding([6, 14])
     .style(styles::pill_primary_button(palette))
-    .on_press(Message::OpenCreateDialog(true));
+    .on_press(Message::OpenNewMenu);
 
     let sel_count = tab.selection.count();
     let mut ops_row = row![].spacing(4).align_y(Center);
@@ -732,7 +735,43 @@ fn grid_item_card<'a>(
 
     mouse_area(card_btn)
         .on_double_click(Message::ActivateEntry(index))
+        .on_right_press(Message::OpenEntryContextMenu(index))
         .into()
+}
+
+fn sort_header_button<'a>(
+    label: &'a str,
+    field: SortField,
+    active_sort: fm_core::SortSpec,
+    portion: u16,
+    palette: ThemePalette,
+) -> Element<'a, Message> {
+    let is_active = active_sort.field == field;
+    let display = if is_active {
+        let arrow = match active_sort.direction {
+            SortDirection::Ascending => "↑",
+            SortDirection::Descending => "↓",
+        };
+        format!("{label} {arrow}")
+    } else {
+        label.to_owned()
+    };
+
+    button(
+        text(display)
+            .size(11)
+            .font(FONT_MONO_BOLD)
+            .color(if is_active {
+                palette.accent_primary
+            } else {
+                palette.text_muted
+            }),
+    )
+    .width(Length::FillPortion(portion))
+    .padding([2, 4])
+    .style(styles::ghost_button(palette, 6.0))
+    .on_press(Message::SortByField(field))
+    .into()
 }
 
 fn detail_table_view<'a>(
@@ -749,33 +788,18 @@ fn detail_table_view<'a>(
 
     let sticky_header = container(
         row![
-            text(strings.col_name)
-                .size(11)
-                .font(FONT_MONO_BOLD)
-                .color(palette.text_muted)
-                .width(Length::FillPortion(4)),
-            text(strings.col_size)
-                .size(11)
-                .font(FONT_MONO_BOLD)
-                .color(palette.text_muted)
-                .width(Length::FillPortion(1)),
-            text(strings.col_type)
-                .size(11)
-                .font(FONT_MONO_BOLD)
-                .color(palette.text_muted)
-                .width(Length::FillPortion(1)),
+            sort_header_button(strings.col_name, SortField::Name, tab.sort, 4, palette),
+            sort_header_button(strings.col_size, SortField::Size, tab.sort, 1, palette),
+            sort_header_button(strings.col_type, SortField::Kind, tab.sort, 1, palette),
             text(strings.col_perms)
                 .size(11)
                 .font(FONT_MONO_BOLD)
                 .color(palette.text_muted)
                 .width(Length::FillPortion(2)),
-            text(strings.col_modified)
-                .size(11)
-                .font(FONT_MONO_BOLD)
-                .color(palette.text_muted)
-                .width(Length::FillPortion(1)),
+            sort_header_button(strings.col_modified, SortField::Modified, tab.sort, 1, palette),
         ]
-        .padding([6, 12]),
+        .align_y(Center)
+        .padding([4, 8]),
     )
     .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 8.0));
 
@@ -859,7 +883,11 @@ fn detail_table_view<'a>(
                 modifiers,
             });
 
-        rows = rows.push(mouse_area(row_btn).on_double_click(Message::ActivateEntry(idx)));
+        rows = rows.push(
+            mouse_area(row_btn)
+                .on_double_click(Message::ActivateEntry(idx))
+                .on_right_press(Message::OpenEntryContextMenu(idx)),
+        );
     }
 
     if win.bottom_spacer > 0.0 {
@@ -978,7 +1006,11 @@ fn columns_view<'a>(
                 index: idx,
                 modifiers,
             });
-        active_col = active_col.push(mouse_area(item_btn).on_double_click(Message::ActivateEntry(idx)));
+        active_col = active_col.push(
+            mouse_area(item_btn)
+                .on_double_click(Message::ActivateEntry(idx))
+                .on_right_press(Message::OpenEntryContextMenu(idx)),
+        );
     }
 
     if win.bottom_spacer > 0.0 {

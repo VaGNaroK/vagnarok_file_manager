@@ -12,7 +12,8 @@ use compact_str::CompactString;
 use fm_core::{
     DirectorySnapshot, DriveInfo, DriveKind, EntryKind, FsError, PermissionsMeta, VolumeSpace,
 };
-use rustix::fs::{AtFlags, Mode, OFlags, RawDir};
+use rustix::fd::{AsFd, BorrowedFd};
+use rustix::fs::{AtFlags, Mode, OFlags, RawDir, StatxFlags};
 use tokio_util::sync::CancellationToken;
 
 use crate::{make_file_entry, map_io_err};
@@ -75,18 +76,18 @@ pub fn scan_directory_native(
             continue;
         }
 
-        let Ok(link_stat) = rustix::fs::statat(&dir_fd, raw_name, AtFlags::SYMLINK_NOFOLLOW) else {
+        let Some(link_stat) = query_entry_stat(dir_fd.as_fd(), raw_name, AtFlags::SYMLINK_NOFOLLOW) else {
             continue;
         };
 
-        let link_fmt = link_stat.st_mode & 0o170_000;
+        let link_fmt = link_stat.mode & 0o170_000;
         let (kind, effective_stat) = if link_fmt == 0o120_000 {
-            match rustix::fs::statat(&dir_fd, raw_name, AtFlags::empty()) {
-                Ok(target_stat) => {
-                    let target_is_dir = (target_stat.st_mode & 0o170_000) == 0o040_000;
+            match query_entry_stat(dir_fd.as_fd(), raw_name, AtFlags::empty()) {
+                Some(target_stat) => {
+                    let target_is_dir = (target_stat.mode & 0o170_000) == 0o040_000;
                     (EntryKind::Symlink { target_is_dir }, target_stat)
                 }
-                Err(_) => (
+                None => (
                     EntryKind::Symlink {
                         target_is_dir: false,
                     },
@@ -105,19 +106,15 @@ pub fn scan_directory_native(
         let name = CompactString::from(name_os.to_string_lossy().as_ref());
         let entry_path = path.join(name_os);
         let is_hidden = name_bytes.starts_with(b".");
-        let permissions = PermissionsMeta::PosixMode(effective_stat.st_mode);
-        let size_bytes = u64::try_from(effective_stat.st_size).unwrap_or(0);
-        let modified_at = unix_timespec_to_system_time(
-            effective_stat.st_mtime,
-            effective_stat.st_mtime_nsec as u32,
-        );
+        let permissions = PermissionsMeta::PosixMode(effective_stat.mode);
 
         entries.push(make_file_entry(
             name,
             entry_path,
             kind,
-            size_bytes,
-            modified_at,
+            effective_stat.size_bytes,
+            effective_stat.modified_at,
+            effective_stat.created_at,
             permissions,
             is_hidden,
         ));
@@ -131,6 +128,60 @@ pub fn scan_directory_native(
         entries,
         fs_type,
     })
+}
+
+struct NativeEntryStat {
+    mode: u32,
+    size_bytes: u64,
+    modified_at: Option<SystemTime>,
+    created_at: Option<SystemTime>,
+}
+
+fn query_entry_stat(
+    dir_fd: BorrowedFd<'_>,
+    name: &std::ffi::CStr,
+    flags: AtFlags,
+) -> Option<NativeEntryStat> {
+    match rustix::fs::statx(
+        dir_fd,
+        name,
+        flags,
+        StatxFlags::BASIC_STATS | StatxFlags::BTIME,
+    ) {
+        Ok(stx) => {
+            let modified_at = if (stx.stx_mask & StatxFlags::MTIME.bits()) != 0 {
+                unix_timespec_to_system_time(stx.stx_mtime.tv_sec, stx.stx_mtime.tv_nsec)
+            } else {
+                None
+            };
+            let created_at = if (stx.stx_mask & StatxFlags::BTIME.bits()) != 0 {
+                unix_timespec_to_system_time(stx.stx_btime.tv_sec, stx.stx_btime.tv_nsec)
+            } else {
+                None
+            };
+            Some(NativeEntryStat {
+                mode: u32::from(stx.stx_mode),
+                size_bytes: stx.stx_size,
+                modified_at,
+                created_at,
+            })
+        }
+        Err(errno)
+            if errno == rustix::io::Errno::NOSYS || errno == rustix::io::Errno::OPNOTSUPP =>
+        {
+            let stat = rustix::fs::statat(dir_fd, name, flags).ok()?;
+            Some(NativeEntryStat {
+                mode: stat.st_mode,
+                size_bytes: u64::try_from(stat.st_size).unwrap_or(0),
+                modified_at: unix_timespec_to_system_time(
+                    stat.st_mtime,
+                    stat.st_mtime_nsec as u32,
+                ),
+                created_at: None,
+            })
+        }
+        Err(_) => None,
+    }
 }
 
 fn unix_timespec_to_system_time(secs: i64, nsec: u32) -> Option<SystemTime> {

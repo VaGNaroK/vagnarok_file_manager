@@ -77,6 +77,7 @@ mod tests {
 
         let cfg = AppConfig {
             theme: ThemePreset::ObsidianFlow,
+            theme_customized: true,
             language: Language::EnUs,
             show_hero_card: false,
             show_inspector: true,
@@ -98,5 +99,22 @@ mod tests {
         assert_eq!(loaded.window_decorations, WindowDecorationsMode::IntegratedCsd);
         assert_eq!(loaded.default_view_mode, ViewMode::Columns);
         assert_eq!(loaded.favorites, vec![PathBuf::from("/tmp/work")]);
+    }
+
+    #[test]
+    fn deserializes_legacy_config_without_theme_customized() {
+        let legacy_toml = r#"
+theme = "AetherLight"
+language = "PtBr"
+show_hero_card = true
+show_inspector = false
+sidebar_collapsed = false
+window_decorations = "NativeWm"
+default_view_mode = "Grid"
+favorites = []
+"#;
+        let parsed: AppConfig = toml::from_str(legacy_toml).expect("legacy config parses");
+        assert_eq!(parsed.theme, ThemePreset::AetherLight);
+        assert!(!parsed.theme_customized);
     }
 }

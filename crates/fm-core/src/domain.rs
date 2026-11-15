@@ -108,6 +108,7 @@ pub struct FileEntry {
     pub extension: Option<CompactString>,
     pub kind: EntryKind,
     pub size_bytes: u64,
+    pub created_at: Option<SystemTime>,
     pub modified_at: Option<SystemTime>,
     pub is_hidden: bool,
     pub permissions: PermissionsMeta,
@@ -402,6 +403,7 @@ mod tests {
                 EntryKind::File
             },
             size_bytes: size,
+            created_at: None,
             modified_at: None,
             is_hidden: false,
             permissions: PermissionsMeta::PosixMode(0o755),

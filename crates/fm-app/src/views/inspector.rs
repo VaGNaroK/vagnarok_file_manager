@@ -103,6 +103,13 @@ pub fn drawer<'a>(
                         palette,
                     ));
                 }
+                if let Some(created) = entry.created_at {
+                    info_col = info_col.push(meta_row(
+                        strings.created,
+                        format_age(created, pt_br).to_string(),
+                        palette,
+                    ));
+                }
 
                 if let Some(tel) = &tab.selected_telemetry {
                     if let Some(mime) = &tel.mime_type {

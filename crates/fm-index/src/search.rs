@@ -139,6 +139,7 @@ mod tests {
             extension: None,
             kind: EntryKind::File,
             size_bytes: 10,
+            created_at: None,
             modified_at: None,
             is_hidden: false,
             permissions: PermissionsMeta::PosixMode(0o644),

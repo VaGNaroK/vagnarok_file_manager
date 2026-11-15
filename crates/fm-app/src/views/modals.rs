@@ -11,10 +11,12 @@ use iced::widget::{
 };
 use iced::{Element, Length, Padding};
 use lucide_icons::iced::{
-    icon_file_plus, icon_folder, icon_folder_plus, icon_pencil, icon_trash_2, icon_x,
+    icon_check_square, icon_clipboard_copy, icon_clipboard_paste, icon_copy, icon_external_link,
+    icon_eye, icon_file_plus, icon_folder, icon_folder_plus, icon_pencil, icon_scissors,
+    icon_terminal, icon_trash_2, icon_x,
 };
 
-use crate::app::{ActiveDialog, App, Message, dialog_input_id};
+use crate::app::{ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, dialog_input_id};
 
 pub fn dialog_modal<'a>(
     dialog: &'a ActiveDialog,
@@ -567,5 +569,224 @@ pub fn breadcrumb_menu_overlay<'a>(
             }),
     )
     .on_press(Message::CloseBreadcrumbMenu)
+    .into()
+}
+
+pub fn context_menu_overlay<'a>(
+    app: &'a App,
+    menu: &'a ContextMenuState,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let menu_width = 230.0_f32;
+    let has_clipboard = app.clipboard.is_some();
+
+    let mut items = column![].spacing(2).width(Length::Fill);
+
+    match &menu.kind {
+        ContextMenuKind::NewMenu => {
+            items = items
+                .push(ctx_item(
+                    icon_folder_plus().size(14).color(palette.accent_primary).into(),
+                    strings.new_folder,
+                    palette.text_primary,
+                    Message::OpenCreateDialog(true),
+                    palette,
+                ))
+                .push(ctx_item(
+                    icon_file_plus().size(14).color(palette.text_secondary).into(),
+                    strings.new_file,
+                    palette.text_primary,
+                    Message::OpenCreateDialog(false),
+                    palette,
+                ));
+        }
+        ContextMenuKind::Entry {
+            index,
+            path,
+            is_dir,
+        } => {
+            items = items.push(ctx_item(
+                icon_external_link().size(14).color(palette.accent_primary).into(),
+                strings.open_item,
+                palette.text_primary,
+                Message::ActivateEntry(*index),
+                palette,
+            ));
+            if *is_dir {
+                items = items.push(ctx_item(
+                    icon_folder().size(14).color(palette.accent_primary).into(),
+                    strings.open_in_new_tab,
+                    palette.text_primary,
+                    Message::OpenInNewTab(path.clone()),
+                    palette,
+                ));
+            } else {
+                items = items.push(ctx_item(
+                    icon_eye().size(14).color(palette.text_secondary).into(),
+                    strings.quicklook_title,
+                    palette.text_primary,
+                    Message::ToggleQuickLook,
+                    palette,
+                ));
+            }
+            items = items
+                .push(ctx_divider(palette))
+                .push(ctx_item(
+                    icon_copy().size(14).color(palette.text_secondary).into(),
+                    strings.copy,
+                    palette.text_primary,
+                    Message::CopySelected,
+                    palette,
+                ))
+                .push(ctx_item(
+                    icon_scissors().size(14).color(palette.text_secondary).into(),
+                    strings.cut,
+                    palette.text_primary,
+                    Message::CutSelected,
+                    palette,
+                ));
+            if has_clipboard {
+                items = items.push(ctx_item(
+                    icon_clipboard_paste().size(14).color(palette.accent_primary).into(),
+                    strings.paste,
+                    palette.text_primary,
+                    Message::PasteClipboard,
+                    palette,
+                ));
+            }
+            items = items
+                .push(ctx_item(
+                    icon_clipboard_copy().size(14).color(palette.text_secondary).into(),
+                    strings.copy_path,
+                    palette.text_primary,
+                    Message::CopyPath(path.clone()),
+                    palette,
+                ))
+                .push(ctx_item(
+                    icon_pencil().size(14).color(palette.text_secondary).into(),
+                    strings.rename,
+                    palette.text_primary,
+                    Message::OpenRenameDialog,
+                    palette,
+                ))
+                .push(ctx_divider(palette))
+                .push(ctx_item(
+                    icon_trash_2().size(14).color(palette.status_error).into(),
+                    strings.move_to_trash,
+                    palette.status_error,
+                    Message::RequestDelete(false),
+                    palette,
+                ));
+        }
+        ContextMenuKind::Background => {
+            items = items
+                .push(ctx_item(
+                    icon_folder_plus().size(14).color(palette.accent_primary).into(),
+                    strings.new_folder,
+                    palette.text_primary,
+                    Message::OpenCreateDialog(true),
+                    palette,
+                ))
+                .push(ctx_item(
+                    icon_file_plus().size(14).color(palette.text_secondary).into(),
+                    strings.new_file,
+                    palette.text_primary,
+                    Message::OpenCreateDialog(false),
+                    palette,
+                ));
+            if has_clipboard {
+                items = items.push(ctx_item(
+                    icon_clipboard_paste().size(14).color(palette.accent_primary).into(),
+                    strings.paste,
+                    palette.text_primary,
+                    Message::PasteClipboard,
+                    palette,
+                ));
+            }
+            items = items
+                .push(ctx_divider(palette))
+                .push(ctx_item(
+                    icon_check_square().size(14).color(palette.text_secondary).into(),
+                    strings.select_all,
+                    palette.text_primary,
+                    Message::SelectAll,
+                    palette,
+                ));
+            if let Some(tab) = app.current_tab() {
+                items = items.push(ctx_item(
+                    icon_clipboard_copy().size(14).color(palette.text_secondary).into(),
+                    strings.copy_path,
+                    palette.text_primary,
+                    Message::CopyPath(tab.current_path.clone()),
+                    palette,
+                ));
+            }
+            items = items.push(ctx_item(
+                icon_terminal().size(14).color(palette.text_secondary).into(),
+                strings.open_terminal,
+                palette.text_primary,
+                Message::OpenTerminal,
+                palette,
+            ));
+        }
+    }
+
+    let est_height = match &menu.kind {
+        ContextMenuKind::NewMenu => 84.0,
+        ContextMenuKind::Entry { .. } => 310.0,
+        ContextMenuKind::Background => 240.0,
+    };
+    let max_x = (app.window_size.width - menu_width - 12.0).max(8.0);
+    let max_y = (app.window_size.height - est_height - 12.0).max(8.0);
+    let x = menu.position.x.clamp(8.0, max_x);
+    let y = menu.position.y.clamp(8.0, max_y);
+
+    let card = container(items.width(Length::Fixed(menu_width)))
+        .padding(8)
+        .style(styles::modal_card(palette));
+
+    let backdrop = mouse_area(
+        container(card)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(Padding {
+                top: y,
+                right: 0.0,
+                bottom: 0.0,
+                left: x,
+            }),
+    )
+    .on_press(Message::CloseContextMenu)
+    .on_right_press(Message::CloseContextMenu);
+
+    backdrop.into()
+}
+
+fn ctx_item<'a>(
+    icon: Element<'a, Message>,
+    label: &'a str,
+    label_color: iced::Color,
+    msg: Message,
+    palette: ThemePalette,
+) -> Element<'a, Message> {
+    button(
+        row![icon, text(label).size(12).font(FONT_UI).color(label_color)]
+            .spacing(8)
+            .align_y(Center),
+    )
+    .width(Length::Fill)
+    .padding([6, 10])
+    .style(styles::ghost_button(palette, 6.0))
+    .on_press(msg)
+    .into()
+}
+
+fn ctx_divider<'a>(palette: ThemePalette) -> Element<'a, Message> {
+    container(
+        container(Space::new().width(Length::Fill).height(1))
+            .style(styles::divider_line(palette)),
+    )
+    .padding([3, 4])
     .into()
 }

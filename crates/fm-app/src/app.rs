@@ -7,8 +7,8 @@ use compact_str::CompactString;
 use fm_core::{
     AppConfig, ClipboardTransfer, ConflictPolicy, CopyMode, DirectorySnapshot, DriveInfo, EntryId,
     FileEntry, FolderSummary, FsError, JobProgress, JobState, SelectedFileTelemetry,
-    SelectionModifiers, SortField, Strings, TabId, TabState, UserPlaces, VfsProvider, ViewMode,
-    VolumeSpace, WindowDecorationsMode,
+    SelectionModifiers, SortDirection, SortField, Strings, TabId, TabState, ThemePreset,
+    UserPlaces, VfsProvider, ViewMode, VolumeSpace, WindowDecorationsMode,
 };
 use fm_fs::LocalFs;
 use fm_index::SearchHit;
@@ -17,9 +17,13 @@ use fm_theme::ThemePalette;
 use iced::futures::SinkExt;
 use iced::keyboard;
 use iced::keyboard::key::Named;
+use iced::mouse;
 use iced::widget::operation::RelativeOffset;
 use iced::widget::{Id, column, container, image, operation, row, stack, text_editor};
-use iced::{Element, Event, Length, Subscription, Task, event, stream, window};
+use iced::{
+    Element, Event, Length, Point, Size, Subscription, Task, clipboard, event, stream, system,
+    window,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::views;
@@ -38,6 +42,23 @@ pub fn dialog_input_id() -> Id {
 
 pub fn path_input_id() -> Id {
     Id::new("fm_path_input")
+}
+
+#[derive(Debug, Clone)]
+pub enum ContextMenuKind {
+    Entry {
+        index: usize,
+        path: PathBuf,
+        is_dir: bool,
+    },
+    Background,
+    NewMenu,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextMenuState {
+    pub kind: ContextMenuKind,
+    pub position: Point,
 }
 
 #[derive(Debug, Clone)]
@@ -99,7 +120,9 @@ impl SidebarTarget {
 pub enum Message {
     TabNew,
     TabSelect(TabId),
+    TabNext(bool),
     TabClose(TabId),
+    OpenInNewTab(PathBuf),
     NavigateTo(PathBuf),
     NavigateBack,
     NavigateForward,
@@ -111,16 +134,25 @@ pub enum Message {
         index: usize,
         modifiers: SelectionModifiers,
     },
+    SelectAll,
     ActivateEntry(usize),
     SetViewMode(ViewMode),
     CycleSortField,
+    SortByField(SortField),
     ToggleSortDirection,
     ToggleHidden,
     FilterChanged(String),
     TogglePathEdit,
     PathDraftChanged(String),
+    PathAutocompleteLoaded {
+        base_draft: String,
+        parent: PathBuf,
+        prefix: String,
+        dir_names: Vec<String>,
+    },
     CommitPathDraft,
     ToggleTheme,
+    SystemThemeDetected(iced::theme::Mode),
     ToggleLanguage,
     ToggleSidebar,
     ToggleInspector,
@@ -225,6 +257,15 @@ pub enum Message {
     ToggleWindowDecorations,
     ConfigSaved(Option<String>),
     OpenDefaultFinished(Result<(), FsError>),
+    OpenNewMenu,
+    OpenEntryContextMenu(usize),
+    OpenCanvasContextMenu,
+    CloseContextMenu,
+    CopyPath(PathBuf),
+    CursorMoved(Point),
+    WindowResized(Size),
+    FileDropped(PathBuf),
+    FlushDroppedFiles(u64),
     WindowMinimize,
     WindowToggleMaximize,
     WindowClose,
@@ -279,6 +320,11 @@ pub struct App {
     pub path_draft: String,
     pub quicklook_open: bool,
     pub current_modifiers: keyboard::Modifiers,
+    pub cursor_position: Point,
+    pub window_size: Size,
+    pub context_menu: Option<ContextMenuState>,
+    pub pending_dropped_paths: Vec<PathBuf>,
+    pub drop_batch_id: u64,
     pub canvas_scroll_y: f32,
     pub canvas_viewport_height: f32,
     pub status_notice: Option<String>,
@@ -361,9 +407,20 @@ impl App {
             path_draft: String::new(),
             quicklook_open: false,
             current_modifiers: keyboard::Modifiers::empty(),
+            cursor_position: Point::new(240.0, 140.0),
+            window_size: Size::new(1280.0, 820.0),
+            context_menu: None,
+            pending_dropped_paths: Vec::new(),
+            drop_batch_id: 0,
             canvas_scroll_y: 0.0,
             canvas_viewport_height: 700.0,
             status_notice: None,
+        };
+
+        let auto_theme_task = if !app.config.theme_customized {
+            system::theme().map(Message::SystemThemeDetected)
+        } else {
+            Task::none()
         };
 
         let drives_task = {
@@ -383,7 +440,10 @@ impl App {
         let load1 = spawn_list_task(Arc::clone(&vfs), TabId(1), tab1_path, 1, cancel1);
         let load2 = spawn_list_task(vfs, TabId(2), tab2_path, 2, cancel2);
 
-        (app, Task::batch([drives_task, disk_cache_task, load1, load2]))
+        (
+            app,
+            Task::batch([auto_theme_task, drives_task, disk_cache_task, load1, load2]),
+        )
     }
 
     pub fn title(&self) -> String {
@@ -418,30 +478,39 @@ impl App {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TabNew => {
-                let id = TabId(self.next_tab_id);
-                self.next_tab_id += 1;
-                let req = self.alloc_request_id();
+                self.context_menu = None;
                 let path = self
                     .current_tab()
                     .map(|t| t.current_path.clone())
                     .unwrap_or_else(|| self.places.home.clone());
-
-                let mut tab = TabState::new(id, path.clone());
-                tab.view_mode = self.config.default_view_mode;
-                tab.active_request_id = req;
-                tab.is_loading = true;
-                self.tabs.push(tab);
-                self.active_tab = id;
-                self.path_editing = false;
-                self.quicklook_open = false;
-
-                let cancel = self.reset_tab_cancel(id);
-                Task::batch([
-                    spawn_list_task(Arc::clone(&self.vfs), id, path, req, cancel),
-                    operation::snap_to(canvas_scroll_id(), RelativeOffset::START),
-                ])
+                self.open_tab_at(path)
+            }
+            Message::OpenInNewTab(path) => {
+                self.context_menu = None;
+                self.open_tab_at(path)
+            }
+            Message::TabNext(reverse) => {
+                self.context_menu = None;
+                if self.tabs.len() <= 1 {
+                    return Task::none();
+                }
+                if let Some(pos) = self.tabs.iter().position(|t| t.id == self.active_tab) {
+                    let next = if reverse {
+                        if pos == 0 {
+                            self.tabs.len() - 1
+                        } else {
+                            pos - 1
+                        }
+                    } else {
+                        (pos + 1) % self.tabs.len()
+                    };
+                    let id = self.tabs[next].id;
+                    return self.update(Message::TabSelect(id));
+                }
+                Task::none()
             }
             Message::TabSelect(id) => {
+                self.context_menu = None;
                 if self.tabs.iter().any(|t| t.id == id) {
                     self.active_tab = id;
                     self.path_editing = false;
@@ -456,6 +525,7 @@ impl App {
                 Task::none()
             }
             Message::TabClose(id) => {
+                self.context_menu = None;
                 if self.tabs.len() <= 1 {
                     return Task::none();
                 }
@@ -558,7 +628,21 @@ impl App {
                 }
                 self.dispatch_selection_side_effects(single_entry.as_ref())
             }
+            Message::SelectAll => {
+                self.context_menu = None;
+                let mut single_entry = None;
+                if let Some(tab) = self.current_tab_mut() {
+                    tab.selection.select_all(&tab.visible_entries);
+                    single_entry = tab
+                        .selection
+                        .single_selected(&tab.visible_entries)
+                        .cloned();
+                    tab.selected_telemetry = single_entry.as_ref().map(basic_file_telemetry);
+                }
+                self.dispatch_selection_side_effects(single_entry.as_ref())
+            }
             Message::ActivateEntry(index) => {
+                self.context_menu = None;
                 let target = self
                     .current_tab()
                     .and_then(|t| t.visible_entries.get(index).cloned());
@@ -605,6 +689,18 @@ impl App {
                 }
                 self.queue_visible_thumbnails()
             }
+            Message::SortByField(field) => {
+                if let Some(tab) = self.current_tab_mut() {
+                    if tab.sort.field == field {
+                        tab.sort.direction = tab.sort.direction.toggled();
+                    } else {
+                        tab.sort.field = field;
+                        tab.sort.direction = SortDirection::Ascending;
+                    }
+                    apply_tab_filter(tab);
+                }
+                self.queue_visible_thumbnails()
+            }
             Message::ToggleSortDirection => {
                 if let Some(tab) = self.current_tab_mut() {
                     tab.sort.direction = tab.sort.direction.toggled();
@@ -642,6 +738,17 @@ impl App {
                 self.path_draft = value;
                 Task::none()
             }
+            Message::PathAutocompleteLoaded {
+                base_draft,
+                parent,
+                prefix,
+                dir_names,
+            } => {
+                if self.path_editing && self.path_draft == base_draft {
+                    return self.apply_path_completion(&parent, &prefix, &dir_names);
+                }
+                Task::none()
+            }
             Message::CommitPathDraft => {
                 let raw = self.path_draft.trim().to_owned();
                 self.path_editing = false;
@@ -652,8 +759,20 @@ impl App {
                 Task::none()
             }
             Message::ToggleTheme => {
+                self.config.theme_customized = true;
                 self.config.theme = self.config.theme.toggled();
                 self.persist_config_task()
+            }
+            Message::SystemThemeDetected(mode) => {
+                if !self.config.theme_customized {
+                    self.config.theme = match mode {
+                        iced::theme::Mode::Light => ThemePreset::AetherLight,
+                        iced::theme::Mode::Dark | iced::theme::Mode::None => {
+                            ThemePreset::ObsidianFlow
+                        }
+                    };
+                }
+                Task::none()
             }
             Message::ToggleLanguage => {
                 self.config.language = self.config.language.toggled();
@@ -681,6 +800,7 @@ impl App {
                 self.persist_config_task()
             }
             Message::ToggleQuickLook => {
+                self.context_menu = None;
                 let single = self
                     .current_tab()
                     .and_then(|t| t.selection.single_selected(&t.visible_entries))
@@ -1002,6 +1122,7 @@ impl App {
                 self.queue_visible_thumbnails()
             }
             Message::OpenTerminal => {
+                self.context_menu = None;
                 let Some(path) = self.current_tab().map(|t| t.current_path.clone()) else {
                     return Task::none();
                 };
@@ -1147,6 +1268,7 @@ impl App {
                 Task::none()
             }
             Message::OpenCreateDialog(is_dir) => {
+                self.context_menu = None;
                 self.active_dialog = Some(ActiveDialog::CreateItem {
                     is_dir,
                     name: String::new(),
@@ -1154,6 +1276,7 @@ impl App {
                 operation::focus(dialog_input_id())
             }
             Message::OpenRenameDialog => {
+                self.context_menu = None;
                 let target = self
                     .current_tab()
                     .and_then(|t| t.selection.single_selected(&t.visible_entries))
@@ -1165,6 +1288,7 @@ impl App {
                 Task::none()
             }
             Message::RequestDelete(permanent) => {
+                self.context_menu = None;
                 let paths = self.selected_paths();
                 if paths.is_empty() {
                     return Task::none();
@@ -1194,6 +1318,7 @@ impl App {
             }
             Message::SubmitDialog => self.execute_active_dialog(),
             Message::CopySelected => {
+                self.context_menu = None;
                 let paths = self.selected_paths();
                 if !paths.is_empty() {
                     self.clipboard = Some(ClipboardTransfer {
@@ -1204,6 +1329,7 @@ impl App {
                 Task::none()
             }
             Message::CutSelected => {
+                self.context_menu = None;
                 let paths = self.selected_paths();
                 if !paths.is_empty() {
                     self.clipboard = Some(ClipboardTransfer {
@@ -1213,7 +1339,10 @@ impl App {
                 }
                 Task::none()
             }
-            Message::PasteClipboard => self.start_clipboard_paste(),
+            Message::PasteClipboard => {
+                self.context_menu = None;
+                self.start_clipboard_paste()
+            }
             Message::CancelTransfer => {
                 if let Some(cancel) = self.transfer_cancel.take() {
                     cancel.cancel();
@@ -1308,7 +1437,12 @@ impl App {
                     WindowDecorationsMode::NativeWm => WindowDecorationsMode::IntegratedCsd,
                     WindowDecorationsMode::IntegratedCsd => WindowDecorationsMode::NativeWm,
                 };
-                self.persist_config_task()
+                let persist = self.persist_config_task();
+                if cfg!(not(target_os = "windows")) {
+                    Task::batch([persist, window::latest().and_then(window::toggle_decorations)])
+                } else {
+                    persist
+                }
             }
             Message::ConfigSaved(err) => {
                 if let Some(msg) = err {
@@ -1318,6 +1452,99 @@ impl App {
             }
             Message::OpenDefaultFinished(res) => {
                 self.status_notice = res.err().map(|e| e.to_string());
+                Task::none()
+            }
+            Message::OpenNewMenu => {
+                self.breadcrumb_menu = None;
+                let is_already_new = matches!(
+                    self.context_menu.as_ref().map(|m| &m.kind),
+                    Some(ContextMenuKind::NewMenu)
+                );
+                if is_already_new {
+                    self.context_menu = None;
+                } else {
+                    self.context_menu = Some(ContextMenuState {
+                        kind: ContextMenuKind::NewMenu,
+                        position: self.cursor_position,
+                    });
+                }
+                Task::none()
+            }
+            Message::OpenEntryContextMenu(index) => {
+                self.breadcrumb_menu = None;
+                let mut side_task = Task::none();
+                let mut target_meta = None;
+                if let Some(tab) = self.current_tab_mut()
+                    && let Some(entry) = tab.visible_entries.get(index)
+                {
+                    let already_selected = tab.selection.selected_ids.contains(&entry.id);
+                    target_meta = Some((entry.path.clone(), entry.kind.is_dir_like()));
+                    if !already_selected {
+                        tab.selection.select_single(index, &tab.visible_entries);
+                        let single = tab
+                            .selection
+                            .single_selected(&tab.visible_entries)
+                            .cloned();
+                        tab.selected_telemetry = single.as_ref().map(basic_file_telemetry);
+                        side_task = self.dispatch_selection_side_effects(single.as_ref());
+                    }
+                }
+                if let Some((path, is_dir)) = target_meta {
+                    self.context_menu = Some(ContextMenuState {
+                        kind: ContextMenuKind::Entry {
+                            index,
+                            path,
+                            is_dir,
+                        },
+                        position: self.cursor_position,
+                    });
+                }
+                side_task
+            }
+            Message::OpenCanvasContextMenu => {
+                self.breadcrumb_menu = None;
+                self.context_menu = Some(ContextMenuState {
+                    kind: ContextMenuKind::Background,
+                    position: self.cursor_position,
+                });
+                Task::none()
+            }
+            Message::CloseContextMenu => {
+                self.context_menu = None;
+                Task::none()
+            }
+            Message::CopyPath(path) => {
+                self.context_menu = None;
+                let text = path.to_string_lossy().into_owned();
+                self.status_notice = Some(self.strings().path_copied.to_owned());
+                clipboard::write(text)
+            }
+            Message::CursorMoved(pos) => {
+                self.cursor_position = pos;
+                Task::none()
+            }
+            Message::WindowResized(size) => {
+                self.window_size = size;
+                Task::none()
+            }
+            Message::FileDropped(path) => {
+                if !self.pending_dropped_paths.contains(&path) {
+                    self.pending_dropped_paths.push(path);
+                }
+                self.drop_batch_id += 1;
+                let batch_id = self.drop_batch_id;
+                Task::perform(
+                    async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(45)).await;
+                        batch_id
+                    },
+                    Message::FlushDroppedFiles,
+                )
+            }
+            Message::FlushDroppedFiles(batch_id) => {
+                if batch_id == self.drop_batch_id {
+                    return self.flush_dropped_files();
+                }
                 Task::none()
             }
             Message::WindowMinimize => window::latest().and_then(|id| window::minimize(id, true)),
@@ -1334,7 +1561,7 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let keyboard_sub = event::listen_with(|event, status, _window| match event {
+        let events_sub = event::listen_with(|event, status, _window| match event {
             Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
                 Some(Message::ModifiersChanged(modifiers))
             }
@@ -1343,7 +1570,7 @@ impl App {
                     || modifiers.alt()
                     || matches!(
                         key,
-                        keyboard::Key::Named(Named::Escape | Named::F5)
+                        keyboard::Key::Named(Named::Escape | Named::F5 | Named::Tab)
                     );
                 if status == event::Status::Ignored || is_shortcut {
                     Some(Message::GlobalKeyPressed { key, modifiers })
@@ -1351,15 +1578,22 @@ impl App {
                     None
                 }
             }
+            Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                Some(Message::CursorMoved(position))
+            }
+            Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized(size)),
+            Event::Window(window::Event::FileDropped(path)) => Some(Message::FileDropped(path)),
             _ => None,
         });
 
-        if let Some(active_path) = self.current_tab().map(|t| t.current_path.clone()) {
-            let watch_sub = Subscription::run_with(active_path, watch_directory_stream);
-            Subscription::batch([keyboard_sub, watch_sub])
-        } else {
-            keyboard_sub
+        let mut subs = vec![events_sub];
+        if !self.config.theme_customized {
+            subs.push(system::theme_changes().map(Message::SystemThemeDetected));
         }
+        if let Some(active_path) = self.current_tab().map(|t| t.current_path.clone()) {
+            subs.push(Subscription::run_with(active_path, watch_directory_stream));
+        }
+        Subscription::batch(subs)
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -1424,6 +1658,12 @@ impl App {
                 views::modals::breadcrumb_menu_overlay(root, folders, palette, strings),
             ]
             .into()
+        } else if let Some(menu) = &self.context_menu {
+            stack![
+                main_shell,
+                views::modals::context_menu_overlay(self, menu, palette, strings),
+            ]
+            .into()
         } else {
             main_shell.into()
         }
@@ -1462,6 +1702,7 @@ impl App {
     ) -> Task<Message> {
         self.path_editing = false;
         self.quicklook_open = false;
+        self.context_menu = None;
         self.quicklook_image = None;
         self.quicklook_editor = text_editor::Content::new();
         self.quicklook_extension.clear();
@@ -1587,19 +1828,42 @@ impl App {
     }
 
     fn start_clipboard_paste(&mut self) -> Task<Message> {
-        let Some(tab) = self.current_tab() else {
-            return Task::none();
-        };
-        let dest_dir = tab.current_path.clone();
         let Some(transfer) = self.clipboard.clone() else {
             return Task::none();
         };
-        if transfer.paths.is_empty() {
+        if transfer.mode == CopyMode::Move {
+            // Limpeza definitiva ocorre quando transferência for despachada sem diálogo de conflito.
+            let task = self.start_transfer_with_conflict_check(transfer.mode, transfer.paths);
+            if !matches!(self.active_dialog, Some(ActiveDialog::Conflict { .. })) {
+                self.clipboard = None;
+            }
+            return task;
+        }
+        self.start_transfer_with_conflict_check(transfer.mode, transfer.paths)
+    }
+
+    fn flush_dropped_files(&mut self) -> Task<Message> {
+        if self.pending_dropped_paths.is_empty() {
             return Task::none();
         }
+        let sources = std::mem::take(&mut self.pending_dropped_paths);
+        self.start_transfer_with_conflict_check(CopyMode::Copy, sources)
+    }
 
-        let conflicts = transfer
-            .paths
+    fn start_transfer_with_conflict_check(
+        &mut self,
+        mode: CopyMode,
+        sources: Vec<PathBuf>,
+    ) -> Task<Message> {
+        let Some(tab) = self.current_tab() else {
+            return Task::none();
+        };
+        if sources.is_empty() {
+            return Task::none();
+        }
+        let dest_dir = tab.current_path.clone();
+
+        let conflicts = sources
             .iter()
             .filter(|src| {
                 src.parent() != Some(&dest_dir)
@@ -1614,18 +1878,15 @@ impl App {
 
         if conflicts > 0 {
             self.active_dialog = Some(ActiveDialog::Conflict {
-                mode: transfer.mode,
-                sources: transfer.paths,
+                mode,
+                sources,
                 dest_dir,
                 conflicts,
             });
             return Task::none();
         }
 
-        if transfer.mode == CopyMode::Move {
-            self.clipboard = None;
-        }
-        self.dispatch_transfer(transfer.mode, transfer.paths, dest_dir, ConflictPolicy::RenameAuto)
+        self.dispatch_transfer(mode, sources, dest_dir, ConflictPolicy::RenameAuto)
     }
 
     fn dispatch_transfer(
@@ -1976,6 +2237,9 @@ impl App {
             || self.path_editing
             || self.prefs_open;
         if text_input_modal_active {
+            if matches!(key.as_ref(), keyboard::Key::Named(Named::Tab)) && self.path_editing {
+                return self.autocomplete_path_draft();
+            }
             if matches!(key.as_ref(), keyboard::Key::Named(Named::Escape)) {
                 if self.active_dialog.is_some() {
                     return self.update(Message::CloseDialog);
@@ -2000,6 +2264,10 @@ impl App {
                 let id = self.active_tab;
                 self.update(Message::TabClose(id))
             }
+            keyboard::Key::Named(Named::Tab) if modifiers.control() => {
+                self.update(Message::TabNext(modifiers.shift()))
+            }
+            keyboard::Key::Character("a") if modifiers.control() => self.update(Message::SelectAll),
             keyboard::Key::Character("r") if modifiers.control() => {
                 self.update(Message::RefreshActiveTab)
             }
@@ -2038,11 +2306,25 @@ impl App {
             keyboard::Key::Character("l") if modifiers.control() => {
                 self.update(Message::TogglePathEdit)
             }
+            keyboard::Key::Named(Named::ArrowLeft) if modifiers.alt() => {
+                self.update(Message::NavigateBack)
+            }
+            keyboard::Key::Named(Named::ArrowRight) if modifiers.alt() => {
+                self.update(Message::NavigateForward)
+            }
+            keyboard::Key::Named(Named::ArrowUp) if modifiers.alt() => {
+                self.update(Message::NavigateUp)
+            }
+            keyboard::Key::Named(Named::Backspace) if !self.quicklook_open => {
+                self.update(Message::NavigateUp)
+            }
             keyboard::Key::Named(Named::Space) if !modifiers.control() && !modifiers.alt() => {
                 self.update(Message::ToggleQuickLook)
             }
             keyboard::Key::Named(Named::Escape) => {
-                if self.breadcrumb_menu.is_some() {
+                if self.context_menu.is_some() {
+                    self.update(Message::CloseContextMenu)
+                } else if self.breadcrumb_menu.is_some() {
                     self.update(Message::CloseBreadcrumbMenu)
                 } else if self.quicklook_open {
                     self.update(Message::CloseQuickLook)
@@ -2060,6 +2342,124 @@ impl App {
             }
             _ => Task::none(),
         }
+    }
+
+    fn open_tab_at(&mut self, path: PathBuf) -> Task<Message> {
+        let id = TabId(self.next_tab_id);
+        self.next_tab_id += 1;
+        let req = self.alloc_request_id();
+        let mut tab = TabState::new(id, path.clone());
+        tab.view_mode = self.config.default_view_mode;
+        tab.active_request_id = req;
+        tab.is_loading = true;
+        self.tabs.push(tab);
+        self.active_tab = id;
+        self.path_editing = false;
+        self.quicklook_open = false;
+        let cancel = self.reset_tab_cancel(id);
+        Task::batch([
+            spawn_list_task(Arc::clone(&self.vfs), id, path, req, cancel),
+            operation::snap_to(canvas_scroll_id(), RelativeOffset::START),
+        ])
+    }
+
+    fn autocomplete_path_draft(&mut self) -> Task<Message> {
+        let raw = self.path_draft.trim().to_owned();
+        if raw.is_empty() {
+            return Task::none();
+        }
+        let ends_sep = raw.ends_with('/') || raw.ends_with('\\');
+        let raw_path = PathBuf::from(&raw);
+        let (parent, prefix) = if ends_sep {
+            (raw_path, String::new())
+        } else {
+            let parent = raw_path
+                .parent()
+                .map(PathBuf::from)
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| PathBuf::from("/"));
+            let prefix = raw_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            (parent, prefix)
+        };
+
+        if let Some(tab) = self.current_tab()
+            && tab.current_path == parent
+        {
+            let dir_names: Vec<String> = tab
+                .raw_entries
+                .iter()
+                .filter(|e| e.kind.is_dir_like())
+                .map(|e| e.name.to_string())
+                .collect();
+            return self.apply_path_completion(&parent, &prefix, &dir_names);
+        }
+
+        let base_draft = self.path_draft.clone();
+        let vfs = Arc::clone(&self.vfs);
+        Task::perform(
+            async move {
+                let cancel = CancellationToken::new();
+                let dir_names = match vfs.list_dir(&parent, 0, cancel).await {
+                    Ok(snap) => snap
+                        .entries
+                        .into_iter()
+                        .filter(|e| e.kind.is_dir_like())
+                        .map(|e| e.name.to_string())
+                        .collect(),
+                    Err(_) => Vec::new(),
+                };
+                (base_draft, parent, prefix, dir_names)
+            },
+            |(base_draft, parent, prefix, dir_names)| Message::PathAutocompleteLoaded {
+                base_draft,
+                parent,
+                prefix,
+                dir_names,
+            },
+        )
+    }
+
+    fn apply_path_completion(
+        &mut self,
+        parent: &std::path::Path,
+        prefix: &str,
+        dir_names: &[String],
+    ) -> Task<Message> {
+        let lower_prefix = prefix.to_lowercase();
+        let mut matches: Vec<&str> = dir_names
+            .iter()
+            .map(String::as_str)
+            .filter(|name| name.to_lowercase().starts_with(&lower_prefix))
+            .collect();
+        if matches.is_empty() {
+            return Task::none();
+        }
+        matches.sort_by_key(|a| a.to_lowercase());
+
+        if matches.len() == 1 {
+            let mut completed = parent.join(matches[0]).to_string_lossy().into_owned();
+            if !completed.ends_with(std::path::MAIN_SEPARATOR) {
+                completed.push(std::path::MAIN_SEPARATOR);
+            }
+            self.path_draft = completed;
+            return operation::move_cursor_to_end(path_input_id());
+        }
+
+        let common = longest_common_prefix(&matches);
+        if common.len() > prefix.len() {
+            self.path_draft = parent.join(common).to_string_lossy().into_owned();
+            return operation::move_cursor_to_end(path_input_id());
+        }
+        // Quando múltiplos diretórios empatam exatamente no prefixo, cicla para o primeiro candidato.
+        let mut first = parent.join(matches[0]).to_string_lossy().into_owned();
+        if !first.ends_with(std::path::MAIN_SEPARATOR) {
+            first.push(std::path::MAIN_SEPARATOR);
+        }
+        self.path_draft = first;
+        operation::move_cursor_to_end(path_input_id())
     }
 
     fn move_selection(&mut self, delta: isize) -> Task<Message> {
@@ -2186,4 +2586,22 @@ fn basic_file_telemetry(entry: &fm_core::FileEntry) -> SelectedFileTelemetry {
 
 pub fn selected_id_set_contains(tab: &TabState, id: EntryId) -> bool {
     tab.selection.selected_ids.contains(&id)
+}
+
+fn longest_common_prefix<'a>(items: &[&'a str]) -> &'a str {
+    let Some(first) = items.first().copied() else {
+        return "";
+    };
+    let mut prefix_len = first.len();
+    for item in &items[1..] {
+        prefix_len = first
+            .char_indices()
+            .zip(item.chars())
+            .take_while(|((_, a), b)| a.to_lowercase().eq(b.to_lowercase()))
+            .last()
+            .map(|((idx, a), _)| idx + a.len_utf8())
+            .unwrap_or(0)
+            .min(prefix_len);
+    }
+    &first[..prefix_len]
 }

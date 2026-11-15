@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use fm_core::{Language, Strings, TabState, ThemePreset, ViewMode, WindowDecorationsMode};
 use fm_theme::{FONT_MONO, FONT_UI, FONT_UI_SEMIBOLD, Spacing, ThemePalette, styles};
 use iced::Alignment::Center;
-use iced::widget::{Space, button, container, row, space, text, text_input};
+use iced::widget::{Space, button, container, mouse_area, row, space, text, text_input};
 use iced::{Element, Length, Padding};
 use lucide_icons::iced::{
     icon_arrow_left, icon_arrow_right, icon_arrow_up, icon_chevron_right, icon_columns_3,
@@ -63,7 +63,7 @@ fn tab_strip_row<'a>(app: &'a App, palette: ThemePalette) -> Element<'a, Message
         .style(styles::tab_button(palette, is_active))
         .on_press(Message::TabSelect(tab_id));
 
-        tabs_row = tabs_row.push(tab_btn);
+        tabs_row = tabs_row.push(mouse_area(tab_btn).on_middle_press(Message::TabClose(tab_id)));
     }
 
     let add_tab_btn = button(icon_plus().size(14))

@@ -121,6 +121,10 @@ pub fn scan_directory_native(
                 find_data.ftLastWriteTime.dwHighDateTime,
                 find_data.ftLastWriteTime.dwLowDateTime,
             );
+            let created_at = filetime_to_system_time(
+                find_data.ftCreationTime.dwHighDateTime,
+                find_data.ftCreationTime.dwLowDateTime,
+            );
 
             entries.push(make_file_entry(
                 name,
@@ -128,6 +132,7 @@ pub fn scan_directory_native(
                 kind,
                 size_bytes,
                 modified_at,
+                created_at,
                 PermissionsMeta::WinAttributes(attrs),
                 is_hidden,
             ));

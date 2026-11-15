@@ -85,6 +85,12 @@ pub struct Strings {
     pub conflict_rename: &'static str,
     pub conflict_overwrite: &'static str,
     pub conflict_skip: &'static str,
+    pub created: &'static str,
+    pub open_item: &'static str,
+    pub open_in_new_tab: &'static str,
+    pub copy_path: &'static str,
+    pub select_all: &'static str,
+    pub path_copied: &'static str,
 }
 
 impl Strings {
@@ -179,6 +185,12 @@ impl Strings {
             conflict_rename: "Manter ambos (Renomear)",
             conflict_overwrite: "Sobrescrever",
             conflict_skip: "Pular existentes",
+            created: "Criado em",
+            open_item: "Abrir",
+            open_in_new_tab: "Abrir em nova aba",
+            copy_path: "Copiar caminho",
+            select_all: "Selecionar tudo (Ctrl+A)",
+            path_copied: "Caminho copiado",
         }
     }
 
@@ -266,6 +278,12 @@ impl Strings {
             conflict_rename: "Keep both (Rename)",
             conflict_overwrite: "Overwrite",
             conflict_skip: "Skip existing",
+            created: "Created",
+            open_item: "Open",
+            open_in_new_tab: "Open in new tab",
+            copy_path: "Copy path",
+            select_all: "Select all (Ctrl+A)",
+            path_copied: "Path copied",
         }
     }
 }
