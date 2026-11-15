@@ -10,11 +10,7 @@ use lucide_icons::iced::{
 
 use crate::app::{App, Message, SidebarTarget};
 
-pub fn view<'a>(
-    app: &'a App,
-    palette: ThemePalette,
-    strings: Strings,
-) -> Element<'a, Message> {
+pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Element<'a, Message> {
     let collapsed = app.config.sidebar_collapsed;
     let width = if collapsed {
         Spacing::SIDEBAR_COLLAPSED_WIDTH
@@ -23,12 +19,32 @@ pub fn view<'a>(
     };
 
     let quick_candidates = [
-        (SidebarTarget::Documents, strings.documents, icon_folder().size(16)),
+        (
+            SidebarTarget::Documents,
+            strings.documents,
+            icon_folder().size(16),
+        ),
         (SidebarTarget::Home, strings.home, icon_home().size(16)),
-        (SidebarTarget::Desktop, strings.desktop, icon_monitor().size(16)),
-        (SidebarTarget::Downloads, strings.downloads, icon_download().size(16)),
-        (SidebarTarget::Pictures, strings.pictures, icon_image().size(16)),
-        (SidebarTarget::CodeDev, strings.code_dev, icon_terminal().size(16)),
+        (
+            SidebarTarget::Desktop,
+            strings.desktop,
+            icon_monitor().size(16),
+        ),
+        (
+            SidebarTarget::Downloads,
+            strings.downloads,
+            icon_download().size(16),
+        ),
+        (
+            SidebarTarget::Pictures,
+            strings.pictures,
+            icon_image().size(16),
+        ),
+        (
+            SidebarTarget::CodeDev,
+            strings.code_dev,
+            icon_terminal().size(16),
+        ),
     ];
 
     let mut sections = column![].spacing(14).width(Length::Fill);
@@ -104,11 +120,7 @@ pub fn view<'a>(
                     row![
                         container(Space::new().width(Length::Fill).height(3))
                             .width(Length::FillPortion(filled))
-                            .style(move |_| styles::panel_surface(
-                                fill_color,
-                                fill_color,
-                                9999.0
-                            )),
+                            .style(move |_| styles::panel_surface(fill_color, fill_color, 9999.0)),
                         container(Space::new().width(Length::Fill).height(3))
                             .width(Length::FillPortion(remaining.max(1)))
                             .style(move |_| styles::panel_surface(
@@ -189,13 +201,10 @@ pub fn view<'a>(
     .align_y(Center);
 
     container(
-        column![
-            scrollable(sections).height(Length::Fill),
-            footer_actions,
-        ]
-        .spacing(8)
-        .width(Length::Fill)
-        .height(Length::Fill),
+        column![scrollable(sections).height(Length::Fill), footer_actions,]
+            .spacing(8)
+            .width(Length::Fill)
+            .height(Length::Fill),
     )
     .width(Length::Fixed(width))
     .height(Length::Fill)

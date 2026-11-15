@@ -13,6 +13,7 @@ use fm_core::{
 use fm_fs::LocalFs;
 use fm_index::SearchHit;
 use fm_preview::{DiskThumbnailCache, ThumbnailCache, ThumbnailKey, ThumbnailRgba};
+use fm_telemetry::{CachedFileTelemetry, DiskMetadataCache};
 use fm_theme::ThemePalette;
 use iced::futures::SinkExt;
 use iced::keyboard;
@@ -53,6 +54,7 @@ pub enum ContextMenuKind {
     },
     Background,
     NewMenu,
+    FilterMenu,
 }
 
 #[derive(Debug, Clone)]
@@ -63,9 +65,18 @@ pub struct ContextMenuState {
 
 #[derive(Debug, Clone)]
 pub enum ActiveDialog {
-    CreateItem { is_dir: bool, name: String },
-    Rename { src: PathBuf, name: String },
-    ConfirmDelete { paths: Vec<PathBuf>, permanent: bool },
+    CreateItem {
+        is_dir: bool,
+        name: String,
+    },
+    Rename {
+        src: PathBuf,
+        name: String,
+    },
+    ConfirmDelete {
+        paths: Vec<PathBuf>,
+        permanent: bool,
+    },
     Conflict {
         mode: CopyMode,
         sources: Vec<PathBuf>,
@@ -78,16 +89,18 @@ pub fn canvas_scroll_id() -> Id {
     Id::new("fm_canvas_scroll")
 }
 
-pub fn thumbnail_key_for_entry(entry: &FileEntry) -> ThumbnailKey {
-    let modified_nanos = entry
-        .modified_at
+pub fn entry_mtime_nanos(modified_at: Option<std::time::SystemTime>) -> u128 {
+    modified_at
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
+
+pub fn thumbnail_key_for_entry(entry: &FileEntry) -> ThumbnailKey {
     ThumbnailKey {
         path: entry.path.clone(),
         size_bytes: entry.size_bytes,
-        modified_nanos,
+        modified_nanos: entry_mtime_nanos(entry.modified_at),
     }
 }
 
@@ -257,11 +270,17 @@ pub enum Message {
     ToggleWindowDecorations,
     ConfigSaved(Option<String>),
     OpenDefaultFinished(Result<(), FsError>),
+    OpenProperties(PathBuf),
+    PropertiesOpened(Result<(), FsError>),
     OpenNewMenu,
+    OpenFilterMenu,
+    SetExtensionFilter(Option<CompactString>),
     OpenEntryContextMenu(usize),
     OpenCanvasContextMenu,
     CloseContextMenu,
     CopyPath(PathBuf),
+    StartColumnResize(usize),
+    EndColumnResize,
     CursorMoved(Point),
     WindowResized(Size),
     FileDropped(PathBuf),
@@ -273,6 +292,11 @@ pub enum Message {
     GlobalKeyPressed {
         key: keyboard::Key,
         modifiers: keyboard::Modifiers,
+    },
+    MetaCacheReady(Option<Arc<DiskMetadataCache>>),
+    ColumnAncestorsLoaded {
+        request_id: u64,
+        ancestors: Vec<(PathBuf, Vec<FileEntry>)>,
     },
 }
 
@@ -292,6 +316,11 @@ pub struct App {
     pub column_preview_cancel: Option<CancellationToken>,
     pub column_preview_request_id: u64,
     pub column_preview: Option<(PathBuf, Vec<FileEntry>)>,
+    pub column_ancestors: Vec<(PathBuf, Vec<FileEntry>)>,
+    pub column_ancestors_request_id: u64,
+    pub column_ancestors_cancel: Option<CancellationToken>,
+    pub table_col_weights: [f32; 5],
+    pub resizing_col: Option<(usize, f32, [f32; 5])>,
     pub deep_search_open: bool,
     pub deep_search_query: String,
     pub deep_search_loading: bool,
@@ -305,6 +334,7 @@ pub struct App {
     pub active_transfer: Option<JobProgress>,
     pub transfer_cancel: Option<CancellationToken>,
     pub pending_select_path: Option<PathBuf>,
+    pub metadata_cache: Option<Arc<DiskMetadataCache>>,
     pub disk_thumbnail_cache: Option<Arc<DiskThumbnailCache>>,
     pub thumbnail_cache: ThumbnailCache,
     pub gpu_thumbnails: HashMap<ThumbnailKey, image::Handle>,
@@ -379,6 +409,11 @@ impl App {
             column_preview_cancel: None,
             column_preview_request_id: 0,
             column_preview: None,
+            column_ancestors: Vec::new(),
+            column_ancestors_request_id: 0,
+            column_ancestors_cancel: None,
+            table_col_weights: [42.0, 12.0, 10.0, 22.0, 14.0],
+            resizing_col: None,
             deep_search_open: false,
             deep_search_query: String::new(),
             deep_search_loading: false,
@@ -392,6 +427,7 @@ impl App {
             active_transfer: None,
             transfer_cancel: None,
             pending_select_path: None,
+            metadata_cache: None,
             disk_thumbnail_cache: None,
             thumbnail_cache: ThumbnailCache::default(),
             gpu_thumbnails: HashMap::new(),
@@ -425,7 +461,10 @@ impl App {
 
         let drives_task = {
             let vfs = Arc::clone(&vfs);
-            Task::perform(async move { vfs.list_drives().await }, Message::DrivesLoaded)
+            Task::perform(
+                async move { vfs.list_drives().await },
+                Message::DrivesLoaded,
+            )
         };
         let disk_cache_task = Task::perform(
             async {
@@ -437,12 +476,31 @@ impl App {
             },
             Message::DiskCacheReady,
         );
+        let meta_cache_task = Task::perform(
+            async {
+                tokio::task::spawn_blocking(DiskMetadataCache::open_default)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(Arc::new)
+            },
+            Message::MetaCacheReady,
+        );
+        let vibrancy_task = apply_window_vibrancy(app.config.theme);
         let load1 = spawn_list_task(Arc::clone(&vfs), TabId(1), tab1_path, 1, cancel1);
         let load2 = spawn_list_task(vfs, TabId(2), tab2_path, 2, cancel2);
 
         (
             app,
-            Task::batch([auto_theme_task, drives_task, disk_cache_task, load1, load2]),
+            Task::batch([
+                auto_theme_task,
+                drives_task,
+                disk_cache_task,
+                meta_cache_task,
+                vibrancy_task,
+                load1,
+                load2,
+            ]),
         )
     }
 
@@ -517,9 +575,11 @@ impl App {
                     self.quicklook_open = false;
                     self.canvas_scroll_y = 0.0;
                     let thumb_task = self.queue_visible_thumbnails();
+                    let anc_task = self.maybe_load_column_ancestors();
                     return Task::batch([
                         operation::snap_to(canvas_scroll_id(), RelativeOffset::START),
                         thumb_task,
+                        anc_task,
                     ]);
                 }
                 Task::none()
@@ -620,10 +680,7 @@ impl App {
                 if let Some(tab) = self.current_tab_mut() {
                     tab.selection
                         .apply_click(index, modifiers, &tab.visible_entries);
-                    single_entry = tab
-                        .selection
-                        .single_selected(&tab.visible_entries)
-                        .cloned();
+                    single_entry = tab.selection.single_selected(&tab.visible_entries).cloned();
                     tab.selected_telemetry = single_entry.as_ref().map(basic_file_telemetry);
                 }
                 self.dispatch_selection_side_effects(single_entry.as_ref())
@@ -633,10 +690,7 @@ impl App {
                 let mut single_entry = None;
                 if let Some(tab) = self.current_tab_mut() {
                     tab.selection.select_all(&tab.visible_entries);
-                    single_entry = tab
-                        .selection
-                        .single_selected(&tab.visible_entries)
-                        .cloned();
+                    single_entry = tab.selection.single_selected(&tab.visible_entries).cloned();
                     tab.selected_telemetry = single_entry.as_ref().map(basic_file_telemetry);
                 }
                 self.dispatch_selection_side_effects(single_entry.as_ref())
@@ -647,9 +701,12 @@ impl App {
                     .current_tab()
                     .and_then(|t| t.visible_entries.get(index).cloned());
                 if let Some(entry) = target {
-                    if entry.kind.is_dir_like() {
+                    if entry.kind.is_dir_like() || fm_fs::is_archive_file(&entry.path) {
                         self.active_sidebar = None;
                         return self.navigate_active_tab(entry.path);
+                    }
+                    if fm_fs::archive::split_archive_path(&entry.path).is_some() {
+                        return self.update(Message::ToggleQuickLook);
                     }
                     let vfs = Arc::clone(&self.vfs);
                     let path = entry.path;
@@ -670,11 +727,13 @@ impl App {
                     .and_then(|t| t.selection.single_selected(&t.visible_entries))
                     .cloned();
                 let col_task = self.maybe_load_column_preview(single.as_ref());
+                let anc_task = self.maybe_load_column_ancestors();
                 let thumb_task = self.queue_visible_thumbnails();
                 Task::batch([
                     operation::snap_to(canvas_scroll_id(), RelativeOffset::START),
                     thumb_task,
                     col_task,
+                    anc_task,
                 ])
             }
             Message::CycleSortField => {
@@ -761,7 +820,9 @@ impl App {
             Message::ToggleTheme => {
                 self.config.theme_customized = true;
                 self.config.theme = self.config.theme.toggled();
-                self.persist_config_task()
+                let persist = self.persist_config_task();
+                let vibrancy = apply_window_vibrancy(self.config.theme);
+                Task::batch([persist, vibrancy])
             }
             Message::SystemThemeDetected(mode) => {
                 if !self.config.theme_customized {
@@ -771,6 +832,7 @@ impl App {
                             ThemePreset::ObsidianFlow
                         }
                     };
+                    return apply_window_vibrancy(self.config.theme);
                 }
                 Task::none()
             }
@@ -876,20 +938,13 @@ impl App {
                                     .position(|e| e.path == target_path)
                             {
                                 tab.selection.select_single(idx, &tab.visible_entries);
-                                let single = tab
-                                    .selection
-                                    .single_selected(&tab.visible_entries)
-                                    .cloned();
-                                tab.selected_telemetry =
-                                    single.as_ref().map(basic_file_telemetry);
+                                let single =
+                                    tab.selection.single_selected(&tab.visible_entries).cloned();
+                                tab.selected_telemetry = single.as_ref().map(basic_file_telemetry);
                                 pending_selected_entry = single;
                             }
 
-                            let cancel = self
-                                .tab_cancels
-                                .get(&tab_id)
-                                .cloned()
-                                .unwrap_or_default();
+                            let cancel = self.tab_cancels.get(&tab_id).cloned().unwrap_or_default();
                             let dir_path = tab.current_path.clone();
                             tasks.push(Task::perform(
                                 {
@@ -916,11 +971,13 @@ impl App {
                                 .map(|e| e.path.clone())
                                 .collect();
                             if !child_dirs.is_empty() {
+                                let meta_cache = self.metadata_cache.clone();
                                 tasks.push(Task::perform(
                                     async move {
-                                        let counts =
-                                            fm_telemetry::count_direct_children(child_dirs, cancel)
-                                                .await;
+                                        let counts = fm_telemetry::count_direct_children_cached(
+                                            child_dirs, meta_cache, cancel,
+                                        )
+                                        .await;
                                         (tab_id, request_id, counts)
                                     },
                                     |(tab_id, request_id, counts)| Message::ChildCountsReady {
@@ -939,6 +996,10 @@ impl App {
                             tab.last_error = Some(err.to_string());
                         }
                     }
+                }
+
+                if tab_id == self.active_tab {
+                    tasks.push(self.maybe_load_column_ancestors());
                 }
 
                 if pending_selected_entry.is_some() {
@@ -990,17 +1051,12 @@ impl App {
                 if request_id != self.preview_request_id {
                     return Task::none();
                 }
-                self.quicklook_image = rgba
-                    .map(|thumb| {
-                        (
-                            path,
-                            image::Handle::from_rgba(
-                                thumb.width,
-                                thumb.height,
-                                thumb.pixels.clone(),
-                            ),
-                        )
-                    });
+                self.quicklook_image = rgba.map(|thumb| {
+                    (
+                        path,
+                        image::Handle::from_rgba(thumb.width, thumb.height, thumb.pixels.clone()),
+                    )
+                });
                 Task::none()
             }
             Message::QuickLookEditorAction(action) => {
@@ -1057,6 +1113,7 @@ impl App {
                 if request_id != self.selection_telemetry_request_id {
                     return Task::none();
                 }
+                let mut persist_entry: Option<(FileEntry, SelectedFileTelemetry)> = None;
                 if let Some(tab) = self.current_tab_mut()
                     && let Some(selected) = tab.selection.single_selected(&tab.visible_entries)
                     && selected.path == path
@@ -1068,7 +1125,11 @@ impl App {
                     if mime.is_some() {
                         tel.mime_type = mime;
                     }
+                    persist_entry = Some((selected.clone(), tel.clone()));
                     tab.selected_telemetry = Some(tel);
+                }
+                if let Some((entry, tel)) = persist_entry {
+                    self.persist_file_telemetry(&entry, &tel);
                 }
                 Task::none()
             }
@@ -1080,6 +1141,7 @@ impl App {
                 if request_id != self.selection_telemetry_request_id {
                     return Task::none();
                 }
+                let mut persist_entry: Option<(FileEntry, SelectedFileTelemetry)> = None;
                 if let Some(tab) = self.current_tab_mut()
                     && let Some(selected) = tab.selection.single_selected(&tab.visible_entries)
                     && selected.path == path
@@ -1092,7 +1154,11 @@ impl App {
                         tel.sha256_prefix = Some(prefix);
                         tel.sha256_full = Some(full);
                     }
+                    persist_entry = Some((selected.clone(), tel.clone()));
                     tab.selected_telemetry = Some(tel);
+                }
+                if let Some((entry, tel)) = persist_entry {
+                    self.persist_file_telemetry(&entry, &tel);
                 }
                 Task::none()
             }
@@ -1301,8 +1367,7 @@ impl App {
                 Task::none()
             }
             Message::DialogSetCreateIsDir(is_dir) => {
-                if let Some(ActiveDialog::CreateItem { is_dir: cur, .. }) =
-                    &mut self.active_dialog
+                if let Some(ActiveDialog::CreateItem { is_dir: cur, .. }) = &mut self.active_dialog
                 {
                     *cur = is_dir;
                 }
@@ -1384,21 +1449,19 @@ impl App {
             Message::FileOpFinished {
                 result,
                 select_after,
-            } => {
-                match result {
-                    Ok(()) => {
-                        self.status_notice = None;
-                        if let Some(target) = select_after {
-                            self.pending_select_path = Some(target);
-                        }
-                        self.update(Message::RefreshActiveTab)
+            } => match result {
+                Ok(()) => {
+                    self.status_notice = None;
+                    if let Some(target) = select_after {
+                        self.pending_select_path = Some(target);
                     }
-                    Err(err) => {
-                        self.status_notice = Some(err.to_string());
-                        Task::none()
-                    }
+                    self.update(Message::RefreshActiveTab)
                 }
-            }
+                Err(err) => {
+                    self.status_notice = Some(err.to_string());
+                    Task::none()
+                }
+            },
             Message::ColumnPreviewLoaded {
                 request_id,
                 path,
@@ -1439,7 +1502,10 @@ impl App {
                 };
                 let persist = self.persist_config_task();
                 if cfg!(not(target_os = "windows")) {
-                    Task::batch([persist, window::latest().and_then(window::toggle_decorations)])
+                    Task::batch([
+                        persist,
+                        window::latest().and_then(window::toggle_decorations),
+                    ])
                 } else {
                     persist
                 }
@@ -1481,10 +1547,7 @@ impl App {
                     target_meta = Some((entry.path.clone(), entry.kind.is_dir_like()));
                     if !already_selected {
                         tab.selection.select_single(index, &tab.visible_entries);
-                        let single = tab
-                            .selection
-                            .single_selected(&tab.visible_entries)
-                            .cloned();
+                        let single = tab.selection.single_selected(&tab.visible_entries).cloned();
                         tab.selected_telemetry = single.as_ref().map(basic_file_telemetry);
                         side_task = self.dispatch_selection_side_effects(single.as_ref());
                     }
@@ -1519,8 +1582,82 @@ impl App {
                 self.status_notice = Some(self.strings().path_copied.to_owned());
                 clipboard::write(text)
             }
+            Message::OpenProperties(path) => {
+                self.context_menu = None;
+                let vfs = Arc::clone(&self.vfs);
+                Task::perform(
+                    async move { vfs.open_properties(&path).await },
+                    Message::PropertiesOpened,
+                )
+            }
+            Message::PropertiesOpened(res) => {
+                if let Err(err) = res {
+                    self.status_notice = Some(err.to_string());
+                }
+                Task::none()
+            }
+            Message::OpenFilterMenu => {
+                self.breadcrumb_menu = None;
+                let is_already_filter = matches!(
+                    self.context_menu.as_ref().map(|m| &m.kind),
+                    Some(ContextMenuKind::FilterMenu)
+                );
+                if is_already_filter {
+                    self.context_menu = None;
+                } else {
+                    self.context_menu = Some(ContextMenuState {
+                        kind: ContextMenuKind::FilterMenu,
+                        position: self.cursor_position,
+                    });
+                }
+                Task::none()
+            }
+            Message::SetExtensionFilter(ext) => {
+                self.context_menu = None;
+                if let Some(tab) = self.current_tab_mut() {
+                    tab.extension_filter = ext;
+                    apply_tab_filter(tab);
+                }
+                self.canvas_scroll_y = 0.0;
+                self.queue_visible_thumbnails()
+            }
+            Message::StartColumnResize(idx) => {
+                if idx < 4 {
+                    self.resizing_col = Some((idx, self.cursor_position.x, self.table_col_weights));
+                }
+                Task::none()
+            }
+            Message::EndColumnResize => {
+                self.resizing_col = None;
+                Task::none()
+            }
             Message::CursorMoved(pos) => {
                 self.cursor_position = pos;
+                if let Some((idx, start_x, initial_weights)) = self.resizing_col
+                    && idx < 4
+                {
+                    let content_width = (self.window_size.width - 280.0).max(480.0);
+                    let delta_weight = ((pos.x - start_x) / content_width) * 100.0;
+                    let pair_sum = initial_weights[idx] + initial_weights[idx + 1];
+                    let min_w = 6.0_f32;
+                    let max_w = (pair_sum - min_w).max(min_w);
+                    let new_left = (initial_weights[idx] + delta_weight).clamp(min_w, max_w);
+                    self.table_col_weights[idx] = new_left;
+                    self.table_col_weights[idx + 1] = pair_sum - new_left;
+                }
+                Task::none()
+            }
+            Message::MetaCacheReady(cache) => {
+                self.metadata_cache = cache;
+                Task::none()
+            }
+            Message::ColumnAncestorsLoaded {
+                request_id,
+                ancestors,
+            } => {
+                if request_id == self.column_ancestors_request_id {
+                    self.column_ancestors = ancestors;
+                }
                 Task::none()
             }
             Message::WindowResized(size) => {
@@ -1554,9 +1691,7 @@ impl App {
                 self.current_modifiers = modifiers;
                 Task::none()
             }
-            Message::GlobalKeyPressed { key, modifiers } => {
-                self.handle_global_key(key, modifiers)
-            }
+            Message::GlobalKeyPressed { key, modifiers } => self.handle_global_key(key, modifiers),
         }
     }
 
@@ -1580,6 +1715,9 @@ impl App {
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 Some(Message::CursorMoved(position))
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                Some(Message::EndColumnResize)
             }
             Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized(size)),
             Event::Window(window::Event::FileDropped(path)) => Some(Message::FileDropped(path)),
@@ -1802,13 +1940,12 @@ impl App {
                     return Task::none();
                 }
                 let select_target = dst.clone();
-                Task::perform(
-                    async move { vfs.rename(&src, &dst).await },
-                    move |result| Message::FileOpFinished {
+                Task::perform(async move { vfs.rename(&src, &dst).await }, move |result| {
+                    Message::FileOpFinished {
                         result,
                         select_after: Some(select_target),
-                    },
-                )
+                    }
+                })
             }
             ActiveDialog::ConfirmDelete { paths, permanent } => Task::perform(
                 async move {
@@ -1918,19 +2055,16 @@ impl App {
         let transfer_stream = stream::channel(32, async move |mut output| {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let handle = tokio::spawn(async move {
-                let _ = fm_fs::run_transfer_job(
-                    job_id,
-                    mode,
-                    sources,
-                    dest_dir,
-                    policy,
-                    cancel,
-                    tx,
-                )
-                .await;
+                let _ =
+                    fm_fs::run_transfer_job(job_id, mode, sources, dest_dir, policy, cancel, tx)
+                        .await;
             });
             while let Some(progress) = rx.recv().await {
-                if output.send(Message::TransferProgress(progress)).await.is_err() {
+                if output
+                    .send(Message::TransferProgress(progress))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -1993,6 +2127,64 @@ impl App {
         )
     }
 
+    fn maybe_load_column_ancestors(&mut self) -> Task<Message> {
+        if let Some(prev) = self.column_ancestors_cancel.take() {
+            prev.cancel();
+        }
+        let Some(tab) = self.current_tab() else {
+            self.column_ancestors.clear();
+            return Task::none();
+        };
+        if tab.view_mode != ViewMode::Columns {
+            return Task::none();
+        }
+        let show_hidden = tab.show_hidden;
+        let sort = tab.sort;
+        let mut chain: Vec<PathBuf> = tab
+            .current_path
+            .ancestors()
+            .skip(1)
+            .take(3)
+            .map(PathBuf::from)
+            .collect();
+        chain.reverse();
+        if chain.is_empty() {
+            self.column_ancestors.clear();
+            return Task::none();
+        }
+
+        self.column_ancestors_request_id += 1;
+        let req_id = self.column_ancestors_request_id;
+        let cancel = CancellationToken::new();
+        self.column_ancestors_cancel = Some(cancel.clone());
+        let vfs = Arc::clone(&self.vfs);
+
+        Task::perform(
+            async move {
+                let mut ancestors = Vec::with_capacity(chain.len());
+                for dir in chain {
+                    if cancel.is_cancelled() {
+                        break;
+                    }
+                    if let Ok(snap) = vfs.list_dir(&dir, req_id, cancel.clone()).await {
+                        let mut entries: Vec<FileEntry> = snap
+                            .entries
+                            .into_iter()
+                            .filter(|e| show_hidden || !e.is_hidden)
+                            .collect();
+                        entries.sort_by(|a, b| sort.compare(a, b));
+                        ancestors.push((dir, entries));
+                    }
+                }
+                (req_id, ancestors)
+            },
+            |(request_id, ancestors)| Message::ColumnAncestorsLoaded {
+                request_id,
+                ancestors,
+            },
+        )
+    }
+
     fn maybe_load_selection_telemetry(&mut self, entry: Option<&FileEntry>) -> Task<Message> {
         if let Some(prev) = self.selection_telemetry_cancel.take() {
             prev.cancel();
@@ -2000,7 +2192,7 @@ impl App {
         let Some(entry) = entry else {
             return Task::none();
         };
-        if entry.kind.is_dir_like() {
+        if entry.kind.is_dir_like() || fm_fs::archive::split_archive_path(&entry.path).is_some() {
             return Task::none();
         }
         self.selection_telemetry_request_id += 1;
@@ -2011,11 +2203,26 @@ impl App {
         let path_mime = entry.path.clone();
         let path_sha = entry.path.clone();
         let path_git = entry.path.clone();
+        let size_bytes = entry.size_bytes;
+        let modified_nanos = entry_mtime_nanos(entry.modified_at);
+        let meta_cache_mime = self.metadata_cache.clone();
+        let meta_cache_sha = self.metadata_cache.clone();
         let cancel_mime = cancel.clone();
         let cancel_git = cancel.clone();
 
         let mime_task = Task::perform(
             async move {
+                if let Some(cache) = meta_cache_mime {
+                    let p = path_mime.clone();
+                    if let Ok(Some(cached)) = tokio::task::spawn_blocking(move || {
+                        cache.get_file(&p, size_bytes, modified_nanos)
+                    })
+                    .await
+                        && cached.mime.is_some()
+                    {
+                        return (req_id, path_mime, cached.mime);
+                    }
+                }
                 let mime = fm_telemetry::detect_mime_type(&path_mime, cancel_mime).await;
                 (req_id, path_mime, mime)
             },
@@ -2040,6 +2247,17 @@ impl App {
 
         let sha_task = Task::perform(
             async move {
+                if let Some(cache) = meta_cache_sha {
+                    let p = path_sha.clone();
+                    if let Ok(Some(cached)) = tokio::task::spawn_blocking(move || {
+                        cache.get_file(&p, size_bytes, modified_nanos)
+                    })
+                    .await
+                        && let (Some(prefix), Some(full)) = (cached.sha_prefix, cached.sha_full)
+                    {
+                        return (req_id, path_sha, Some((prefix, full)));
+                    }
+                }
                 let sha = fm_telemetry::compute_sha256(&path_sha, cancel).await;
                 (req_id, path_sha, sha)
             },
@@ -2051,6 +2269,23 @@ impl App {
         );
 
         Task::batch([mime_task, git_task, sha_task])
+    }
+
+    fn persist_file_telemetry(&self, entry: &FileEntry, tel: &SelectedFileTelemetry) {
+        let Some(cache) = self.metadata_cache.clone() else {
+            return;
+        };
+        let path = entry.path.clone();
+        let size_bytes = entry.size_bytes;
+        let mod_nanos = entry_mtime_nanos(entry.modified_at);
+        let val = CachedFileTelemetry {
+            mime: tel.mime_type.clone(),
+            sha_prefix: tel.sha256_prefix.clone(),
+            sha_full: tel.sha256_full.clone(),
+        };
+        drop(tokio::task::spawn_blocking(move || {
+            cache.put_file(&path, size_bytes, mod_nanos, &val);
+        }));
     }
 
     fn maybe_load_preview(&mut self, entry: Option<&FileEntry>) -> Task<Message> {
@@ -2072,9 +2307,34 @@ impl App {
         let cancel = CancellationToken::new();
         self.preview_cancel = Some(cancel.clone());
         let path = entry.path.clone();
+        let is_in_archive = fm_fs::archive::split_archive_path(&path).is_some();
 
         if fm_preview::is_image_extension(entry.extension.as_deref()) {
             let max_px = if self.quicklook_open { 560 } else { 160 };
+            if is_in_archive {
+                let vfs = Arc::clone(&self.vfs);
+                let is_svg = entry
+                    .extension
+                    .as_deref()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+                return Task::perform(
+                    async move {
+                        let rgba =
+                            match vfs.read_bytes(&path, 8 * 1024 * 1024, cancel.clone()).await {
+                                Ok(bytes) => fm_preview::decode_thumbnail_from_bytes(
+                                    &bytes, is_svg, max_px, &cancel,
+                                ),
+                                Err(_) => None,
+                            };
+                        (req_id, path, rgba)
+                    },
+                    |(request_id, path, rgba)| Message::QuickLookImageLoaded {
+                        request_id,
+                        path,
+                        rgba,
+                    },
+                );
+            }
             return Task::perform(
                 async move {
                     let rgba = fm_preview::generate_thumbnail(&path, max_px, cancel).await;
@@ -2084,6 +2344,26 @@ impl App {
                     request_id,
                     path,
                     rgba,
+                },
+            );
+        }
+
+        if is_in_archive {
+            let vfs = Arc::clone(&self.vfs);
+            return Task::perform(
+                async move {
+                    let snippet = match vfs.read_bytes(&path, 64 * 1024, cancel).await {
+                        Ok(bytes) if !bytes.contains(&0) => {
+                            Some(String::from_utf8_lossy(&bytes).into_owned())
+                        }
+                        _ => None,
+                    };
+                    (req_id, path, snippet)
+                },
+                |(request_id, path, snippet)| Message::TextPreviewLoaded {
+                    request_id,
+                    path,
+                    snippet,
                 },
             );
         }
@@ -2472,10 +2752,7 @@ impl App {
             let current = tab.selection.focused.unwrap_or(0) as isize;
             let next = (current + delta).clamp(0, len - 1) as usize;
             tab.selection.select_single(next, &tab.visible_entries);
-            let single = tab
-                .selection
-                .single_selected(&tab.visible_entries)
-                .cloned();
+            let single = tab.selection.single_selected(&tab.visible_entries).cloned();
             tab.selected_telemetry = single.as_ref().map(basic_file_telemetry);
             selected_entry = single;
         }
@@ -2512,7 +2789,18 @@ fn apply_tab_filter(tab: &mut TabState) {
     let mut base: Vec<FileEntry> = tab
         .raw_entries
         .iter()
-        .filter(|entry| tab.show_hidden || !entry.is_hidden)
+        .filter(|entry| {
+            let hidden_ok = tab.show_hidden || !entry.is_hidden;
+            let ext_ok = match tab.extension_filter.as_deref() {
+                None => true,
+                Some(":dir") => entry.kind.is_dir_like(),
+                Some(ext) => entry
+                    .extension
+                    .as_deref()
+                    .is_some_and(|e| e.eq_ignore_ascii_case(ext)),
+            };
+            hidden_ok && ext_ok
+        })
         .cloned()
         .collect();
     base.sort_by(|a, b| tab.sort.compare(a, b));
@@ -2604,4 +2892,21 @@ fn longest_common_prefix<'a>(items: &[&'a str]) -> &'a str {
             .min(prefix_len);
     }
     &first[..prefix_len]
+}
+
+#[cfg(target_os = "windows")]
+fn apply_window_vibrancy(theme: ThemePreset) -> Task<Message> {
+    let is_dark = theme == ThemePreset::ObsidianFlow;
+    window::latest().and_then(move |id| {
+        window::run(id, move |win| {
+            let _ = window_vibrancy::apply_mica(win, Some(is_dark))
+                .or_else(|_| window_vibrancy::apply_acrylic(win, None));
+        })
+        .discard()
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_window_vibrancy(_theme: ThemePreset) -> Task<Message> {
+    Task::none()
 }

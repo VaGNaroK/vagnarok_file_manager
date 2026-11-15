@@ -53,7 +53,12 @@ pub fn scan_directory_native(
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
     )
-    .map_err(|errno| map_io_err(path, std::io::Error::from_raw_os_error(errno.raw_os_error())))?;
+    .map_err(|errno| {
+        map_io_err(
+            path,
+            std::io::Error::from_raw_os_error(errno.raw_os_error()),
+        )
+    })?;
 
     let mut buf = vec![MaybeUninit::<u8>::uninit(); 32 * 1024];
     let mut entries = Vec::new();
@@ -76,7 +81,8 @@ pub fn scan_directory_native(
             continue;
         }
 
-        let Some(link_stat) = query_entry_stat(dir_fd.as_fd(), raw_name, AtFlags::SYMLINK_NOFOLLOW) else {
+        let Some(link_stat) = query_entry_stat(dir_fd.as_fd(), raw_name, AtFlags::SYMLINK_NOFOLLOW)
+        else {
             continue;
         };
 
@@ -173,10 +179,7 @@ fn query_entry_stat(
             Some(NativeEntryStat {
                 mode: stat.st_mode,
                 size_bytes: u64::try_from(stat.st_size).unwrap_or(0),
-                modified_at: unix_timespec_to_system_time(
-                    stat.st_mtime,
-                    stat.st_mtime_nsec as u32,
-                ),
+                modified_at: unix_timespec_to_system_time(stat.st_mtime, stat.st_mtime_nsec as u32),
                 created_at: None,
             })
         }
@@ -226,6 +229,55 @@ pub fn open_terminal_at(path: &Path) -> Result<(), FsError> {
     Err(FsError::Io {
         path: path.to_path_buf(),
         message: "nenhum emulador de terminal encontrado no PATH ($TERMINAL)".to_owned(),
+    })
+}
+
+pub fn open_default(path: &Path) -> Result<(), FsError> {
+    open::that_detached(path).map_err(|e| map_io_err(path, e))
+}
+
+/// Solicita a janela nativa de Propriedades via D-Bus `org.freedesktop.FileManager1` quando disponível.
+pub fn open_properties(path: &Path) -> Result<(), FsError> {
+    let uri = format!("file://{}", path.to_string_lossy());
+    if let Ok(st) = Command::new("gdbus")
+        .args([
+            "call",
+            "--session",
+            "--dest",
+            "org.freedesktop.FileManager1",
+            "--object-path",
+            "/org/freedesktop/FileManager1",
+            "--method",
+            "org.freedesktop.FileManager1.ShowItemProperties",
+            &format!("['{uri}']"),
+            "",
+        ])
+        .status()
+        && st.success()
+    {
+        return Ok(());
+    }
+
+    if let Ok(st) = Command::new("dbus-send")
+        .args([
+            "--session",
+            "--dest=org.freedesktop.FileManager1",
+            "--type=method_call",
+            "/org/freedesktop/FileManager1",
+            "org.freedesktop.FileManager1.ShowItemProperties",
+            &format!("array:string:{uri}"),
+            "string:",
+        ])
+        .status()
+        && st.success()
+    {
+        return Ok(());
+    }
+
+    Err(FsError::Io {
+        path: path.to_path_buf(),
+        message: "nenhum serviço org.freedesktop.FileManager1 ativo; use o Inspetor (Alt+I)"
+            .to_owned(),
     })
 }
 

@@ -1,5 +1,5 @@
-use iced::font::{Family, Weight};
 use iced::Font;
+use iced::font::{Family, Weight};
 
 pub const INTER_REGULAR_BYTES: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
 pub const INTER_SEMIBOLD_BYTES: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");

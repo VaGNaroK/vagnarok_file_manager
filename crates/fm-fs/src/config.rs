@@ -96,7 +96,10 @@ mod tests {
         assert!(!loaded.show_hero_card);
         assert!(loaded.show_inspector);
         assert!(loaded.sidebar_collapsed);
-        assert_eq!(loaded.window_decorations, WindowDecorationsMode::IntegratedCsd);
+        assert_eq!(
+            loaded.window_decorations,
+            WindowDecorationsMode::IntegratedCsd
+        );
         assert_eq!(loaded.default_view_mode, ViewMode::Columns);
         assert_eq!(loaded.favorites, vec![PathBuf::from("/tmp/work")]);
     }

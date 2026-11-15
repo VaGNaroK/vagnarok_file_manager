@@ -11,7 +11,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 use crate::map_io_err;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use crate::platform;
 
 const COPY_CHUNK_BYTES: usize = 4 * 1024 * 1024;
@@ -221,11 +221,49 @@ fn copy_tree(
     Ok(())
 }
 
-fn copy_single_file(
-    src: &Path,
-    dst: &Path,
-    ctx: &mut TransferContext<'_>,
-) -> Result<(), FsError> {
+fn copy_single_file(src: &Path, dst: &Path, ctx: &mut TransferContext<'_>) -> Result<(), FsError> {
+    #[cfg(target_os = "windows")]
+    {
+        let base_done = ctx.bytes_done;
+        let mut last_reported = 0u64;
+        let job_id = ctx.job_id;
+        let mode = ctx.mode;
+        let bytes_total = ctx.bytes_total;
+        let items_done = ctx.items_done;
+        let items_total = ctx.items_total;
+        let progress_tx = ctx.progress_tx;
+        let cancel = ctx.cancel;
+        let item_name = src
+            .file_name()
+            .map(|n| CompactString::from(n.to_string_lossy().as_ref()))
+            .unwrap_or_default();
+
+        let mut on_progress = |file_transferred: u64| {
+            last_reported = file_transferred;
+            let _ = progress_tx.send(JobProgress {
+                job_id,
+                mode,
+                bytes_done: base_done.saturating_add(file_transferred),
+                bytes_total,
+                items_done,
+                items_total,
+                current_item: item_name.clone(),
+                state: JobState::Running,
+            });
+        };
+
+        if platform::copy_file_native(src, dst, cancel, &mut on_progress).is_ok() {
+            let final_delta =
+                last_reported.max(std::fs::metadata(dst).map(|m| m.len()).unwrap_or(0));
+            ctx.bytes_done = base_done.saturating_add(final_delta);
+            ctx.emit(src, JobState::Running);
+            return Ok(());
+        }
+        if cancel.is_cancelled() {
+            return Err(FsError::Cancelled);
+        }
+    }
+
     let mut in_opts = OpenOptions::new();
     in_opts.read(true);
     #[cfg(target_os = "windows")]
@@ -364,7 +402,10 @@ fn resolve_target_path(
     }
 }
 
-fn measure_sources(sources: &[PathBuf], cancel: &CancellationToken) -> Result<(u64, usize), FsError> {
+fn measure_sources(
+    sources: &[PathBuf],
+    cancel: &CancellationToken,
+) -> Result<(u64, usize), FsError> {
     let mut total_bytes = 0u64;
     let mut total_items = 0usize;
     for src in sources {

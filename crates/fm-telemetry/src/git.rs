@@ -133,15 +133,17 @@ mod tests {
             .build()
             .expect("rt");
         let outside = std::env::temp_dir().join("non_repo_file.txt");
-        assert!(rt
-            .block_on(detect_file_git_status(&outside, CancellationToken::new()))
-            .is_none());
+        assert!(
+            rt.block_on(detect_file_git_status(&outside, CancellationToken::new()))
+                .is_none()
+        );
 
         let cancel = CancellationToken::new();
         cancel.cancel();
         let repo_file = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
-        assert!(rt
-            .block_on(detect_file_git_status(&repo_file, cancel))
-            .is_none());
+        assert!(
+            rt.block_on(detect_file_git_status(&repo_file, cancel))
+                .is_none()
+        );
     }
 }

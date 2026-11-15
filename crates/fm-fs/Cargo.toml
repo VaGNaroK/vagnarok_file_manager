@@ -8,12 +8,24 @@ license.workspace = true
 async-trait.workspace = true
 compact_str.workspace = true
 directories.workspace = true
+flate2.workspace = true
 fm-core.workspace = true
 open.workspace = true
+tar.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 toml.workspace = true
+tracing.workspace = true
 trash.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+fm-index.workspace = true
+
+[[bench]]
+name = "vfs_bench"
+harness = false
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix.workspace = true

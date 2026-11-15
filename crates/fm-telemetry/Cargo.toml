@@ -6,9 +6,12 @@ license.workspace = true
 
 [dependencies]
 compact_str.workspace = true
+directories.workspace = true
 fm-core.workspace = true
 gix.workspace = true
 infer.workspace = true
+redb.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+tracing.workspace = true

@@ -162,7 +162,10 @@ pub fn pill_secondary_button(p: ThemePalette) -> impl Fn(&Theme, button::Status)
     }
 }
 
-pub fn ghost_button(p: ThemePalette, radius: f32) -> impl Fn(&Theme, button::Status) -> button::Style {
+pub fn ghost_button(
+    p: ThemePalette,
+    radius: f32,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |_, status| {
         let (bg, text_color) = match status {
             button::Status::Hovered | button::Status::Pressed => {
@@ -296,7 +299,9 @@ pub fn entry_card_button(
     }
 }
 
-pub fn search_input_style(p: ThemePalette) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {
+pub fn search_input_style(
+    p: ThemePalette,
+) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {
     move |_, status| {
         let border_color = match status {
             text_input::Status::Focused { .. } => p.accent_primary,

@@ -6,14 +6,15 @@ use fm_theme::{
     FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_BOLD, FONT_UI_SEMIBOLD, ThemePalette, styles,
 };
 use iced::Alignment::Center;
+use iced::mouse;
 use iced::widget::{
     Space, button, column, container, image, mouse_area, responsive, row, scrollable, space, text,
 };
 use iced::{Color, ContentFit, Element, Length, Padding};
 use lucide_icons::iced::{
     icon_arrow_up_down, icon_chevron_right, icon_clipboard_paste, icon_copy, icon_eye,
-    icon_eye_off, icon_info, icon_pencil, icon_plus, icon_scissors, icon_star, icon_terminal,
-    icon_trash_2, icon_x,
+    icon_eye_off, icon_filter, icon_info, icon_pencil, icon_plus, icon_scissors, icon_star,
+    icon_terminal, icon_trash_2, icon_x,
 };
 
 use crate::app::{
@@ -81,8 +82,7 @@ pub fn view<'a>(
         }
     };
 
-    let body = mouse_area(body)
-        .on_right_press(Message::OpenCanvasContextMenu);
+    let body = mouse_area(body).on_right_press(Message::OpenCanvasContextMenu);
 
     container(
         column![header_stack, body]
@@ -290,6 +290,32 @@ fn action_bar<'a>(
         .style(styles::pill_secondary_button(palette))
         .on_press(Message::ToggleSortDirection);
 
+    let filter_label = match tab.extension_filter.as_deref() {
+        None => strings.filter_ext.to_owned(),
+        Some("__DIR__") => format!("{}: {}", strings.filter_ext, strings.directories_only),
+        Some(ext) => format!("{}: .{ext}", strings.filter_ext),
+    };
+    let filter_active = tab.extension_filter.is_some();
+    let filter_btn = button(
+        row![
+            icon_filter().size(13).color(if filter_active {
+                palette.accent_primary
+            } else {
+                palette.text_secondary
+            }),
+            text(filter_label).size(12).color(if filter_active {
+                palette.accent_primary
+            } else {
+                palette.text_primary
+            }),
+        ]
+        .spacing(5)
+        .align_y(Center),
+    )
+    .padding([6, 12])
+    .style(styles::pill_secondary_button(palette))
+    .on_press(Message::OpenFilterMenu);
+
     let hidden_icon = if tab.show_hidden {
         icon_eye().size(13)
     } else {
@@ -333,6 +359,7 @@ fn action_bar<'a>(
             ops_row,
             sort_btn,
             sort_dir_btn,
+            filter_btn,
             hidden_btn,
             terminal_btn,
             fav_btn,
@@ -391,10 +418,13 @@ fn transfer_banner<'a>(
                     .font(FONT_UI_SEMIBOLD)
                     .color(palette.text_primary),
                 space::horizontal(),
-                text(format!("{summary} ({}/{})", job.items_done, job.items_total))
-                    .size(11)
-                    .font(FONT_MONO)
-                    .color(palette.accent_primary),
+                text(format!(
+                    "{summary} ({}/{})",
+                    job.items_done, job.items_total
+                ))
+                .size(11)
+                .font(FONT_MONO)
+                .color(palette.accent_primary),
                 button(icon_x().size(13))
                     .padding([2, 6])
                     .style(styles::ghost_button(palette, 6.0))
@@ -510,10 +540,7 @@ fn metric_block<'a>(
             .size(10)
             .font(FONT_MONO)
             .color(palette.text_muted),
-        text(value)
-            .size(13)
-            .font(FONT_MONO_BOLD)
-            .color(value_color),
+        text(value).size(13).font(FONT_MONO_BOLD).color(value_color),
     ]
     .spacing(2)
     .align_x(iced::alignment::Horizontal::Right)
@@ -713,14 +740,11 @@ fn grid_item_card<'a>(
             .align_x(Center)
             .align_y(Center),
         name_widget,
-        text(sub_label)
-            .size(11)
-            .font(FONT_MONO)
-            .color(if selected {
-                palette.accent_primary
-            } else {
-                palette.text_secondary
-            }),
+        text(sub_label).size(11).font(FONT_MONO).color(if selected {
+            palette.accent_primary
+        } else {
+            palette.text_secondary
+        }),
     ]
     .spacing(4)
     .align_x(Center)
@@ -774,6 +798,26 @@ fn sort_header_button<'a>(
     .into()
 }
 
+fn col_resize_handle<'a>(divider_idx: usize, palette: ThemePalette) -> Element<'a, Message> {
+    let grip = container(
+        container(Space::new().width(1).height(14))
+            .style(move |_| styles::panel_surface(palette.border, Color::TRANSPARENT, 0.0)),
+    )
+    .width(8)
+    .height(22)
+    .align_x(Center)
+    .align_y(Center);
+
+    mouse_area(grip)
+        .interaction(mouse::Interaction::ResizingHorizontally)
+        .on_press(Message::StartColumnResize(divider_idx))
+        .into()
+}
+
+fn portion(weight: f32) -> u16 {
+    (weight * 10.0).round().clamp(50.0, 9000.0) as u16
+}
+
 fn detail_table_view<'a>(
     app: &'a App,
     tab: &'a TabState,
@@ -785,18 +829,36 @@ fn detail_table_view<'a>(
         shift: app.current_modifiers.shift(),
     };
     let pt_br = app.config.language == Language::PtBr;
+    let w = app.table_col_weights;
+    let p = [
+        portion(w[0]),
+        portion(w[1]),
+        portion(w[2]),
+        portion(w[3]),
+        portion(w[4]),
+    ];
 
     let sticky_header = container(
         row![
-            sort_header_button(strings.col_name, SortField::Name, tab.sort, 4, palette),
-            sort_header_button(strings.col_size, SortField::Size, tab.sort, 1, palette),
-            sort_header_button(strings.col_type, SortField::Kind, tab.sort, 1, palette),
+            sort_header_button(strings.col_name, SortField::Name, tab.sort, p[0], palette),
+            col_resize_handle(0, palette),
+            sort_header_button(strings.col_size, SortField::Size, tab.sort, p[1], palette),
+            col_resize_handle(1, palette),
+            sort_header_button(strings.col_type, SortField::Kind, tab.sort, p[2], palette),
+            col_resize_handle(2, palette),
             text(strings.col_perms)
                 .size(11)
                 .font(FONT_MONO_BOLD)
                 .color(palette.text_muted)
-                .width(Length::FillPortion(2)),
-            sort_header_button(strings.col_modified, SortField::Modified, tab.sort, 1, palette),
+                .width(Length::FillPortion(p[3])),
+            col_resize_handle(3, palette),
+            sort_header_button(
+                strings.col_modified,
+                SortField::Modified,
+                tab.sort,
+                p[4],
+                palette
+            ),
         ]
         .align_y(Center)
         .padding([4, 8]),
@@ -849,27 +911,31 @@ fn detail_table_view<'a>(
             ]
             .spacing(10)
             .align_y(Center)
-            .width(Length::FillPortion(4)),
+            .width(Length::FillPortion(p[0])),
+            Space::new().width(8),
             text(size_txt)
                 .size(12)
                 .font(FONT_MONO)
                 .color(palette.text_secondary)
-                .width(Length::FillPortion(1)),
+                .width(Length::FillPortion(p[1])),
+            Space::new().width(8),
             text(kind_txt)
                 .size(11)
                 .font(FONT_MONO)
                 .color(palette.text_muted)
-                .width(Length::FillPortion(1)),
+                .width(Length::FillPortion(p[2])),
+            Space::new().width(8),
             text(perms.as_str().to_owned())
                 .size(12)
                 .font(FONT_MONO)
                 .color(palette.text_secondary)
-                .width(Length::FillPortion(2)),
+                .width(Length::FillPortion(p[3])),
+            Space::new().width(8),
             text(age_txt)
                 .size(11)
                 .font(FONT_MONO)
                 .color(palette.text_muted)
-                .width(Length::FillPortion(1)),
+                .width(Length::FillPortion(p[4])),
         ]
         .align_y(Center);
 
@@ -920,48 +986,117 @@ fn columns_view<'a>(
         shift: app.current_modifiers.shift(),
     };
 
-    let parent_name = tab
-        .current_path
-        .parent()
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "/".to_owned());
+    let mut cols_row = row![].spacing(12).height(Length::Fill);
 
-    let col1 = container(
-        column![
-            button(
-                text(parent_name)
-                    .size(11)
-                    .font(FONT_MONO_BOLD)
-                    .color(palette.text_muted),
-            )
-            .padding([3, 6])
-            .style(styles::ghost_button(palette, 6.0))
-            .on_press(Message::NavigateUp),
-            container(
-                row![
-                    text(tab.title.as_str())
-                        .size(13)
-                        .font(FONT_UI_SEMIBOLD)
-                        .color(palette.accent_primary),
+    if app.column_ancestors.is_empty() {
+        let parent_name = tab
+            .current_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "/".to_owned());
+
+        let col_fallback = container(
+            column![
+                button(
+                    text(parent_name)
+                        .size(11)
+                        .font(FONT_MONO_BOLD)
+                        .color(palette.text_muted),
+                )
+                .padding([3, 6])
+                .style(styles::ghost_button(palette, 6.0))
+                .on_press(Message::NavigateUp),
+                container(
+                    row![
+                        text(tab.title.as_str())
+                            .size(13)
+                            .font(FONT_UI_SEMIBOLD)
+                            .color(palette.accent_primary),
+                        space::horizontal(),
+                        icon_chevron_right().size(14).color(palette.accent_primary),
+                    ]
+                    .align_y(Center),
+                )
+                .padding([6, 8])
+                .style(move |_| styles::panel_surface(
+                    palette.accent_surface,
+                    palette.accent_border,
+                    8.0
+                )),
+            ]
+            .spacing(8),
+        )
+        .width(Length::Fixed(200.0))
+        .height(Length::Fill)
+        .padding(12)
+        .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
+
+        cols_row = cols_row.push(col_fallback);
+    } else {
+        for (anc_path, anc_entries) in &app.column_ancestors {
+            let anc_title = anc_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| anc_path.to_string_lossy().into_owned());
+            let mut list = column![
+                button(
+                    text(anc_title)
+                        .size(11)
+                        .font(FONT_MONO_BOLD)
+                        .color(palette.text_muted),
+                )
+                .padding([2, 4])
+                .style(styles::ghost_button(palette, 4.0))
+                .on_press(Message::NavigateTo(anc_path.clone())),
+            ]
+            .spacing(4);
+
+            for child in anc_entries.iter().take(250) {
+                let is_on_active_chain = tab.current_path.starts_with(&child.path);
+                let (c_icon, _) = entry_icon(child, palette, 14.0);
+                let mut r = row![
+                    c_icon,
+                    text(truncate_label(child.name.as_str(), 22)).size(12).font(
+                        if is_on_active_chain {
+                            FONT_UI_SEMIBOLD
+                        } else {
+                            FONT_UI
+                        }
+                    ),
                     space::horizontal(),
-                    icon_chevron_right().size(14).color(palette.accent_primary),
                 ]
-                .align_y(Center),
-            )
-            .padding([6, 8])
-            .style(move |_| styles::panel_surface(
-                palette.accent_surface,
-                palette.accent_border,
-                8.0
-            )),
-        ]
-        .spacing(8),
-    )
-    .width(Length::FillPortion(1))
-    .height(Length::Fill)
-    .padding(12)
-    .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
+                .spacing(6)
+                .align_y(Center);
+                if child.kind.is_dir_like() {
+                    r = r.push(icon_chevron_right().size(12).color(palette.text_muted));
+                }
+                let target_nav = if child.kind.is_dir_like() {
+                    child.path.clone()
+                } else {
+                    anc_path.clone()
+                };
+                list = list.push(
+                    button(r)
+                        .width(Length::Fill)
+                        .padding([5, 8])
+                        .style(styles::entry_card_button(palette, is_on_active_chain, 6.0))
+                        .on_press(Message::NavigateTo(target_nav)),
+                );
+            }
+
+            let anc_panel = container(scrollable(list).height(Length::Fill))
+                .width(Length::Fixed(210.0))
+                .height(Length::Fill)
+                .padding(10)
+                .style(move |_| {
+                    styles::panel_surface(palette.surface_lowest, palette.border, 10.0)
+                });
+
+            cols_row = cols_row.push(anc_panel);
+        }
+    }
 
     let win = compute_fixed_window(
         tab.visible_entries.len(),
@@ -1026,7 +1161,7 @@ fn columns_view<'a>(
                 viewport_height: vp.bounds().height,
             }),
     )
-    .width(Length::FillPortion(2))
+    .width(Length::Fixed(280.0))
     .height(Length::Fill)
     .padding(12)
     .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
@@ -1060,7 +1195,9 @@ fn columns_view<'a>(
                             let (c_icon, _) = entry_icon(child, palette, 14.0);
                             let mut r = row![
                                 c_icon,
-                                text(child.name.as_str()).size(12).color(palette.text_primary),
+                                text(child.name.as_str())
+                                    .size(12)
+                                    .color(palette.text_primary),
                                 space::horizontal(),
                             ]
                             .spacing(8)
@@ -1105,24 +1242,23 @@ fn columns_view<'a>(
             };
 
             container(sub_content)
-                .width(Length::FillPortion(2))
+                .width(Length::Fixed(270.0))
                 .height(Length::Fill)
                 .padding(12)
                 .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0))
                 .into()
         } else {
-            let preview_visual: Element<'a, Message> = if let Some(handle) =
-                app.gpu_thumbnails.get(&thumbnail_key_for_entry(selected))
-            {
-                image(handle.clone())
-                    .width(96)
-                    .height(96)
-                    .content_fit(ContentFit::Contain)
-                    .into()
-            } else {
-                let (icon_widget, _) = entry_icon(selected, palette, 42.0);
-                icon_widget.into()
-            };
+            let preview_visual: Element<'a, Message> =
+                if let Some(handle) = app.gpu_thumbnails.get(&thumbnail_key_for_entry(selected)) {
+                    image(handle.clone())
+                        .width(96)
+                        .height(96)
+                        .content_fit(ContentFit::Contain)
+                        .into()
+                } else {
+                    let (icon_widget, _) = entry_icon(selected, palette, 42.0);
+                    icon_widget.into()
+                };
 
             let mut preview_col = column![
                 preview_visual,
@@ -1160,7 +1296,7 @@ fn columns_view<'a>(
             }
 
             container(preview_col)
-                .width(Length::FillPortion(2))
+                .width(Length::Fixed(270.0))
                 .height(Length::Fill)
                 .padding(16)
                 .align_x(Center)
@@ -1174,7 +1310,7 @@ fn columns_view<'a>(
                 .size(12)
                 .color(palette.text_muted),
         )
-        .width(Length::FillPortion(2))
+        .width(Length::Fixed(270.0))
         .height(Length::Fill)
         .padding(16)
         .align_x(Center)
@@ -1183,8 +1319,12 @@ fn columns_view<'a>(
         .into()
     };
 
-    row![col1, col2, col3]
-        .spacing(12)
+    cols_row = cols_row.push(col2).push(col3);
+
+    scrollable(cols_row)
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new(),
+        ))
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

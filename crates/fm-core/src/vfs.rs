@@ -37,4 +37,11 @@ pub trait VfsProvider: Send + Sync {
     async fn delete_permanent(&self, paths: &[PathBuf]) -> Result<(), FsError>;
     async fn open_default(&self, path: &Path) -> Result<(), FsError>;
     async fn open_terminal(&self, path: &Path) -> Result<(), FsError>;
+    async fn open_properties(&self, path: &Path) -> Result<(), FsError>;
+    async fn read_bytes(
+        &self,
+        path: &Path,
+        max_bytes: usize,
+        cancel: CancellationToken,
+    ) -> Result<Vec<u8>, FsError>;
 }

@@ -20,6 +20,17 @@ pub fn open_terminal_at(path: &Path) -> Result<(), FsError> {
     })
 }
 
+pub fn open_default(path: &Path) -> Result<(), FsError> {
+    open::that_detached(path).map_err(|e| crate::map_io_err(path, e))
+}
+
+pub fn open_properties(path: &Path) -> Result<(), FsError> {
+    Err(FsError::Io {
+        path: path.to_path_buf(),
+        message: "diálogo nativo de propriedades indisponível nesta plataforma".to_owned(),
+    })
+}
+
 pub fn extract_permissions_and_hidden(name: &str, _meta: &Metadata) -> (PermissionsMeta, bool) {
     (PermissionsMeta::PosixMode(0o644), name.starts_with('.'))
 }

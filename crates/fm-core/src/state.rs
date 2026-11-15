@@ -128,6 +128,7 @@ pub struct TabState {
     pub sort: SortSpec,
     pub show_hidden: bool,
     pub filter_query: String,
+    pub extension_filter: Option<CompactString>,
     pub raw_entries: Vec<FileEntry>,
     pub visible_entries: Vec<FileEntry>,
     pub fs_type: Option<CompactString>,
@@ -158,6 +159,7 @@ impl TabState {
             sort: SortSpec::default(),
             show_hidden: false,
             filter_query: String::new(),
+            extension_filter: None,
             raw_entries: Vec::new(),
             visible_entries: Vec::new(),
             fs_type: None,
@@ -173,12 +175,19 @@ impl TabState {
     /// Reaplica filtro, visibilidade de ocultos e ordenação sobre `raw_entries`.
     pub fn recompute_visible(&mut self) {
         let query = self.filter_query.trim().to_ascii_lowercase();
+        let ext_filter = self.extension_filter.as_deref();
         let mut filtered: Vec<FileEntry> = self
             .raw_entries
             .iter()
             .filter(|entry| self.show_hidden || !entry.is_hidden)
-            .filter(|entry| {
-                query.is_empty() || entry.name.to_ascii_lowercase().contains(&query)
+            .filter(|entry| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
+            .filter(|entry| match ext_filter {
+                None => true,
+                Some("__DIR__") => entry.kind.is_dir_like(),
+                Some(ext) => entry
+                    .extension
+                    .as_deref()
+                    .is_some_and(|e| e.eq_ignore_ascii_case(ext)),
             })
             .cloned()
             .collect();
@@ -226,13 +235,27 @@ impl TabState {
             .file_name()
             .map(|n| CompactString::from(n.to_string_lossy().as_ref()))
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
-                CompactString::from(self.current_path.to_string_lossy().as_ref())
-            });
+            .unwrap_or_else(|| CompactString::from(self.current_path.to_string_lossy().as_ref()));
         self.selection.clear();
         self.selected_telemetry = None;
         self.filter_query.clear();
+        self.extension_filter = None;
         self.last_error = None;
+    }
+
+    /// Lista ordenada das extensões presentes em `raw_entries` (respeitando `show_hidden`).
+    pub fn available_extensions(&self) -> Vec<CompactString> {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        for entry in &self.raw_entries {
+            if (self.show_hidden || !entry.is_hidden)
+                && !entry.kind.is_dir_like()
+                && let Some(ext) = &entry.extension
+            {
+                set.insert(ext.to_ascii_lowercase());
+            }
+        }
+        set.into_iter().collect()
     }
 
     pub fn can_go_back(&self) -> bool {

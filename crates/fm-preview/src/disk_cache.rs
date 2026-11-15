@@ -100,7 +100,9 @@ fn decode_value(bytes: &[u8]) -> Option<ThumbnailRgba> {
     }
     let width = u32::from_le_bytes(bytes[0..4].try_into().ok()?);
     let height = u32::from_le_bytes(bytes[4..8].try_into().ok()?);
-    let expected_len = (width as usize).checked_mul(height as usize)?.checked_mul(4)?;
+    let expected_len = (width as usize)
+        .checked_mul(height as usize)?
+        .checked_mul(4)?;
     let pixels = &bytes[8..];
     if pixels.len() != expected_len || width == 0 || height == 0 {
         return None;

@@ -91,6 +91,11 @@ pub struct Strings {
     pub copy_path: &'static str,
     pub select_all: &'static str,
     pub path_copied: &'static str,
+    pub properties: &'static str,
+    pub filter_all: &'static str,
+    pub filter_ext: &'static str,
+    pub directories_only: &'static str,
+    pub archive_readonly: &'static str,
 }
 
 impl Strings {
@@ -191,6 +196,11 @@ impl Strings {
             copy_path: "Copiar caminho",
             select_all: "Selecionar tudo (Ctrl+A)",
             path_copied: "Caminho copiado",
+            properties: "Propriedades",
+            filter_all: "Todos",
+            filter_ext: "Filtrar",
+            directories_only: "Pastas",
+            archive_readonly: "Arquivo compactado (somente leitura)",
         }
     }
 
@@ -284,6 +294,11 @@ impl Strings {
             copy_path: "Copy path",
             select_all: "Select all (Ctrl+A)",
             path_copied: "Path copied",
+            properties: "Properties",
+            filter_all: "All",
+            filter_ext: "Filter",
+            directories_only: "Folders",
+            archive_readonly: "Compressed archive (read-only)",
         }
     }
 }

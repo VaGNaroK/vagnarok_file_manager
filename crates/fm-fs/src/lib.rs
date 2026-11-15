@@ -2,9 +2,11 @@
 //!
 //! Implementações específicas de SO ficam confinadas em submódulos `#[cfg(target_os = ...)]`.
 
+pub mod archive;
 pub mod config;
 pub mod copy_engine;
 
+pub use archive::is_archive_file;
 pub use config::{config_file_path, load_config, save_config};
 pub use copy_engine::run_transfer_job;
 
@@ -49,14 +51,18 @@ pub fn user_places() -> UserPlaces {
 
     UserPlaces {
         home,
-        desktop: user.as_ref().and_then(|u| u.desktop_dir().map(Path::to_path_buf)),
+        desktop: user
+            .as_ref()
+            .and_then(|u| u.desktop_dir().map(Path::to_path_buf)),
         documents: user
             .as_ref()
             .and_then(|u| u.document_dir().map(Path::to_path_buf)),
         downloads: user
             .as_ref()
             .and_then(|u| u.download_dir().map(Path::to_path_buf)),
-        pictures: user.as_ref().and_then(|u| u.picture_dir().map(Path::to_path_buf)),
+        pictures: user
+            .as_ref()
+            .and_then(|u| u.picture_dir().map(Path::to_path_buf)),
         trash,
     }
 }
@@ -94,12 +100,30 @@ impl VfsProvider for LocalFs {
         cancel: CancellationToken,
     ) -> Result<DirectorySnapshot, FsError> {
         let target = path.to_path_buf();
-        tokio::task::spawn_blocking(move || platform::scan_directory_native(&target, request_id, &cancel))
-            .await
-            .map_err(|err| FsError::Io {
-                path: path.to_path_buf(),
-                message: format!("falha na tarefa de listagem: {err}"),
-            })?
+        tokio::task::spawn_blocking(move || {
+            let started = std::time::Instant::now();
+            let result = if let Some((archive_path, inner_prefix, kind)) =
+                archive::split_archive_path(&target)
+            {
+                archive::list_archive_dir(&archive_path, &inner_prefix, kind, request_id, &cancel)
+            } else {
+                platform::scan_directory_native(&target, request_id, &cancel)
+            };
+            if let Ok(snap) = &result {
+                tracing::debug!(
+                    path = %target.display(),
+                    entries = snap.entries.len(),
+                    elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                    "list_dir_completed"
+                );
+            }
+            result
+        })
+        .await
+        .map_err(|err| FsError::Io {
+            path: path.to_path_buf(),
+            message: format!("falha na tarefa de listagem: {err}"),
+        })?
     }
 
     async fn list_drives(&self) -> Result<Vec<DriveInfo>, FsError> {
@@ -122,16 +146,30 @@ impl VfsProvider for LocalFs {
     }
 
     async fn create_dir(&self, path: &Path) -> Result<(), FsError> {
-        let target = path.to_path_buf();
-        tokio::task::spawn_blocking(move || std::fs::create_dir(&target).map_err(|e| map_io_err(&target, e)))
-            .await
-            .map_err(|err| FsError::Io {
+        if archive::split_archive_path(path).is_some() {
+            return Err(FsError::Io {
                 path: path.to_path_buf(),
-                message: err.to_string(),
-            })?
+                message: "arquivos compactados são somente leitura".to_owned(),
+            });
+        }
+        let target = path.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            std::fs::create_dir(&target).map_err(|e| map_io_err(&target, e))
+        })
+        .await
+        .map_err(|err| FsError::Io {
+            path: path.to_path_buf(),
+            message: err.to_string(),
+        })?
     }
 
     async fn create_file(&self, path: &Path) -> Result<(), FsError> {
+        if archive::split_archive_path(path).is_some() {
+            return Err(FsError::Io {
+                path: path.to_path_buf(),
+                message: "arquivos compactados são somente leitura".to_owned(),
+            });
+        }
         let target = path.to_path_buf();
         tokio::task::spawn_blocking(move || {
             std::fs::OpenOptions::new()
@@ -149,6 +187,13 @@ impl VfsProvider for LocalFs {
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), FsError> {
+        if archive::split_archive_path(from).is_some() || archive::split_archive_path(to).is_some()
+        {
+            return Err(FsError::Io {
+                path: from.to_path_buf(),
+                message: "arquivos compactados são somente leitura".to_owned(),
+            });
+        }
         let src = from.to_path_buf();
         let dst = to.to_path_buf();
         tokio::task::spawn_blocking(move || {
@@ -162,6 +207,15 @@ impl VfsProvider for LocalFs {
     }
 
     async fn move_to_trash(&self, paths: &[PathBuf]) -> Result<(), FsError> {
+        if let Some(arch) = paths
+            .iter()
+            .find(|p| archive::split_archive_path(p).is_some())
+        {
+            return Err(FsError::Io {
+                path: arch.clone(),
+                message: "arquivos compactados são somente leitura".to_owned(),
+            });
+        }
         let targets = paths.to_vec();
         if targets.is_empty() {
             return Ok(());
@@ -180,6 +234,15 @@ impl VfsProvider for LocalFs {
     }
 
     async fn delete_permanent(&self, paths: &[PathBuf]) -> Result<(), FsError> {
+        if let Some(arch) = paths
+            .iter()
+            .find(|p| archive::split_archive_path(p).is_some())
+        {
+            return Err(FsError::Io {
+                path: arch.clone(),
+                message: "arquivos compactados são somente leitura".to_owned(),
+            });
+        }
         let targets = paths.to_vec();
         tokio::task::spawn_blocking(move || {
             for target in &targets {
@@ -201,24 +264,82 @@ impl VfsProvider for LocalFs {
 
     async fn open_default(&self, path: &Path) -> Result<(), FsError> {
         let target = path.to_path_buf();
+        tokio::task::spawn_blocking(move || platform::open_default(&target))
+            .await
+            .map_err(|err| FsError::Io {
+                path: path.to_path_buf(),
+                message: err.to_string(),
+            })?
+    }
+
+    async fn open_terminal(&self, path: &Path) -> Result<(), FsError> {
+        let target = if let Some((archive_path, _, _)) = archive::split_archive_path(path) {
+            archive_path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or(archive_path)
+        } else {
+            path.to_path_buf()
+        };
+        let fallback = path.to_path_buf();
+        tokio::task::spawn_blocking(move || platform::open_terminal_at(&target))
+            .await
+            .map_err(|err| FsError::Io {
+                path: fallback,
+                message: err.to_string(),
+            })?
+    }
+
+    async fn open_properties(&self, path: &Path) -> Result<(), FsError> {
+        let target = path.to_path_buf();
+        tokio::task::spawn_blocking(move || platform::open_properties(&target))
+            .await
+            .map_err(|err| FsError::Io {
+                path: path.to_path_buf(),
+                message: err.to_string(),
+            })?
+    }
+
+    async fn read_bytes(
+        &self,
+        path: &Path,
+        max_bytes: usize,
+        cancel: CancellationToken,
+    ) -> Result<Vec<u8>, FsError> {
+        let target = path.to_path_buf();
         tokio::task::spawn_blocking(move || {
-            open::that_detached(&target).map_err(|e| map_io_err(&target, e))
+            if cancel.is_cancelled() {
+                return Err(FsError::Cancelled);
+            }
+            if let Some((archive_path, inner_path, kind)) = archive::split_archive_path(&target) {
+                return archive::read_archive_bytes(
+                    &archive_path,
+                    &inner_path,
+                    kind,
+                    max_bytes,
+                    &cancel,
+                );
+            }
+            use std::io::Read;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.read(true);
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                opts.share_mode(0x7);
+            }
+            let file = opts.open(&target).map_err(|e| map_io_err(&target, e))?;
+            let mut out = Vec::with_capacity(max_bytes.min(64 * 1024));
+            file.take(max_bytes as u64)
+                .read_to_end(&mut out)
+                .map_err(|e| map_io_err(&target, e))?;
+            Ok(out)
         })
         .await
         .map_err(|err| FsError::Io {
             path: path.to_path_buf(),
             message: err.to_string(),
         })?
-    }
-
-    async fn open_terminal(&self, path: &Path) -> Result<(), FsError> {
-        let target = path.to_path_buf();
-        tokio::task::spawn_blocking(move || platform::open_terminal_at(&target))
-            .await
-            .map_err(|err| FsError::Io {
-                path: path.to_path_buf(),
-                message: err.to_string(),
-            })?
     }
 }
 
@@ -366,11 +487,8 @@ mod tests {
     impl TestDir {
         fn new() -> Self {
             let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "vagnarok_fm_test_{}_{}",
-                std::process::id(),
-                n
-            ));
+            let path =
+                std::env::temp_dir().join(format!("vagnarok_fm_test_{}_{}", std::process::id(), n));
             std::fs::create_dir_all(&path).expect("create temp test dir");
             Self(path)
         }
@@ -469,7 +587,10 @@ mod tests {
             #[cfg(not(target_os = "linux"))]
             let _ = drives;
 
-            let space = fs.volume_space(&places.home).await.expect("volume_space ok");
+            let space = fs
+                .volume_space(&places.home)
+                .await
+                .expect("volume_space ok");
             #[cfg(target_os = "linux")]
             assert!(space.is_some());
             #[cfg(not(target_os = "linux"))]

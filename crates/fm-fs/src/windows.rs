@@ -1,4 +1,4 @@
-use std::ffi::OsString;
+use std::ffi::{OsString, c_void};
 use std::fs::Metadata;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::fs::MetadataExt;
@@ -11,13 +11,18 @@ use fm_core::{
     DirectorySnapshot, DriveInfo, DriveKind, EntryKind, FsError, PermissionsMeta, VolumeSpace,
 };
 use tokio_util::sync::CancellationToken;
-use windows::Win32::Foundation::{ERROR_NO_MORE_FILES, HANDLE};
+use windows::Win32::Foundation::{ERROR_NO_MORE_FILES, HANDLE, HWND};
 use windows::Win32::Storage::FileSystem::{
+    COPYFILE_FLAGS, COPYPROGRESSROUTINE_PROGRESS, CopyFileExW, FIND_FIRST_EX_LARGE_FETCH,
     FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
-    FIND_FIRST_EX_LARGE_FETCH, GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDriveStringsW,
-    GetVolumeInformationW, WIN32_FIND_DATAW,
+    GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDriveStringsW, GetVolumeInformationW,
+    LPPROGRESS_ROUTINE_CALLBACK_REASON, PROGRESS_CANCEL, PROGRESS_CONTINUE, WIN32_FIND_DATAW,
 };
-use windows::core::PCWSTR;
+use windows::Win32::UI::Shell::{
+    SEE_MASK_FLAG_NO_UI, SEE_MASK_INVOKEIDLIST, SHELLEXECUTEINFOW, ShellExecuteExW,
+};
+use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows::core::{BOOL, PCWSTR};
 
 use crate::{make_file_entry, map_io_err};
 
@@ -48,7 +53,7 @@ pub fn scan_directory_native(
     }
 
     let pattern = path.join("*");
-    let wide = to_wide(&pattern);
+    let wide = to_long_wide(&pattern);
     let mut find_data = WIN32_FIND_DATAW::default();
 
     // SAFETY: `wide` é null-terminated válido e `find_data` é um buffer válido na stack.
@@ -116,7 +121,8 @@ pub fn scan_directory_native(
                 EntryKind::File
             };
 
-            let size_bytes = (u64::from(find_data.nFileSizeHigh) << 32) | u64::from(find_data.nFileSizeLow);
+            let size_bytes =
+                (u64::from(find_data.nFileSizeHigh) << 32) | u64::from(find_data.nFileSizeLow);
             let modified_at = filetime_to_system_time(
                 find_data.ftLastWriteTime.dwHighDateTime,
                 find_data.ftLastWriteTime.dwLowDateTime,
@@ -177,6 +183,105 @@ pub fn open_terminal_at(path: &Path) -> Result<(), FsError> {
         .map_err(|e| map_io_err(path, e))
 }
 
+pub fn open_default(path: &Path) -> Result<(), FsError> {
+    shell_execute_verb(path, "open")
+}
+
+pub fn open_properties(path: &Path) -> Result<(), FsError> {
+    shell_execute_verb(path, "properties")
+}
+
+fn shell_execute_verb(path: &Path, verb: &str) -> Result<(), FsError> {
+    let verb_w = to_str_wide(verb);
+    let file_w = to_long_wide(path);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_INVOKEIDLIST | SEE_MASK_FLAG_NO_UI,
+        hwnd: HWND::default(),
+        lpVerb: PCWSTR(verb_w.as_ptr()),
+        lpFile: PCWSTR(file_w.as_ptr()),
+        lpParameters: PCWSTR::null(),
+        lpDirectory: PCWSTR::null(),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+
+    // SAFETY: `info`, `verb_w` e `file_w` permanecem vivos e imutáveis na stack durante `ShellExecuteExW`.
+    unsafe { ShellExecuteExW(&raw mut info) }.map_err(|e| map_io_err(path, std::io::Error::from(e)))
+}
+
+struct WinCopyCallbackState<'a> {
+    cancel: &'a CancellationToken,
+    on_progress: &'a mut dyn FnMut(u64),
+    cancelled_by_token: bool,
+}
+
+unsafe extern "system" fn win_copy_progress_cb(
+    _total_size: i64,
+    total_transferred: i64,
+    _stream_size: i64,
+    _stream_transferred: i64,
+    _stream_number: u32,
+    _reason: LPPROGRESS_ROUTINE_CALLBACK_REASON,
+    _src_handle: HANDLE,
+    _dst_handle: HANDLE,
+    lp_data: *const c_void,
+) -> COPYPROGRESSROUTINE_PROGRESS {
+    if lp_data.is_null() {
+        return PROGRESS_CONTINUE;
+    }
+    // SAFETY: `lp_data` aponta exclusivamente para `WinCopyCallbackState` válido no frame de `copy_file_native`.
+    let state = unsafe { &mut *(lp_data as *mut WinCopyCallbackState<'_>) };
+    if state.cancel.is_cancelled() {
+        state.cancelled_by_token = true;
+        return PROGRESS_CANCEL;
+    }
+    if total_transferred >= 0 {
+        (state.on_progress)(total_transferred as u64);
+    }
+    PROGRESS_CONTINUE
+}
+
+/// Copia arquivo nativamente via `CopyFileExW` no Windows com suporte a caminhos longos e cancelamento.
+pub fn copy_file_native(
+    src: &Path,
+    dst: &Path,
+    cancel: &CancellationToken,
+    on_progress: &mut dyn FnMut(u64),
+) -> Result<(), FsError> {
+    if cancel.is_cancelled() {
+        return Err(FsError::Cancelled);
+    }
+
+    let src_w = to_long_wide(src);
+    let dst_w = to_long_wide(dst);
+    let mut state = WinCopyCallbackState {
+        cancel,
+        on_progress,
+        cancelled_by_token: false,
+    };
+    let mut cancel_flag = BOOL(0);
+
+    // SAFETY: `src_w`, `dst_w`, `state` e `cancel_flag` permanecem válidos até `CopyFileExW` retornar.
+    let res = unsafe {
+        CopyFileExW(
+            PCWSTR(src_w.as_ptr()),
+            PCWSTR(dst_w.as_ptr()),
+            Some(win_copy_progress_cb),
+            Some((&raw mut state).cast()),
+            Some(&raw mut cancel_flag),
+            COPYFILE_FLAGS(0),
+        )
+    };
+
+    if state.cancelled_by_token || cancel.is_cancelled() {
+        let _ = std::fs::remove_file(dst);
+        return Err(FsError::Cancelled);
+    }
+
+    res.map_err(|e| map_io_err(dst, std::io::Error::from(e)))
+}
+
 pub fn extract_permissions_and_hidden(_name: &str, meta: &Metadata) -> (PermissionsMeta, bool) {
     let attrs = meta.file_attributes();
     let is_hidden = (attrs & FILE_ATTRIBUTE_HIDDEN) != 0;
@@ -205,9 +310,8 @@ pub fn volume_space(path: &Path) -> Option<VolumeSpace> {
     }
 
     let (vol_name, _) = query_volume_info(&root);
-    let label = vol_name.unwrap_or_else(|| {
-        CompactString::from(root.to_string_lossy().trim_end_matches('\\'))
-    });
+    let label = vol_name
+        .unwrap_or_else(|| CompactString::from(root.to_string_lossy().trim_end_matches('\\')));
 
     Some(VolumeSpace {
         label,
@@ -292,10 +396,7 @@ fn query_volume_info(root: &Path) -> (Option<CompactString>, Option<CompactStrin
         return (None, None);
     }
 
-    (
-        decode_wide_z(&vol_name_buf),
-        decode_wide_z(&fs_name_buf),
-    )
+    (decode_wide_z(&vol_name_buf), decode_wide_z(&fs_name_buf))
 }
 
 fn drive_root_for_path(path: &Path) -> Option<PathBuf> {
@@ -315,6 +416,40 @@ fn to_wide(path: &Path) -> Vec<u16> {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect()
+}
+
+/// Adiciona prefixo verbatim `\\?\` quando necessário para caminhos Windows >240 UTF-16 code units.
+fn to_long_wide(path: &Path) -> Vec<u16> {
+    let units: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let is_already_verbatim =
+        units.starts_with(&[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16]);
+    if units.len() > 240 && !is_already_verbatim && path.is_absolute() {
+        let mut out = if units.starts_with(&[b'\\' as u16, b'\\' as u16]) {
+            let mut unc = vec![
+                b'\\' as u16,
+                b'\\' as u16,
+                b'?' as u16,
+                b'\\' as u16,
+                b'U' as u16,
+                b'N' as u16,
+                b'C' as u16,
+                b'\\' as u16,
+            ];
+            unc.extend_from_slice(&units[2..]);
+            unc
+        } else {
+            let mut verbatim = vec![b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+            verbatim.extend(units);
+            verbatim
+        };
+        out.push(0);
+        return out;
+    }
+    to_wide(path)
+}
+
+fn to_str_wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 fn decode_wide_z(buf: &[u16]) -> Option<CompactString> {

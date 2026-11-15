@@ -50,18 +50,16 @@ fn tab_strip_row<'a>(app: &'a App, palette: ThemePalette) -> Element<'a, Message
             .style(styles::ghost_button(palette, 4.0))
             .on_press(Message::TabClose(tab_id));
 
-        let label = text(t.title.as_str())
-            .size(12)
-            .font(if is_active { FONT_UI_SEMIBOLD } else { FONT_UI });
+        let label = text(t.title.as_str()).size(12).font(if is_active {
+            FONT_UI_SEMIBOLD
+        } else {
+            FONT_UI
+        });
 
-        let tab_btn = button(
-            row![label, close_btn]
-                .spacing(6)
-                .align_y(Center),
-        )
-        .padding([4, 10])
-        .style(styles::tab_button(palette, is_active))
-        .on_press(Message::TabSelect(tab_id));
+        let tab_btn = button(row![label, close_btn].spacing(6).align_y(Center))
+            .padding([4, 10])
+            .style(styles::tab_button(palette, is_active))
+            .on_press(Message::TabSelect(tab_id));
 
         tabs_row = tabs_row.push(mouse_area(tab_btn).on_middle_press(Message::TabClose(tab_id)));
     }
@@ -205,9 +203,24 @@ fn navigation_row<'a>(
     let current_mode = tab.map(|t| t.view_mode).unwrap_or(ViewMode::Grid);
     let view_switcher = container(
         row![
-            view_mode_btn(icon_layout_grid().size(14), ViewMode::Grid, current_mode, palette),
-            view_mode_btn(icon_list().size(14), ViewMode::DetailTable, current_mode, palette),
-            view_mode_btn(icon_columns_3().size(14), ViewMode::Columns, current_mode, palette),
+            view_mode_btn(
+                icon_layout_grid().size(14),
+                ViewMode::Grid,
+                current_mode,
+                palette
+            ),
+            view_mode_btn(
+                icon_list().size(14),
+                ViewMode::DetailTable,
+                current_mode,
+                palette
+            ),
+            view_mode_btn(
+                icon_columns_3().size(14),
+                ViewMode::Columns,
+                current_mode,
+                palette
+            ),
         ]
         .spacing(2)
         .align_y(Center),
@@ -320,10 +333,15 @@ fn unified_breadcrumb<'a>(
         }
     }
 
-    let edit_hint_btn = button(text("Ctrl+L").size(10).font(FONT_MONO).color(palette.text_muted))
-        .padding([2, 6])
-        .style(styles::ghost_button(palette, 6.0))
-        .on_press(Message::TogglePathEdit);
+    let edit_hint_btn = button(
+        text("Ctrl+L")
+            .size(10)
+            .font(FONT_MONO)
+            .color(palette.text_muted),
+    )
+    .padding([2, 6])
+    .style(styles::ghost_button(palette, 6.0))
+    .on_press(Message::TogglePathEdit);
 
     container(row![crumbs, edit_hint_btn].spacing(6).align_y(Center))
         .padding([2, 8])

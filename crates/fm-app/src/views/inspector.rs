@@ -5,8 +5,7 @@ use fm_theme::{
 };
 use iced::Alignment::Center;
 use iced::widget::{
-    Space, button, column, container, image, row, scrollable, space, text, text_editor,
-    text_input,
+    Space, button, column, container, image, row, scrollable, space, text, text_editor, text_input,
 };
 use iced::{ContentFit, Element, Length, Padding};
 use lucide_icons::iced::{icon_file_text, icon_folder, icon_search, icon_x};
@@ -49,18 +48,17 @@ pub fn drawer<'a>(
                 .spacing(6)
                 .into()
             } else if let Some(entry) = tab.selection.single_selected(&tab.visible_entries) {
-                let preview_box: Element<'a, Message> = if let Some(handle) =
-                    app.gpu_thumbnails.get(&thumbnail_key_for_entry(entry))
-                {
-                    image(handle.clone())
-                        .width(74)
-                        .height(74)
-                        .content_fit(ContentFit::Contain)
-                        .into()
-                } else {
-                    let (icon_widget, _) = entry_icon(entry, palette, 46.0);
-                    icon_widget.into()
-                };
+                let preview_box: Element<'a, Message> =
+                    if let Some(handle) = app.gpu_thumbnails.get(&thumbnail_key_for_entry(entry)) {
+                        image(handle.clone())
+                            .width(74)
+                            .height(74)
+                            .content_fit(ContentFit::Contain)
+                            .into()
+                    } else {
+                        let (icon_widget, _) = entry_icon(entry, palette, 46.0);
+                        icon_widget.into()
+                    };
 
                 let perms = entry.permissions.format_compact(entry.kind.is_dir_like());
                 let size_str = if entry.kind.is_dir_like() {
@@ -113,11 +111,8 @@ pub fn drawer<'a>(
 
                 if let Some(tel) = &tab.selected_telemetry {
                     if let Some(mime) = &tel.mime_type {
-                        info_col = info_col.push(meta_row(
-                            strings.mime_type,
-                            mime.to_string(),
-                            palette,
-                        ));
+                        info_col =
+                            info_col.push(meta_row(strings.mime_type, mime.to_string(), palette));
                     }
                     if let Some(git_st) = &tel.git_status {
                         info_col = info_col.push(meta_row(
@@ -127,11 +122,8 @@ pub fn drawer<'a>(
                         ));
                     }
                     if let Some(hash) = &tel.sha256_prefix {
-                        info_col = info_col.push(meta_row(
-                            strings.checksum,
-                            hash.to_string(),
-                            palette,
-                        ));
+                        info_col =
+                            info_col.push(meta_row(strings.checksum, hash.to_string(), palette));
                     } else if !entry.kind.is_dir_like() {
                         info_col = info_col.push(meta_row(
                             strings.checksum,
@@ -175,8 +167,7 @@ pub fn drawer<'a>(
     .style(styles::inspector_container(palette));
 
     row![
-        container(Space::new().width(1).height(Length::Fill))
-            .style(styles::divider_line(palette)),
+        container(Space::new().width(1).height(Length::Fill)).style(styles::divider_line(palette)),
         drawer_panel,
     ]
     .height(Length::Fill)
@@ -186,7 +177,10 @@ pub fn drawer<'a>(
 fn meta_row<'a>(label: &'a str, value: String, palette: ThemePalette) -> Element<'a, Message> {
     container(
         column![
-            text(label).size(10).font(FONT_MONO).color(palette.text_muted),
+            text(label)
+                .size(10)
+                .font(FONT_MONO)
+                .color(palette.text_muted),
             text(value)
                 .size(12)
                 .font(FONT_MONO)

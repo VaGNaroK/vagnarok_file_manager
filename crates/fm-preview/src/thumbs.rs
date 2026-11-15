@@ -167,6 +167,34 @@ fn generate_thumbnail_sync(
     }
 
     let decoded = guessed.decode().ok()?;
+    resize_dynamic_image(decoded, max_side_px, cancel)
+}
+
+/// Decodifica miniatura a partir de bytes em memória (ex.: entrada lida de um arquivo compactado).
+pub fn decode_thumbnail_from_bytes(
+    bytes: &[u8],
+    is_svg: bool,
+    max_side_px: u32,
+    cancel: &CancellationToken,
+) -> Option<Arc<ThumbnailRgba>> {
+    if cancel.is_cancelled() || max_side_px == 0 {
+        return None;
+    }
+    if is_svg {
+        return render_svg_bytes(bytes, max_side_px, cancel);
+    }
+    let guessed = ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let decoded = guessed.decode().ok()?;
+    resize_dynamic_image(decoded, max_side_px, cancel)
+}
+
+fn resize_dynamic_image(
+    decoded: image::DynamicImage,
+    max_side_px: u32,
+    cancel: &CancellationToken,
+) -> Option<Arc<ThumbnailRgba>> {
     if cancel.is_cancelled() {
         return None;
     }
@@ -230,11 +258,19 @@ fn render_svg_thumbnail(
     let file = open_shared_read(path)?;
     let mut bytes = Vec::new();
     file.take(MAX_SVG_BYTES).read_to_end(&mut bytes).ok()?;
+    render_svg_bytes(&bytes, max_side_px, cancel)
+}
+
+fn render_svg_bytes(
+    bytes: &[u8],
+    max_side_px: u32,
+    cancel: &CancellationToken,
+) -> Option<Arc<ThumbnailRgba>> {
     if cancel.is_cancelled() {
         return None;
     }
 
-    let tree = usvg::Tree::from_data(&bytes, &usvg::Options::default()).ok()?;
+    let tree = usvg::Tree::from_data(bytes, &usvg::Options::default()).ok()?;
     let svg_size = tree.size();
     let svg_w = svg_size.width().max(1.0);
     let svg_h = svg_size.height().max(1.0);
@@ -331,9 +367,10 @@ mod tests {
             .enable_all()
             .build()
             .expect("runtime");
-        assert!(rt
-            .block_on(generate_thumbnail(Path::new("nonexistent.png"), 64, token))
-            .is_none());
+        assert!(
+            rt.block_on(generate_thumbnail(Path::new("nonexistent.png"), 64, token))
+                .is_none()
+        );
         assert!(is_image_extension(Some("PNG")));
         assert!(is_image_extension(Some("webp")));
         assert!(is_image_extension(Some("svg")));

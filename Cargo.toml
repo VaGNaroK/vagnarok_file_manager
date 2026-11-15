@@ -19,8 +19,10 @@ rust-version = "1.88"
 [workspace.dependencies]
 async-trait = "0.1"
 compact_str = { version = "0.10", features = ["serde"] }
+criterion = "0.8"
 directories = "6.0"
 fast_image_resize = "6.1"
+flate2 = "1.1"
 gix = { version = "0.90", default-features = false, features = ["sha1", "status"] }
 iced = { version = "0.14", features = ["wgpu", "tokio", "image", "svg", "highlighter", "advanced", "linux-theme-detection", "x11", "wayland"] }
 ignore = "0.4"
@@ -39,6 +41,7 @@ resvg = "0.45"
 rustix = { version = "1.1", features = ["fs"] }
 serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.11"
+tar = "0.4"
 thiserror = "2.0"
 tokio = { version = "1.54", features = ["rt-multi-thread", "fs", "sync", "time"] }
 tokio-util = "0.7"
@@ -46,7 +49,9 @@ toml = "1.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 trash = "5.3"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+window-vibrancy = "0.8"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+zip = { version = "9.6", default-features = false, features = ["deflate"] }
 
 fm-core = { path = "crates/fm-core" }
 fm-fs = { path = "crates/fm-fs" }

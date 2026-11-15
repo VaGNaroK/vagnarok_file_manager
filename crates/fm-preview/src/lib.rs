@@ -5,8 +5,8 @@ pub mod thumbs;
 
 pub use disk_cache::DiskThumbnailCache;
 pub use thumbs::{
-    DEFAULT_THUMBNAIL_CACHE_CAPACITY, ThumbnailCache, ThumbnailRgba, generate_or_load_thumbnail,
-    generate_thumbnail, is_image_extension,
+    DEFAULT_THUMBNAIL_CACHE_CAPACITY, ThumbnailCache, ThumbnailRgba, decode_thumbnail_from_bytes,
+    generate_or_load_thumbnail, generate_thumbnail, is_image_extension,
 };
 
 use std::fs::File;
