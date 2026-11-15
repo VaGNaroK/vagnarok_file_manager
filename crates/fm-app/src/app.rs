@@ -1937,14 +1937,10 @@ impl App {
                     Some(existing_telemetry.unwrap_or_else(|| basic_file_telemetry(&entry)));
                 let size_loading = entry.kind.is_dir_like() && !is_archive;
 
-                let offset = (self.properties_windows.len() as f32 % 5.0) * 28.0;
                 let (win_id, open_task) = window::open(window::Settings {
                     size: Size::new(720.0, 520.0),
                     min_size: Some(Size::new(640.0, 460.0)),
-                    position: window::Position::Specific(Point::new(
-                        160.0 + offset,
-                        120.0 + offset,
-                    )),
+                    position: window::Position::Centered,
                     decorations: true,
                     resizable: true,
                     ..window::Settings::default()
