@@ -84,6 +84,8 @@ mod tests {
             sidebar_collapsed: true,
             window_decorations: WindowDecorationsMode::IntegratedCsd,
             default_view_mode: ViewMode::Columns,
+            grid_group_folders: false,
+            dirs_first: false,
             favorites: vec![PathBuf::from("/tmp/work")],
         };
 
@@ -101,6 +103,8 @@ mod tests {
             WindowDecorationsMode::IntegratedCsd
         );
         assert_eq!(loaded.default_view_mode, ViewMode::Columns);
+        assert!(!loaded.grid_group_folders);
+        assert!(!loaded.dirs_first);
         assert_eq!(loaded.favorites, vec![PathBuf::from("/tmp/work")]);
     }
 
@@ -119,5 +123,7 @@ favorites = []
         let parsed: AppConfig = toml::from_str(legacy_toml).expect("legacy config parses");
         assert_eq!(parsed.theme, ThemePreset::AetherLight);
         assert!(!parsed.theme_customized);
+        assert!(parsed.grid_group_folders);
+        assert!(parsed.dirs_first);
     }
 }

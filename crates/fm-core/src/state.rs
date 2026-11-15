@@ -183,7 +183,7 @@ impl TabState {
             .filter(|entry| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
             .filter(|entry| match ext_filter {
                 None => true,
-                Some("__DIR__") => entry.kind.is_dir_like(),
+                Some(DIR_FILTER_SENTINEL) => entry.kind.is_dir_like(),
                 Some(ext) => entry
                     .extension
                     .as_deref()
@@ -238,6 +238,7 @@ impl TabState {
             .unwrap_or_else(|| CompactString::from(self.current_path.to_string_lossy().as_ref()));
         self.selection.clear();
         self.selected_telemetry = None;
+        self.telemetry.recursive_size = None;
         self.filter_query.clear();
         self.extension_filter = None;
         self.last_error = None;
@@ -309,6 +310,12 @@ pub enum WindowDecorationsMode {
     IntegratedCsd,
 }
 
+pub const DIR_FILTER_SENTINEL: &str = "__DIR__";
+
+fn default_true() -> bool {
+    true
+}
+
 /// Preferências persistíveis da aplicação.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -322,6 +329,10 @@ pub struct AppConfig {
     pub window_decorations: WindowDecorationsMode,
     #[serde(default)]
     pub default_view_mode: ViewMode,
+    #[serde(default = "default_true")]
+    pub grid_group_folders: bool,
+    #[serde(default = "default_true")]
+    pub dirs_first: bool,
     #[serde(default)]
     pub favorites: Vec<PathBuf>,
 }
@@ -337,6 +348,8 @@ impl Default for AppConfig {
             sidebar_collapsed: false,
             window_decorations: WindowDecorationsMode::NativeWm,
             default_view_mode: ViewMode::Grid,
+            grid_group_folders: true,
+            dirs_first: true,
             favorites: Vec::new(),
         }
     }

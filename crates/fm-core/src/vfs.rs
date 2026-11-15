@@ -34,6 +34,8 @@ pub trait VfsProvider: Send + Sync {
     async fn create_file(&self, path: &Path) -> Result<(), FsError>;
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), FsError>;
     async fn move_to_trash(&self, paths: &[PathBuf]) -> Result<(), FsError>;
+    async fn restore_from_trash(&self, paths: &[PathBuf]) -> Result<usize, FsError>;
+    async fn empty_trash(&self) -> Result<(), FsError>;
     async fn delete_permanent(&self, paths: &[PathBuf]) -> Result<(), FsError>;
     async fn open_default(&self, path: &Path) -> Result<(), FsError>;
     async fn open_terminal(&self, path: &Path) -> Result<(), FsError>;

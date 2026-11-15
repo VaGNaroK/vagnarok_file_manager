@@ -5,10 +5,10 @@ use std::time::UNIX_EPOCH;
 
 use compact_str::CompactString;
 use fm_core::{
-    AppConfig, ClipboardTransfer, ConflictPolicy, CopyMode, DirectorySnapshot, DriveInfo, EntryId,
-    FileEntry, FolderSummary, FsError, JobProgress, JobState, SelectedFileTelemetry,
-    SelectionModifiers, SortDirection, SortField, Strings, TabId, TabState, ThemePreset,
-    UserPlaces, VfsProvider, ViewMode, VolumeSpace, WindowDecorationsMode,
+    AppConfig, ClipboardTransfer, ConflictPolicy, CopyMode, DIR_FILTER_SENTINEL, DirectorySnapshot,
+    DriveInfo, EntryId, FileEntry, FolderSummary, FsError, JobProgress, JobState, RecursiveSize,
+    SelectedFileTelemetry, SelectionModifiers, SortDirection, SortField, Strings, TabId, TabState,
+    ThemePreset, UserPlaces, VfsProvider, ViewMode, VolumeSpace, WindowDecorationsMode,
 };
 use fm_fs::LocalFs;
 use fm_index::SearchHit;
@@ -77,6 +77,7 @@ pub enum ActiveDialog {
         paths: Vec<PathBuf>,
         permanent: bool,
     },
+    ConfirmEmptyTrash,
     Conflict {
         mode: CopyMode,
         sources: Vec<PathBuf>,
@@ -205,6 +206,11 @@ pub enum Message {
         request_id: u64,
         counts: Vec<(PathBuf, u32)>,
     },
+    FolderSizeReady {
+        tab_id: TabId,
+        request_id: u64,
+        size: Option<RecursiveSize>,
+    },
     MimeDetected {
         request_id: u64,
         path: PathBuf,
@@ -267,7 +273,15 @@ pub enum Message {
     OpenPreferences,
     ClosePreferences,
     SetDefaultViewMode(ViewMode),
+    ToggleGridGroupFolders,
+    ToggleDirsFirst,
     ToggleWindowDecorations,
+    RequestEmptyTrash,
+    RestoreFromTrash,
+    TrashActionFinished {
+        notice: String,
+        result: Result<(), FsError>,
+    },
     ConfigSaved(Option<String>),
     OpenDefaultFinished(Result<(), FsError>),
     OpenProperties(PathBuf),
@@ -378,11 +392,13 @@ impl App {
 
         let mut tab1 = TabState::new(TabId(1), tab1_path.clone());
         tab1.view_mode = config.default_view_mode;
+        tab1.sort.dirs_first = config.dirs_first;
         tab1.is_loading = true;
         tab1.active_request_id = 1;
 
         let mut tab2 = TabState::new(TabId(2), tab2_path.clone());
         tab2.view_mode = config.default_view_mode;
+        tab2.sort.dirs_first = config.dirs_first;
         tab2.is_loading = true;
         tab2.active_request_id = 2;
 
@@ -949,6 +965,7 @@ impl App {
                             tasks.push(Task::perform(
                                 {
                                     let cancel = cancel.clone();
+                                    let dir_path = dir_path.clone();
                                     async move {
                                         let branch =
                                             fm_telemetry::detect_git_branch(&dir_path, cancel)
@@ -962,6 +979,28 @@ impl App {
                                     branch,
                                 },
                             ));
+
+                            if fm_fs::archive::split_archive_path(&dir_path).is_none() {
+                                let meta_cache = self.metadata_cache.clone();
+                                let cancel_size = cancel.clone();
+                                let size_dir = dir_path.clone();
+                                tasks.push(Task::perform(
+                                    async move {
+                                        let size = fm_telemetry::compute_folder_size_cached(
+                                            size_dir,
+                                            meta_cache,
+                                            cancel_size,
+                                        )
+                                        .await;
+                                        (tab_id, request_id, size)
+                                    },
+                                    |(tab_id, request_id, size)| Message::FolderSizeReady {
+                                        tab_id,
+                                        request_id,
+                                        size,
+                                    },
+                                ));
+                            }
 
                             let child_dirs: Vec<PathBuf> = tab
                                 .raw_entries
@@ -1102,6 +1141,18 @@ impl App {
                     && tab.active_request_id == request_id
                 {
                     tab.apply_child_counts(&counts);
+                }
+                Task::none()
+            }
+            Message::FolderSizeReady {
+                tab_id,
+                request_id,
+                size,
+            } => {
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+                    && tab.active_request_id == request_id
+                {
+                    tab.telemetry.recursive_size = size;
                 }
                 Task::none()
             }
@@ -1494,6 +1545,54 @@ impl App {
             Message::SetDefaultViewMode(mode) => {
                 self.config.default_view_mode = mode;
                 self.persist_config_task()
+            }
+            Message::ToggleGridGroupFolders => {
+                self.config.grid_group_folders = !self.config.grid_group_folders;
+                self.persist_config_task()
+            }
+            Message::ToggleDirsFirst => {
+                self.config.dirs_first = !self.config.dirs_first;
+                let dirs_first = self.config.dirs_first;
+                for tab in &mut self.tabs {
+                    tab.sort.dirs_first = dirs_first;
+                    apply_tab_filter(tab);
+                }
+                let persist = self.persist_config_task();
+                let thumbs = self.queue_visible_thumbnails();
+                Task::batch([persist, thumbs])
+            }
+            Message::RequestEmptyTrash => {
+                self.context_menu = None;
+                self.active_dialog = Some(ActiveDialog::ConfirmEmptyTrash);
+                Task::none()
+            }
+            Message::RestoreFromTrash => {
+                self.context_menu = None;
+                let paths = self.selected_paths();
+                if paths.is_empty() {
+                    return Task::none();
+                }
+                let vfs = Arc::clone(&self.vfs);
+                let ok_msg = self.strings().trash_restored.to_owned();
+                Task::perform(
+                    async move { vfs.restore_from_trash(&paths).await.map(|_| ()) },
+                    move |result| Message::TrashActionFinished {
+                        notice: ok_msg.clone(),
+                        result,
+                    },
+                )
+            }
+            Message::TrashActionFinished { notice, result } => {
+                match result {
+                    Ok(()) => {
+                        self.status_notice = Some(notice);
+                        return self.update(Message::RefreshActiveTab);
+                    }
+                    Err(err) => {
+                        self.status_notice = Some(err.to_string());
+                    }
+                }
+                Task::none()
             }
             Message::ToggleWindowDecorations => {
                 self.config.window_decorations = match self.config.window_decorations {
@@ -1960,6 +2059,15 @@ impl App {
                     select_after: None,
                 },
             ),
+            ActiveDialog::ConfirmEmptyTrash => {
+                let notice = self.strings().trash_emptied.to_owned();
+                Task::perform(async move { vfs.empty_trash().await }, move |result| {
+                    Message::TrashActionFinished {
+                        notice: notice.clone(),
+                        result,
+                    }
+                })
+            }
             ActiveDialog::Conflict { .. } => Task::none(),
         }
     }
@@ -2352,7 +2460,7 @@ impl App {
             let vfs = Arc::clone(&self.vfs);
             return Task::perform(
                 async move {
-                    let snippet = match vfs.read_bytes(&path, 64 * 1024, cancel).await {
+                    let snippet = match vfs.read_bytes(&path, 512 * 1024, cancel).await {
                         Ok(bytes) if !bytes.contains(&0) => {
                             Some(String::from_utf8_lossy(&bytes).into_owned())
                         }
@@ -2370,7 +2478,7 @@ impl App {
 
         Task::perform(
             async move {
-                let snippet = fm_preview::read_text_preview(&path, 64 * 1024, cancel).await;
+                let snippet = fm_preview::read_text_preview(&path, 512 * 1024, cancel).await;
                 (req_id, path, snippet)
             },
             |(request_id, path, snippet)| Message::TextPreviewLoaded {
@@ -2630,6 +2738,7 @@ impl App {
         let req = self.alloc_request_id();
         let mut tab = TabState::new(id, path.clone());
         tab.view_mode = self.config.default_view_mode;
+        tab.sort.dirs_first = self.config.dirs_first;
         tab.active_request_id = req;
         tab.is_loading = true;
         self.tabs.push(tab);
@@ -2793,7 +2902,7 @@ fn apply_tab_filter(tab: &mut TabState) {
             let hidden_ok = tab.show_hidden || !entry.is_hidden;
             let ext_ok = match tab.extension_filter.as_deref() {
                 None => true,
-                Some(":dir") => entry.kind.is_dir_like(),
+                Some(DIR_FILTER_SENTINEL) => entry.kind.is_dir_like(),
                 Some(ext) => entry
                     .extension
                     .as_deref()

@@ -96,6 +96,14 @@ pub struct Strings {
     pub filter_ext: &'static str,
     pub directories_only: &'static str,
     pub archive_readonly: &'static str,
+    pub grid_group_label: &'static str,
+    pub dirs_first_label: &'static str,
+    pub recursive_size_label: &'static str,
+    pub empty_trash: &'static str,
+    pub restore_item: &'static str,
+    pub confirm_empty_trash_msg: &'static str,
+    pub trash_emptied: &'static str,
+    pub trash_restored: &'static str,
 }
 
 impl Strings {
@@ -201,6 +209,14 @@ impl Strings {
             filter_ext: "Filtrar",
             directories_only: "Pastas",
             archive_readonly: "Arquivo compactado (somente leitura)",
+            grid_group_label: "Agrupar pastas no Grid",
+            dirs_first_label: "Pastas primeiro na ordenação",
+            recursive_size_label: "TAMANHO TOTAL",
+            empty_trash: "Esvaziar lixeira",
+            restore_item: "Restaurar",
+            confirm_empty_trash_msg: "Deseja esvaziar permanentemente todos os itens da lixeira do sistema?",
+            trash_emptied: "Lixeira esvaziada.",
+            trash_restored: "Itens restaurados para o local original.",
         }
     }
 
@@ -299,6 +315,14 @@ impl Strings {
             filter_ext: "Filter",
             directories_only: "Folders",
             archive_readonly: "Compressed archive (read-only)",
+            grid_group_label: "Group folders in Grid",
+            dirs_first_label: "Folders first when sorting",
+            recursive_size_label: "TOTAL SIZE",
+            empty_trash: "Empty trash",
+            restore_item: "Restore",
+            confirm_empty_trash_msg: "Permanently delete every item currently in the system trash?",
+            trash_emptied: "Trash emptied.",
+            trash_restored: "Restored item(s) to original location.",
         }
     }
 }

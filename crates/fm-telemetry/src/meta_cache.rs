@@ -5,10 +5,12 @@ use std::time::UNIX_EPOCH;
 
 use compact_str::CompactString;
 use directories::ProjectDirs;
+use fm_core::RecursiveSize;
 use redb::{Database, ReadableDatabase, TableDefinition};
 
 const FILE_META_TABLE: TableDefinition<'_, &[u8], &str> = TableDefinition::new("file_meta_v1");
 const DIR_COUNT_TABLE: TableDefinition<'_, &[u8], u32> = TableDefinition::new("dir_count_v1");
+const DIR_SIZE_TABLE: TableDefinition<'_, &[u8], &[u8]> = TableDefinition::new("dir_size_v1");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CachedFileTelemetry {
@@ -39,6 +41,7 @@ impl DiskMetadataCache {
         {
             let _ = write_txn.open_table(FILE_META_TABLE).ok()?;
             let _ = write_txn.open_table(DIR_COUNT_TABLE).ok()?;
+            let _ = write_txn.open_table(DIR_SIZE_TABLE).ok()?;
         }
         write_txn.commit().ok()?;
         Some(Self { db })
@@ -114,6 +117,37 @@ impl DiskMetadataCache {
         }
         let _ = write_txn.commit();
     }
+
+    pub fn get_dir_size(&self, path: &Path, modified_nanos: u128) -> Option<RecursiveSize> {
+        let key = encode_file_key(path, 1, modified_nanos);
+        let read_txn = self.db.begin_read().ok()?;
+        let table = read_txn.open_table(DIR_SIZE_TABLE).ok()?;
+        let guard = table.get(key.as_slice()).ok()??;
+        let bytes = guard.value();
+        if bytes.len() != 9 {
+            return None;
+        }
+        let total_bytes = u64::from_le_bytes(bytes[..8].try_into().ok()?);
+        let truncated = bytes[8] != 0;
+        Some(RecursiveSize {
+            total_bytes,
+            truncated,
+        })
+    }
+
+    pub fn put_dir_size(&self, path: &Path, modified_nanos: u128, val: RecursiveSize) {
+        let key = encode_file_key(path, 1, modified_nanos);
+        let mut payload = [0u8; 9];
+        payload[..8].copy_from_slice(&val.total_bytes.to_le_bytes());
+        payload[8] = u8::from(val.truncated);
+        let Ok(write_txn) = self.db.begin_write() else {
+            return;
+        };
+        if let Ok(mut table) = write_txn.open_table(DIR_SIZE_TABLE) {
+            let _ = table.insert(key.as_slice(), payload.as_slice());
+        }
+        let _ = write_txn.commit();
+    }
 }
 
 pub fn mtime_nanos(path: &Path) -> u128 {
@@ -162,6 +196,13 @@ mod tests {
         let folder = Path::new("/tmp/project");
         cache.put_dir_count(folder, 123_456, 17);
         assert_eq!(cache.get_dir_count(folder, 123_456), Some(17));
+
+        let rsize = RecursiveSize {
+            total_bytes: 987_654_321,
+            truncated: true,
+        };
+        cache.put_dir_size(folder, 123_456, rsize);
+        assert_eq!(cache.get_dir_size(folder, 123_456), Some(rsize));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

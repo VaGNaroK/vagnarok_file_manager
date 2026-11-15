@@ -233,6 +233,28 @@ impl VfsProvider for LocalFs {
         })?
     }
 
+    async fn restore_from_trash(&self, paths: &[PathBuf]) -> Result<usize, FsError> {
+        let targets = paths.to_vec();
+        if targets.is_empty() {
+            return Ok(0);
+        }
+        tokio::task::spawn_blocking(move || restore_trash_items(&targets))
+            .await
+            .map_err(|err| FsError::Io {
+                path: PathBuf::new(),
+                message: err.to_string(),
+            })?
+    }
+
+    async fn empty_trash(&self) -> Result<(), FsError> {
+        tokio::task::spawn_blocking(purge_all_trash_items)
+            .await
+            .map_err(|err| FsError::Io {
+                path: PathBuf::new(),
+                message: err.to_string(),
+            })?
+    }
+
     async fn delete_permanent(&self, paths: &[PathBuf]) -> Result<(), FsError> {
         if let Some(arch) = paths
             .iter()
@@ -462,6 +484,63 @@ pub(crate) fn scan_directory_blocking(
         entries,
         fs_type,
     })
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn restore_trash_items(paths: &[PathBuf]) -> Result<usize, FsError> {
+    let items = trash::os_limited::list().map_err(|err| FsError::Io {
+        path: paths.first().cloned().unwrap_or_default(),
+        message: format!("falha ao listar lixeira: {err}"),
+    })?;
+
+    let mut matched = Vec::new();
+    for item in items {
+        let info_stem = Path::new(&item.id).file_stem();
+        let is_match = paths.iter().any(|p| {
+            let fname = p.file_name();
+            fname == Some(item.name.as_os_str())
+                || (info_stem.is_some() && fname == info_stem)
+                || p == &item.original_path()
+        });
+        if is_match {
+            matched.push(item);
+        }
+    }
+
+    let count = matched.len();
+    if count == 0 {
+        return Ok(0);
+    }
+    trash::os_limited::restore_all(matched).map_err(|err| FsError::Io {
+        path: paths.first().cloned().unwrap_or_default(),
+        message: format!("falha ao restaurar da lixeira: {err}"),
+    })?;
+    Ok(count)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn restore_trash_items(_paths: &[PathBuf]) -> Result<usize, FsError> {
+    Ok(0)
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn purge_all_trash_items() -> Result<(), FsError> {
+    let items = trash::os_limited::list().map_err(|err| FsError::Io {
+        path: PathBuf::new(),
+        message: format!("falha ao listar lixeira: {err}"),
+    })?;
+    if items.is_empty() {
+        return Ok(());
+    }
+    trash::os_limited::purge_all(items).map_err(|err| FsError::Io {
+        path: PathBuf::new(),
+        message: format!("falha ao esvaziar lixeira: {err}"),
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn purge_all_trash_items() -> Result<(), FsError> {
+    Ok(())
 }
 
 fn map_io_err(path: &Path, err: std::io::Error) -> FsError {

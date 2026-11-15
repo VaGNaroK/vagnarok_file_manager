@@ -1,6 +1,6 @@
 use fm_core::{
-    CopyMode, FileEntry, JobProgress, Language, SelectionModifiers, SortDirection, SortField,
-    Strings, TabState, ViewMode, format_age, format_bytes,
+    CopyMode, DIR_FILTER_SENTINEL, FileEntry, JobProgress, Language, SelectionModifiers,
+    SortDirection, SortField, Strings, TabState, ViewMode, format_age, format_bytes,
 };
 use fm_theme::{
     FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_BOLD, FONT_UI_SEMIBOLD, ThemePalette, styles,
@@ -13,8 +13,8 @@ use iced::widget::{
 use iced::{Color, ContentFit, Element, Length, Padding};
 use lucide_icons::iced::{
     icon_arrow_up_down, icon_chevron_right, icon_clipboard_paste, icon_copy, icon_eye,
-    icon_eye_off, icon_filter, icon_info, icon_pencil, icon_plus, icon_scissors, icon_star,
-    icon_terminal, icon_trash_2, icon_x,
+    icon_eye_off, icon_filter, icon_info, icon_pencil, icon_plus, icon_rotate_ccw, icon_scissors,
+    icon_star, icon_terminal, icon_trash_2, icon_x,
 };
 
 use crate::app::{
@@ -24,7 +24,7 @@ use crate::views::entry_icon;
 use crate::views::modals::format_transfer_summary;
 use crate::views::virtualized::{
     DETAIL_ROW_HEIGHT, DETAIL_ROW_STEP, GRID_BAND_SPACING, GridBand, build_grid_bands,
-    compute_band_window, compute_fixed_window,
+    build_unified_grid_bands, compute_band_window, compute_fixed_window,
 };
 
 pub fn view<'a>(
@@ -210,8 +210,47 @@ fn action_bar<'a>(
     .style(styles::pill_primary_button(palette))
     .on_press(Message::OpenNewMenu);
 
+    let is_in_trash = app
+        .places
+        .trash
+        .as_ref()
+        .is_some_and(|tr| tab.current_path.starts_with(tr));
     let sel_count = tab.selection.count();
     let mut ops_row = row![].spacing(4).align_y(Center);
+    if is_in_trash {
+        if sel_count > 0 {
+            ops_row = ops_row.push(
+                button(
+                    row![
+                        icon_rotate_ccw().size(13).color(palette.accent_primary),
+                        text(strings.restore_item)
+                            .size(12)
+                            .color(palette.accent_primary),
+                    ]
+                    .spacing(5)
+                    .align_y(Center),
+                )
+                .padding([6, 10])
+                .style(styles::pill_secondary_button(palette))
+                .on_press(Message::RestoreFromTrash),
+            );
+        }
+        ops_row = ops_row.push(
+            button(
+                row![
+                    icon_trash_2().size(13).color(palette.status_error),
+                    text(strings.empty_trash)
+                        .size(12)
+                        .color(palette.status_error),
+                ]
+                .spacing(5)
+                .align_y(Center),
+            )
+            .padding([6, 10])
+            .style(styles::pill_secondary_button(palette))
+            .on_press(Message::RequestEmptyTrash),
+        );
+    }
     if sel_count > 0 {
         ops_row = ops_row
             .push(
@@ -292,7 +331,9 @@ fn action_bar<'a>(
 
     let filter_label = match tab.extension_filter.as_deref() {
         None => strings.filter_ext.to_owned(),
-        Some("__DIR__") => format!("{}: {}", strings.filter_ext, strings.directories_only),
+        Some(DIR_FILTER_SENTINEL) => {
+            format!("{}: {}", strings.filter_ext, strings.directories_only)
+        }
         Some(ext) => format!("{}: .{ext}", strings.filter_ext),
     };
     let filter_active = tab.extension_filter.is_some();
@@ -499,6 +540,21 @@ fn hero_card<'a>(
     .spacing(14)
     .align_y(Center);
 
+    let (size_label, size_value) = if let Some(rs) = tab.telemetry.recursive_size {
+        let formatted = format_bytes(rs.total_bytes).to_string();
+        let display = if rs.truncated {
+            format!("≈ {formatted}")
+        } else {
+            formatted
+        };
+        (strings.recursive_size_label, display)
+    } else {
+        (
+            strings.total_size,
+            format_bytes(stats.total_direct_bytes).to_string(),
+        )
+    };
+
     let metrics = row![
         metric_block(
             strings.folders,
@@ -512,12 +568,7 @@ fn hero_card<'a>(
             palette.text_primary,
             palette,
         ),
-        metric_block(
-            strings.total_size,
-            format_bytes(stats.total_direct_bytes).to_string(),
-            palette.accent_primary,
-            palette,
-        ),
+        metric_block(size_label, size_value, palette.accent_primary, palette),
     ]
     .spacing(28)
     .align_y(Center);
@@ -566,6 +617,7 @@ fn grid_view<'a>(
         .filter(|(_, e)| !e.kind.is_dir_like())
         .collect();
 
+    let group_folders = app.config.grid_group_folders;
     let modifiers = SelectionModifiers {
         ctrl: app.current_modifiers.control(),
         shift: app.current_modifiers.shift(),
@@ -575,7 +627,11 @@ fn grid_view<'a>(
 
     responsive(move |size| {
         let cols = ((size.width / 148.0).floor() as usize).clamp(2, 8);
-        let bands = build_grid_bands(&dirs, &files, cols, strings.folders, strings.files);
+        let bands = if group_folders {
+            build_grid_bands(&dirs, &files, cols, strings.folders, strings.files)
+        } else {
+            build_unified_grid_bands(&tab.visible_entries, cols)
+        };
         let win = compute_band_window(&bands, scroll_y, viewport_h, 280.0);
 
         let mut list = column![].spacing(GRID_BAND_SPACING).width(Length::Fill);

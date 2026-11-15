@@ -106,6 +106,16 @@ pub fn build_grid_bands<'a>(
     bands
 }
 
+/// Constrói bandas de grade unificada mantendo exatamente a ordem de `entries`, sem cabeçalhos de seção.
+pub fn build_unified_grid_bands<'a>(entries: &'a [FileEntry], cols: usize) -> Vec<GridBand<'a>> {
+    let cols = cols.max(1);
+    let indexed: Vec<(usize, &'a FileEntry)> = entries.iter().enumerate().collect();
+    indexed
+        .chunks(cols)
+        .map(|chunk| GridBand::Items(chunk.to_vec()))
+        .collect()
+}
+
 pub fn compute_band_window(
     bands: &[GridBand<'_>],
     scroll_y: f32,
@@ -194,5 +204,13 @@ mod tests {
         assert!(win.range.len() <= 12);
         assert!(win.top_spacer > 9_000.0);
         assert!(win.bottom_spacer > 100_000.0);
+    }
+
+    #[test]
+    fn unified_grid_builds_flat_rows_without_headers() {
+        let entries: Vec<FileEntry> = (0..13).map(dummy_file).collect();
+        let bands = build_unified_grid_bands(&entries, 4);
+        assert_eq!(bands.len(), 4);
+        assert!(bands.iter().all(|b| matches!(b, GridBand::Items(_))));
     }
 }

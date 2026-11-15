@@ -158,11 +158,19 @@ pub struct VolumeSpace {
     pub total_bytes: u64,
 }
 
+/// Tamanho recursivo computado em background (com indicação se foi truncado por limite).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RecursiveSize {
+    pub total_bytes: u64,
+    pub truncated: bool,
+}
+
 /// Telemetria assíncrona do diretório ativo.
 #[derive(Debug, Clone, Default)]
 pub struct DirectoryTelemetry {
     pub git_branch: Option<CompactString>,
     pub folder_stats: FolderSummary,
+    pub recursive_size: Option<RecursiveSize>,
     pub volume_space: Option<VolumeSpace>,
 }
 

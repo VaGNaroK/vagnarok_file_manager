@@ -1,11 +1,16 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use fm_core::RecursiveSize;
 use tokio_util::sync::CancellationToken;
 
 use crate::meta_cache::{DiskMetadataCache, mtime_nanos};
 
 const MAX_COUNTED_PER_DIR: u32 = 10_000;
+const MAX_RECURSIVE_ENTRIES: usize = 25_000;
+const MAX_RECURSIVE_DEPTH: u32 = 32;
+const MAX_RECURSIVE_DURATION: Duration = Duration::from_millis(1_500);
 
 /// Conta itens diretos (1 nível) para uma lista limitada de subpastas de forma cancelável.
 pub async fn count_direct_children(
@@ -62,4 +67,145 @@ pub async fn count_direct_children_cached(
     })
     .await
     .unwrap_or_default()
+}
+
+fn is_pseudo_or_root_path(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    s == "/"
+        || s == "/proc"
+        || s.starts_with("/proc/")
+        || s == "/sys"
+        || s.starts_with("/sys/")
+        || s == "/dev"
+        || s.starts_with("/dev/")
+        || s == "/run"
+        || s.starts_with("/run/")
+}
+
+/// Calcula tamanho recursivo da subárvore de `dir_path` em background com limite, cache e cancelamento.
+pub async fn compute_folder_size_cached(
+    dir_path: PathBuf,
+    cache: Option<Arc<DiskMetadataCache>>,
+    cancel: CancellationToken,
+) -> Option<RecursiveSize> {
+    if cancel.is_cancelled() || is_pseudo_or_root_path(&dir_path) {
+        return None;
+    }
+
+    tokio::task::spawn_blocking(move || {
+        let mtime = mtime_nanos(&dir_path);
+        if let Some(c) = &cache
+            && mtime > 0
+            && let Some(cached) = c.get_dir_size(&dir_path, mtime)
+        {
+            return Some(cached);
+        }
+
+        let start = Instant::now();
+        let mut total_bytes = 0u64;
+        let mut visited = 0usize;
+        let mut truncated = false;
+        let mut stack = vec![(dir_path.clone(), 0u32)];
+
+        while let Some((dir, depth)) = stack.pop() {
+            if cancel.is_cancelled() {
+                return None;
+            }
+            let Ok(iter) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in iter {
+                visited += 1;
+                if visited.is_multiple_of(256)
+                    && (cancel.is_cancelled() || start.elapsed() >= MAX_RECURSIVE_DURATION)
+                {
+                    if cancel.is_cancelled() {
+                        return None;
+                    }
+                    truncated = true;
+                    break;
+                }
+                if visited >= MAX_RECURSIVE_ENTRIES {
+                    truncated = true;
+                    break;
+                }
+                let Ok(entry) = entry else {
+                    continue;
+                };
+                let Ok(ft) = entry.file_type() else {
+                    continue;
+                };
+                if ft.is_symlink() {
+                    continue;
+                }
+                if ft.is_dir() {
+                    if depth < MAX_RECURSIVE_DEPTH {
+                        stack.push((entry.path(), depth + 1));
+                    } else {
+                        truncated = true;
+                    }
+                } else if ft.is_file()
+                    && let Ok(meta) = entry.metadata()
+                {
+                    total_bytes = total_bytes.saturating_add(meta.len());
+                }
+            }
+            if truncated {
+                break;
+            }
+        }
+
+        let res = RecursiveSize {
+            total_bytes,
+            truncated,
+        };
+        if let Some(c) = &cache
+            && mtime > 0
+        {
+            c.put_dir_size(&dir_path, mtime, res);
+        }
+        Some(res)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn computes_recursive_folder_size_and_respects_cancellation() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!("vagnarok_rsize_{nanos}"));
+        let nested = root.join("sub");
+        std::fs::create_dir_all(&nested).expect("create nested dir");
+        std::fs::write(root.join("a.bin"), vec![1u8; 100]).expect("write a");
+        std::fs::write(nested.join("b.bin"), vec![2u8; 250]).expect("write b");
+
+        let rt = tokio::runtime::Runtime::new().expect("create runtime");
+        let computed = rt
+            .block_on(compute_folder_size_cached(
+                root.clone(),
+                None,
+                CancellationToken::new(),
+            ))
+            .expect("recursive size computed");
+        assert_eq!(computed.total_bytes, 350);
+        assert!(!computed.truncated);
+
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        assert!(
+            rt.block_on(compute_folder_size_cached(root.clone(), None, cancelled))
+                .is_none()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

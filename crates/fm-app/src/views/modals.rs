@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use fm_core::{
-    ConflictPolicy, FileEntry, Language, Strings, ThemePreset, ViewMode, WindowDecorationsMode,
-    format_bytes,
+    ConflictPolicy, DIR_FILTER_SENTINEL, FileEntry, Language, Strings, ThemePreset, ViewMode,
+    WindowDecorationsMode, format_bytes,
 };
 use fm_theme::{FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_SEMIBOLD, ThemePalette, styles};
 use iced::Alignment::Center;
@@ -13,7 +13,7 @@ use iced::{Element, Length, Padding};
 use lucide_icons::iced::{
     icon_check_square, icon_clipboard_copy, icon_clipboard_paste, icon_copy, icon_external_link,
     icon_eye, icon_file_plus, icon_filter, icon_folder, icon_folder_plus, icon_info, icon_pencil,
-    icon_scissors, icon_terminal, icon_trash_2, icon_x,
+    icon_rotate_ccw, icon_scissors, icon_terminal, icon_trash_2, icon_x,
 };
 
 use crate::app::{ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, dialog_input_id};
@@ -224,6 +224,45 @@ pub fn dialog_modal<'a>(
                         palette.border,
                         8.0
                     )),
+                actions,
+            ]
+            .spacing(12)
+            .into()
+        }
+        ActiveDialog::ConfirmEmptyTrash => {
+            let actions = row![
+                space::horizontal(),
+                button(text(strings.cancel).size(12))
+                    .padding([6, 14])
+                    .style(styles::pill_secondary_button(palette))
+                    .on_press(Message::CloseDialog),
+                button(text(strings.empty_trash).size(12).font(FONT_UI_SEMIBOLD))
+                    .padding([6, 16])
+                    .style(styles::pill_primary_button(palette))
+                    .on_press(Message::SubmitDialog),
+            ]
+            .spacing(8)
+            .align_y(Center);
+
+            column![
+                row![
+                    icon_trash_2().size(16).color(palette.status_error),
+                    text(strings.empty_trash)
+                        .size(15)
+                        .font(FONT_UI_SEMIBOLD)
+                        .color(palette.text_primary),
+                    space::horizontal(),
+                    button(icon_x().size(14))
+                        .padding([4, 6])
+                        .style(styles::ghost_button(palette, 6.0))
+                        .on_press(Message::CloseDialog),
+                ]
+                .spacing(8)
+                .align_y(Center),
+                text(strings.confirm_empty_trash_msg)
+                    .size(13)
+                    .font(FONT_UI)
+                    .color(palette.status_error),
                 actions,
             ]
             .spacing(12)
@@ -453,6 +492,34 @@ pub fn preferences_modal<'a>(
             ),
             pref_row(strings.default_view_label, view_pills.into()),
             pref_row(
+                strings.grid_group_label,
+                button(
+                    text(if app.config.grid_group_folders {
+                        "ON"
+                    } else {
+                        "OFF"
+                    })
+                    .size(12)
+                    .font(FONT_MONO_BOLD),
+                )
+                .padding([5, 12])
+                .style(styles::tab_button(palette, app.config.grid_group_folders))
+                .on_press(Message::ToggleGridGroupFolders)
+                .into(),
+            ),
+            pref_row(
+                strings.dirs_first_label,
+                button(
+                    text(if app.config.dirs_first { "ON" } else { "OFF" })
+                        .size(12)
+                        .font(FONT_MONO_BOLD),
+                )
+                .padding([5, 12])
+                .style(styles::tab_button(palette, app.config.dirs_first))
+                .on_press(Message::ToggleDirsFirst)
+                .into(),
+            ),
+            pref_row(
                 strings.decorations_label,
                 button(text(deco_name).size(12).font(FONT_MONO_BOLD))
                     .padding([5, 12])
@@ -645,6 +712,23 @@ pub fn context_menu_overlay<'a>(
                     palette,
                 ));
             }
+            if app
+                .places
+                .trash
+                .as_ref()
+                .is_some_and(|tr| path.starts_with(tr))
+            {
+                items = items.push(ctx_item(
+                    icon_rotate_ccw()
+                        .size(14)
+                        .color(palette.accent_primary)
+                        .into(),
+                    strings.restore_item,
+                    palette.accent_primary,
+                    Message::RestoreFromTrash,
+                    palette,
+                ));
+            }
             items = items
                 .push(ctx_divider(palette))
                 .push(ctx_item(
@@ -727,12 +811,12 @@ pub fn context_menu_overlay<'a>(
                 items = items.push(ctx_item_owned(
                     icon_folder().size(14).color(palette.accent_primary).into(),
                     strings.directories_only.to_owned(),
-                    if active_ext == Some("__DIR__") {
+                    if active_ext == Some(DIR_FILTER_SENTINEL) {
                         palette.accent_primary
                     } else {
                         palette.text_primary
                     },
-                    Message::SetExtensionFilter(Some("__DIR__".into())),
+                    Message::SetExtensionFilter(Some(DIR_FILTER_SENTINEL.into())),
                     palette,
                 ));
                 let exts = tab.available_extensions();
