@@ -1,0 +1,198 @@
+# Changelog — Vagnarok File Manager
+
+Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador de arquivos desktop nativo em Rust com `iced` 0.14 + `wgpu` para Linux e Windows) estão documentadas neste arquivo.
+
+> **Nota sobre a linha do tempo**: os commits históricos iniciais do ramo `main` (`baseline` até `0.1.0-dev`) foram reconstruídos cronologicamente a partir dos marcos registrados do projeto, da árvore de código do workspace (`0.1.0`, Rust `edition = "2024"`) e das verificações executadas entre **2026-11-14** e **2026-11-15**.
+
+---
+
+## Resumo Cronológico dos Marcos
+
+| Data (UTC) | Marco / Fase | Principais Entregas | Testes Workspace |
+| :--- | :--- | :--- | :--- |
+| 2026-11-14 | **Spec Kit & Arquitetura** | `ARCHITECTURE.md`, `AGENTS.md`, `specs/00`–`05` | — |
+| 2026-11-14 | **Fase P0** | Workspace com 7 crates, `fm-theme`, fontes embutidas, shell 3 painéis | 6 passando |
+| 2026-11-15 | **Fase P1** | `LocalFs`, volumes Linux/Windows, `rayon`, viewports virtualizados | 15 passando |
+| 2026-11-15 | **Fase P2** | Watcher `notify`, busca `nucleo`, Git `gix`, MIME/SHA-256, thumbnails SIMD + QuickLook | 23 passando |
+| 2026-11-15 | **Fase P3** | `CopyEngine`, lixeira `trash`, TOML config, favoritos, Miller Columns | 26 passando |
+| 2026-11-15 | **Fase P4** | `rustix` `getdents64`/`ioctl_ficlone`, `FindFirstFileExW`, SVG `resvg`, `redb` thumbs, terminal | 29 passando |
+| 2026-11-15 | **Fase P5** | `created_at` (`statx`), tema do SO, menu de contexto, ordenação por coluna, DnD | 31 passando |
+| 2026-11-15 | **Fase P6** | `CopyFileExW`/`ShellExecuteExW`, `longPathAware`, Mica/Acrylic, `ArchiveVfs`, `redb` telemetria, CI | 34 passando |
+| 2026-11-15 | **Polimento Técnico** | Grid agrupado/unificado, tamanho recursivo Hero Card, QuickLook `512 KB`, restaurar/esvaziar lixeira, benchmarks | 36 passando |
+| 2026-11-15 | **Pós-Polimento UX & Multi-Janela** | Duplo clique, anti-flicker, navegação 2D, sanitização `\n`, janela flutuante de Propriedades em 5 abas | 41 passando |
+
+---
+
+## [0.1.0-dev] — 2026-11-15
+
+### Pós-Polimento: UX de Navegação, Sanitização de Texto & Janela Flutuante de Propriedades
+
+#### Centralização da Janela Flutuante de Propriedades
+* **Alterado** (`crates/fm-app/src/app.rs`): janelas flutuantes de **Propriedades** abertas pelo menu de contexto agora iniciam centralizadas na tela via `window::Position::Centered` (tamanho `720x520`), em vez de coordenadas em cascata no canto superior esquerdo.
+
+#### Janelas Multi-Janela Flutuantes e Arrastáveis de Propriedades
+* **Alterado** (`crates/fm-app/src/main.rs`, `crates/fm-app/src/app.rs`, `crates/fm-app/src/views/modals.rs`):
+  * Migrado o loop principal de `iced::application` para `iced::daemon`, permitindo gerenciar a janela principal (`main_window_id`) e múltiplas janelas independentes de propriedades (`properties_windows: HashMap<window::Id, PropertiesWindowState>`).
+  * Adicionada `properties_window_view` conectada ao `window::Id` correspondente, com arraste tanto pela barra nativa do sistema quanto pelo cabeçalho interno (`mouse_area` + `Message::DragPropertiesWindow` -> `window::drag`).
+  * Permitida comparação lado a lado com múltiplas janelas abertas simultaneamente, cancelamento independente de telemetria por janela e foco automático (`window::gain_focus`) ao reabrir um item já aberto.
+
+#### Redesign da Janela de Propriedades (`Informações`)
+* **Adicionado / Alterado**:
+  * **Interface com 5 abas** (`crates/fm-app/src/views/modals.rs`): **`Geral`**, **`Segurança`**, **`Histórico`**, **`Metadados`** e **`Permissões`**, mantendo integralmente a paleta `ThemePalette` (`ObsidianFlow` Dark e `AetherLight` Light) sem copiar cores do mockup de referência.
+  * **Aba `Geral`**: hero card com ícone (`52x52`) e renomeação direta do item (bloqueada dentro de arquivos compactados), grade em 2 colunas (`Tipo`, `Sistema / MIME` com abertura no app padrão, `Localização` com cópia rápida e `Tamanho` com bytes agrupados e barra proporcional), linha do tempo (`Criado`, `Modificado`, `Último acesso`), switches de `Propriedades Rápidas` (`Somente leitura`, `Oculto`) e botão `Configurações Avançadas` apontando para `Permissões`.
+  * **Abas secundárias**: `Segurança` (SHA-256 completo + cópia, atributos e alvo de symlink), `Histórico` (datas + status Git), `Metadados` (nome, caminho, extensão, MIME, tamanho, `EntryId`), e `Permissões` (matriz interativa POSIX R/W/X em Unix e toggles de atributos + flags hex no Windows).
+  * **Domínio & Formatação** (`Cargo.toml`, `crates/fm-core/src/domain.rs`, `crates/fm-core/src/i18n.rs`): adicionada dependência `chrono`, `EntryExtraInfo`, `format_grouped_u64`, `format_timestamp_short` (`Hoje, HH:MM` / `Ontem, HH:MM` / `DD Mmm YYYY, HH:MM` no fuso local) e chaves i18n em PT-BR e EN-US.
+  * **Backend de Propriedades** (`crates/fm-fs/src/lib.rs`, `linux.rs`, `windows.rs`, `fallback.rs`): implementados `read_entry_extra_info`, `apply_entry_properties` (`PropertyPatch`) e `stat_entry` assíncronos, com `PropertiesTab` e controle `is_dirty` em `crates/fm-app/src/app.rs`.
+
+#### Correção de Quebra de Linha em Nomes com Caracteres de Controle (`\n`)
+* **Corrigido** (`crates/fm-app/src/views/mod.rs`, `header.rs`, `canvas.rs`, `footer.rs`, `inspector.rs`, `modals.rs`, `app.rs`):
+  * Adicionado `sanitize_single_line(&str)` (com teste unitário `sanitizes_embedded_newlines_into_single_spaces`) exclusivamente na camada de exibição para converter `\n`, `\r`, `\t` e demais caracteres de controle em espaço simples, preservando `PathBuf` / `OsString` reais no disco.
+  * Aplicado `text::Wrapping::None` e `.width(Length::Fill)` nos containers de linha (`sticky_header` e `row_content` da `detail_table_view`, `hero_card`, `unified_breadcrumb`, abas e `columns_view`), ajustando a largura do campo de busca no topo de `360px` para `310px`.
+
+#### Navegação 2D por Setas, Overflow em Linha Única e Grade Responsiva
+* **Adicionado / Corrigido**:
+  * **Navegação 2D e auto-scroll** (`crates/fm-app/src/views/virtualized.rs`, `crates/fm-app/src/app.rs`): adicionados `step_grid_selection`, `grid_band_y_span`, `navigate_selection_arrow(dx, dy)` e `scroll_entry_into_view` para movimentação vertical/horizontal correta em **Grade**, **Lista** e **Colunas** (`→` entra na pasta, `←` sobe nível).
+  * **Recorte em linha única e ajuste de colunas** (`crates/fm-app/src/views/canvas.rs`): criado `single_line_label`, ampliado peso da coluna `Nome` em `table_col_weights` (`[48.0, 11.0, 9.0, 17.0, 15.0]`) e adicionado divisor arrastável na vista **Colunas** (`StartColumnsPanelResize` / `columns_panel_width` entre `200px` e `480px`).
+  * **Grade responsiva e redimensionável** (`crates/fm-core/src/state.rs`, `virtualized.rs`, `canvas.rs`): `AppConfig::grid_card_width` (padrão `140.0`, faixa `104px`–`260px` com `clamp_grid_card_width`, `grid_card_height`, `grid_columns_for_width`), centralização simétrica dos blocos da grade, alça `StartGridResize` no canto inferior direito dos cards, controles `-` / `140px` / `+` + toggle de agrupamento na barra da aba e atalhos `Ctrl++`, `Ctrl+-`, `Ctrl+0`.
+
+#### Correções de Duplo Clique, Flickering e Propriedades In-App
+* **Corrigido**:
+  * **Duplo clique** (`crates/fm-app/src/views/canvas.rs`, `app.rs`): removido `.on_double_click(...)` capturado pelo `button` interno; `Message::SelectEntry` detecta dois cliques consecutivos no mesmo item dentro de `450 ms` (sem `Ctrl`/`Shift`) e aciona `Message::ActivateEntry`.
+  * **Propriedades in-app** (`crates/fm-app/src/app.rs`, `modals.rs`, `fm-core/src/i18n.rs`): desacoplado do D-Bus (`ShowItemProperties`, que abria o Nemo no Linux), passando a exibir diálogo interno com cálculo ao vivo e cancelável.
+  * **Anti-flicker em diretórios ativos** (`crates/fm-index/src/watcher.rs`, `app.rs`, `canvas.rs`): debounce do watcher elevado para `250 ms` com `WatchEvent::has_visible_change` ignorando arquivos ocultos `.` quando `show_hidden` está desativado, throttle mínimo de `600 ms` em `DirectoryChangedOnDisk`, preservação de `child_count` conhecido entre reloads em `DirectoryLoaded`, e altura padronizada (`height(22)`) no rótulo do card da grade.
+
+---
+
+### Polimento Técnico — Grid, Tamanho Recursivo, QuickLook `512 KB` e Lixeira Completa (2026-11-15)
+
+* **Grid agrupado vs. unificado e `dirs_first` configurável** (`crates/fm-core/src/state.rs`, `views/virtualized.rs`, `views/canvas.rs`, `views/modals.rs`, `app.rs`):
+  * Adicionados `grid_group_folders` e `dirs_first` (padrão `true`) em `AppConfig`, `build_unified_grid_bands`, toggles em Preferências e unificação de busca + filtro de pastas via `DIR_FILTER_SENTINEL`.
+* **Tamanho recursivo assíncrono com cache `redb` no Hero Card** (`crates/fm-core/src/domain.rs`, `crates/fm-telemetry/src/meta_cache.rs`, `stats.rs`, `canvas.rs`, `app.rs`):
+  * Adicionados `RecursiveSize` em `DirectoryTelemetry`, tabela `dir_size_v1` no `DiskMetadataCache` e worker cancelável `compute_folder_size_cached` (limite de `25.000` entradas, profundidade `32`, timeout `1,5 s`, sem seguir symlinks ou pseudo-filesystems).
+* **QuickLook de código ampliado** (`crates/fm-app/src/app.rs`): limite de leitura textual estendido de `64 * 1024` para `512 * 1024` bytes em arquivos locais e dentro de compactados.
+* **Ações nativas de Lixeira** (`crates/fm-core/src/vfs.rs`, `crates/fm-fs/src/lib.rs`, `canvas.rs`, `modals.rs`):
+  * Implementados `VfsProvider::restore_from_trash` e `VfsProvider::empty_trash` via `trash::os_limited` (Linux e Windows), botões **Restaurar** e **Esvaziar lixeira**, ação contextual **Restaurar** e diálogo `ActiveDialog::ConfirmEmptyTrash`.
+* **Benchmarks aferidos** (`cargo bench -p fm-fs --bench vfs_bench -- --sample-size 10 --measurement-time 1`):
+  * `localfs_list_dir_2000_entries`: `4.3052 ms` (`[4.2230 ms, 4.3916 ms]`, dentro da meta `< 5 ms`);
+  * `tab_recompute_sort_10000_rayon`: `4.7902 ms`;
+  * `nucleo_fuzzy_rank_10000`: `1.9078 ms`.
+
+---
+
+### Fase P6 — Paridade Windows Nativa, `ArchiveVfs`, Cache `redb` & CI (2026-11-15)
+
+* **Paridade nativa Windows & propriedades de sistema** (`crates/fm-fs/src/windows.rs`, `linux.rs`, `copy_engine.rs`, `crates/fm-core/src/vfs.rs`, `crates/fm-app/build.rs`, `vagnarok.manifest`, `vagnarok.rc`, `app.rs`):
+  * Cópia nativa com progresso e cancelamento via `CopyFileExW` e suporte a caminhos longos `\\?\` (`to_long_wide`).
+  * Abertura e propriedades nativas com `ShellExecuteExW` no Windows e `org.freedesktop.FileManager1.ShowItemProperties` no Linux (`VfsProvider::open_properties`).
+  * Manifesto `longPathAware` compilado via `build.rs` (compatível com MSVC e `x86_64-w64-mingw32-windres`).
+  * Efeito Mica/Acrylic no Windows via `apply_window_vibrancy` (`window-vibrancy`).
+* **Navegação em arquivos compactados (`ArchiveVfs`)** (`crates/fm-fs/src/archive.rs`, `lib.rs`, `crates/fm-preview/src/thumbs.rs`, `app.rs`):
+  * Navegação read-only em `.zip`, `.tar`, `.tar.gz` e `.tgz`, extração sob demanda (`VfsProvider::read_bytes`), geração de miniaturas em memória (`decode_thumbnail_from_bytes`) e QuickLook para itens internos.
+* **Cache persistente de telemetria em `redb`** (`crates/fm-telemetry/src/meta_cache.rs`, `stats.rs`, `app.rs`):
+  * `DiskMetadataCache` (`telemetry_v1.redb`) persistindo MIME, SHA-256 (prefixo e completo) e contagem rasa de pastas (`count_direct_children_cached`).
+* **Refinamentos de viewport** (`crates/fm-app/src/views/canvas.rs`, `modals.rs`, `app.rs`):
+  * Colunas redimensionáveis na tabela (`table_col_weights`, `StartColumnResize` / `EndColumnResize`);
+  * Miller Columns multinível com rolagem horizontal e carregamento de ancestrais (`maybe_load_column_ancestors`);
+  * Filtro por tipo/extensão (`TabState.extension_filter` e `ContextMenuKind::FilterMenu`).
+* **CI, Tracing & Benchmarks** (`.github/workflows/ci.yml`, `crates/fm-fs/benches/vfs_bench.rs`):
+  * Pipeline GitHub Actions em `ubuntu-latest` e `windows-latest` (`fmt`, `clippy -- -D warnings`, `test --workspace`, `bench --no-run`), benchmark Criterion e spans `tracing::debug!` em `LocalFs::list_dir`.
+
+---
+
+### Fase P5 — Menu de Contexto, Ordenação por Coluna, Tema do SO, Atalhos & Drag & Drop (2026-11-15)
+
+* **Data de criação nativa (`created_at`)** (`crates/fm-core/src/domain.rs`, `crates/fm-fs/src/linux.rs`, `windows.rs`, `lib.rs`, `inspector.rs`):
+  * Captura nativa de `created_at` via `statx` (`BTIME`, com fallback para `statat`) no Linux e `ftCreationTime` no Windows, exibida no Inspetor.
+* **Tema do sistema e barra de janela dinâmica** (`crates/fm-core/src/state.rs`, `crates/fm-app/src/app.rs`):
+  * Adicionado `AppConfig::theme_customized`; sincronização com `system::theme()` e `system::theme_changes()` quando não customizado, e alternância dinâmica de decorações com `window::toggle_decorations` fora do Windows.
+* **Menu de contexto, `+ Novo` e ordenação na tabela** (`crates/fm-app/src/views/modals.rs`, `canvas.rs`):
+  * Popover `context_menu_overlay` com ações para itens e área vazia (incluindo cópia de caminho via `iced::clipboard::write`), dropdown no botão `+ Novo` e cabeçalhos clicáveis na `DetailTable` (`Message::SortByField`).
+* **Atalhos, navegação rápida e Drag & Drop externo** (`crates/fm-core/src/state.rs`, `crates/fm-app/src/views/header.rs`, `app.rs`):
+  * `Ctrl+A` (`SelectionState::select_all`), `Ctrl+Tab` / `Ctrl+Shift+Tab`, clique do meio para fechar abas, `Alt+Left` / `Alt+Right` / `Alt+Up` / `Backspace`, navegação `↑`/`↓` com QuickLook aberto, autocompletar `Tab` em `Ctrl+L`, e recepção em lote de `window::Event::FileDropped` (`FlushDroppedFiles`) via `CopyEngine`.
+
+---
+
+### Fase P4 — Hot Paths Nativos, SVG, Cache em Disco & Polimento de UX (2026-11-15)
+
+* **Hot paths nativos & terminal** (`crates/fm-fs/src/linux.rs`, `windows.rs`, `copy_engine.rs`, `lib.rs`, `crates/fm-core/src/vfs.rs`):
+  * Linux (`rustix`): `scan_directory_native` (`open(O_DIRECTORY)` + `RawDir`/`getdents64` + `statat`), clone COW `try_ficlone` (`ioctl_ficlone`) no `CopyEngine` e `open_terminal_at`.
+  * Windows (`windows` crate): `scan_directory_native` em lote (`FindFirstFileExW` com `FindExInfoBasic` + `FIND_FIRST_EX_LARGE_FETCH`, `FindNextFileW` e RAII `FindClose`) e `open_terminal_at` (`wt.exe` / `cmd.exe`), validado com cross-check `x86_64-pc-windows-gnu`.
+* **SVG & Cache persistente de miniaturas** (`crates/fm-preview/src/thumbs.rs`, `disk_cache.rs`):
+  * Rasterização SVG via `resvg` + `usvg` + `tiny-skia` e cache persistente `DiskThumbnailCache` em `redb` (`generate_or_load_thumbnail`).
+* **Status Git por arquivo** (`crates/fm-telemetry/src/git.rs`, `inspector.rs`): `detect_file_git_status` via `gix` exibido no Inspetor.
+* **UX** (`header.rs`, `modals.rs`, `canvas.rs`, `sidebar.rs`, `app.rs`): popover de subpastas nos chevrons `>` do breadcrumb (`breadcrumb_menu_overlay`), resolução interativa de conflitos (`ActiveDialog::Conflict`), botão/atalho de Terminal (`Ctrl+Shift+T`) e barra de uso de disco nas unidades da barra lateral.
+
+---
+
+### Fase P3 — Operações de Arquivo (`CopyEngine`), Lixeira, Favoritos & Miller Columns (2026-11-15)
+
+* **Contratos de transferência & configuração** (`crates/fm-core/src/domain.rs`, `state.rs`, `i18n.rs`):
+  * Adicionados `CopyMode`, `ConflictPolicy`, `JobState`, `JobProgress`, `ClipboardTransfer`, além de `default_view_mode` e `favorites` em `AppConfig`.
+* **Motor de cópia, lixeira & config TOML** (`crates/fm-fs/src/copy_engine.rs`, `config.rs`, `lib.rs`, `linux.rs`):
+  * `run_transfer_job` assíncrono e cancelável com pré-medição, move rápido via `rename` (com fallback cross-device), `copy_file_range` no Linux e `share_mode(0x7)` no Windows.
+  * `LocalFs::move_to_trash` (`trash`), `LocalFs::delete_permanent` e persistência atômica TOML (`load_config` / `save_config` via `ProjectDirs`).
+* **UI operacional & 3ª coluna** (`crates/fm-app/src/views/modals.rs`, `canvas.rs`, `sidebar.rs`, `footer.rs`, `app.rs`):
+  * Modais de Nova Pasta / Novo Arquivo (`Ctrl+Shift+N`), Renomear (`F2`), Confirmação de Lixeira (`Delete`) / Exclusão Permanente (`Shift+Delete`) e Preferências;
+  * Barra contextual (`Ctrl+C`/`Ctrl+X`/`Ctrl+V`), banner de progresso com cancelamento, favoritos na Sidebar (`★`) e modo **Miller Columns** (`ViewMode::Columns`) com prévia assíncrona na 3ª coluna (`column_preview`).
+
+---
+
+### Fase P2 — Watcher em Tempo Real, Telemetria, Busca Fuzzy/Profunda & Miniaturas SIMD (2026-11-15)
+
+* **Watcher com debounce** (`crates/fm-index/src/watcher.rs`, `app.rs`): `start_directory_watcher` (`notify` + `notify-debouncer-mini`) integrado via `Subscription::run_with` para refresh silencioso.
+* **Workers de telemetria canceláveis** (`crates/fm-telemetry/src/{git,stats,mime,hash,open_shared}.rs`):
+  * `detect_git_branch` (`gix`), `count_direct_children` (contagem rasa até `10_000` entradas), `detect_mime_type` (`infer`), `compute_sha256` (`sha2` streaming 64 KB) e abertura compartilhada `share_mode(0x7)` no Windows.
+* **Busca fuzzy e profunda** (`crates/fm-index/src/search.rs`, `header.rs`, `inspector.rs`):
+  * `fuzzy_rank_entries` (`nucleo-matcher`) no filtro `Ctrl+K` e `deep_search` (`ignore::WalkBuilder` respeitando `.gitignore`) via botão Subpastas / `Ctrl+Shift+F` e modal `deep_search_modal`.
+* **Miniaturas SIMD & QuickLook** (`crates/fm-preview/src/thumbs.rs`, `lib.rs`, `canvas.rs`, `inspector.rs`):
+  * `ThumbnailCache` (`LruCache`) + `generate_thumbnail` (`image` + `fast_image_resize`), carregamento sob demanda para o viewport visível e QuickLook (`Space`) com preview de imagem e realce de sintaxe (`iced::widget::text_editor` + `iced::highlighter`).
+
+---
+
+### Fase P1 — Navegação Real (`LocalFs`), Unidades Nativas & Virtualização (2026-11-15)
+
+* **Driver real de disco** (`crates/fm-fs/src/{lib,linux,windows}.rs`):
+  * `LocalFs` implementando `VfsProvider` em `tokio::task::spawn_blocking` com `CancellationToken`, detecção de symlinks (incluindo links quebrados) e `open::that_detached`.
+  * Linux: descoberta de volumes em `/proc/mounts` (decodificando escapes octais como `\040`) + `rustix::fs::statvfs`.
+  * Windows: descoberta isolada via `GetLogicalDriveStringsW`, `GetDriveTypeW`, `GetVolumeInformationW`, `GetDiskFreeSpaceExW` e `FILE_ATTRIBUTE_HIDDEN`.
+  * `user_places()` via `directories` (`Home`, `Desktop`, `Documents`, `Downloads`, `Pictures` e Lixeira XDG no Linux).
+* **Domínio & ordenação paralela** (`crates/fm-core/src/{domain,state,i18n}.rs`): `UserPlaces`, `compute_entry_id` (FNV-1a 64-bit), `format_age` e ordenação paralela com `rayon::par_sort_by` para diretórios com `>= 2.000` itens.
+* **Prévia textual & virtualização estrita** (`crates/fm-preview/src/lib.rs`, `crates/fm-app/src/views/virtualized.rs`, `canvas.rs`, `app.rs`):
+  * `read_text_preview` (`64 KB`, pulando arquivos binários com byte NUL, `share_mode(0x7)` no Windows);
+  * Remoção dos dados mockados (`sample.rs`), navegação real com descarte de respostas obsoletas por `request_id` e renderização estrita apenas dos itens visíveis (+ overscan) com `partition_point` O(log N) no Grid e Tabela.
+
+---
+
+### Fase P0 — Bootstrap do Workspace & Shell Visual Base (2026-11-14)
+
+* **Workspace Cargo** (`Cargo.toml`): estrutura modular com 7 crates (`fm-core`, `fm-fs`, `fm-index`, `fm-telemetry`, `fm-preview`, `fm-theme`, `fm-app`), `edition = "2024"`, `[profile.dev.package."*"] opt-level = 2` e perfil release (`lto = "thin"`, `codegen-units = 1`, `panic = "abort"`).
+* **Domínio puro** (`crates/fm-core/src/{domain,state,vfs,i18n}.rs`): `FileEntry` (`CompactString`), `PermissionsMeta`, `DirectorySnapshot`, `SortSpec`, `ViewMode`, `format_bytes`, `TabState`, `SelectionState`, `AppConfig`, `ThemePreset`, `Language`, `VfsProvider`, `FsError` e catálogo `Strings` (`PtBr` / `EnUs`).
+* **Design System & fontes** (`crates/fm-theme/src/{fonts,palette,styles}.rs`, `assets/fonts/`): fontes `Inter` e `JetBrains Mono` embutidas via `include_bytes!`, presets `ThemePalette::aether_light()` e `ThemePalette::obsidian_flow()` e builders Iced.
+* **Shell GUI P0** (`crates/fm-app/src/{main,sample}.rs`, `crates/fm-app/src/views/{mod,header,sidebar,canvas,inspector,footer}.rs`): alocador `MiMalloc`, ícones `lucide-icons`, layout de 3 painéis com abas, sidebar colapsável (`Ctrl+B`), breadcrumb (`Ctrl+L`), Inspetor (`Alt+I`), QuickLook (`Space`) e rodapé único sobre dados mockados iniciais.
+
+---
+
+### Spec Kit & Fundação Arquitetural (2026-11-14)
+
+* **Documentação de engenharia** (`ARCHITECTURE.md`, `AGENTS.md`): definição da arquitetura 100% Rust nativa (`iced` + `wgpu`), grafo rígido de crates, regras invioláveis (thread de UI sem I/O bloqueante, isolamento `#[cfg(target_os)]` em `fm-fs`, `PathBuf`/`OsString` preservados, Windows `FILE_SHARE_*` e virtualização obrigatória).
+* **Spec Kit** (`specs/00-spec-index.md` – `specs/05-tech-stack-prototype.md`):
+  * Reconciliação oficial de inconsistências entre `DESIGN.md`, `code.html` e `screen.png`;
+  * Tokens semânticos unificados de cores, tipografia e espaçamentos;
+  * Contratos assíncronos de domínio, mensagens e cancelamento;
+  * Especificação dos componentes/atalhos e roadmap incremental (`P0`–`P3`).
+
+---
+
+## Estado de Verificação Atual
+
+Última bateria executada sobre o workspace atual (sem alterações posteriores):
+* `cargo fmt --all -- --check`: aprovado (`exit 0`).
+* `cargo clippy --workspace --all-targets -- -D warnings`: aprovado (`0` avisos).
+* `cargo test --workspace`: **41 testes aprovados, 0 falhas** (`fm-app`: 6, `fm-core`: 7, `fm-fs`: 12, `fm-index`: 2, `fm-preview`: 7, `fm-telemetry`: 6, `fm-theme`: 1).
+* `cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings`: aprovado (`0` avisos).
+* `cargo build -p fm-app`: compilado com sucesso (`target/debug/fm-app`).
+
+## Itens Previstos para Próximas Versões
+
+* **`SftpVfs`**: provedor remoto SSH/SFTP implementando `VfsProvider` (`crates/fm-core/src/vfs.rs`) sem alterações estruturais na UI.
+* **Polimentos adicionais**: blur opcional em compositores Linux (KDE/Wayland), drag-and-drop interno entre abas/pastas e validação interativa direta em ambiente Windows 11 nativo.
