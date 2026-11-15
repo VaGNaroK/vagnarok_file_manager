@@ -104,6 +104,9 @@ pub struct Strings {
     pub confirm_empty_trash_msg: &'static str,
     pub trash_emptied: &'static str,
     pub trash_restored: &'static str,
+    pub location_label: &'static str,
+    pub copy_sha256: &'static str,
+    pub hash_copied: &'static str,
 }
 
 impl Strings {
@@ -217,6 +220,9 @@ impl Strings {
             confirm_empty_trash_msg: "Deseja esvaziar permanentemente todos os itens da lixeira do sistema?",
             trash_emptied: "Lixeira esvaziada.",
             trash_restored: "Itens restaurados para o local original.",
+            location_label: "Localização",
+            copy_sha256: "Copiar SHA-256",
+            hash_copied: "SHA-256 copiado",
         }
     }
 
@@ -323,6 +329,9 @@ impl Strings {
             confirm_empty_trash_msg: "Permanently delete every item currently in the system trash?",
             trash_emptied: "Trash emptied.",
             trash_restored: "Restored item(s) to original location.",
+            location_label: "Location",
+            copy_sha256: "Copy SHA-256",
+            hash_copied: "SHA-256 copied",
         }
     }
 }

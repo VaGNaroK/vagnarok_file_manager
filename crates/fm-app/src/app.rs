@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use compact_str::CompactString;
 use fm_core::{
@@ -64,6 +64,14 @@ pub struct ContextMenuState {
 }
 
 #[derive(Debug, Clone)]
+pub struct PropertiesDialogState {
+    pub entry: FileEntry,
+    pub telemetry: Option<SelectedFileTelemetry>,
+    pub recursive_size: Option<RecursiveSize>,
+    pub size_loading: bool,
+}
+
+#[derive(Debug, Clone)]
 pub enum ActiveDialog {
     CreateItem {
         is_dir: bool,
@@ -84,6 +92,7 @@ pub enum ActiveDialog {
         dest_dir: PathBuf,
         conflicts: usize,
     },
+    Properties(Box<PropertiesDialogState>),
 }
 
 pub fn canvas_scroll_id() -> Id {
@@ -195,7 +204,10 @@ pub enum Message {
         rgba: Option<Arc<ThumbnailRgba>>,
     },
     QuickLookEditorAction(text_editor::Action),
-    DirectoryChangedOnDisk(PathBuf),
+    DirectoryChangedOnDisk {
+        watched_root: PathBuf,
+        has_visible_change: bool,
+    },
     GitBranchReady {
         tab_id: TabId,
         request_id: u64,
@@ -285,7 +297,10 @@ pub enum Message {
     ConfigSaved(Option<String>),
     OpenDefaultFinished(Result<(), FsError>),
     OpenProperties(PathBuf),
-    PropertiesOpened(Result<(), FsError>),
+    PropertiesFolderSizeReady {
+        path: PathBuf,
+        size: Option<RecursiveSize>,
+    },
     OpenNewMenu,
     OpenFilterMenu,
     SetExtensionFilter(Option<CompactString>),
@@ -293,6 +308,7 @@ pub enum Message {
     OpenCanvasContextMenu,
     CloseContextMenu,
     CopyPath(PathBuf),
+    CopyText(String, String),
     StartColumnResize(usize),
     EndColumnResize,
     CursorMoved(Point),
@@ -372,6 +388,9 @@ pub struct App {
     pub canvas_scroll_y: f32,
     pub canvas_viewport_height: f32,
     pub status_notice: Option<String>,
+    pub last_entry_click: Option<(TabId, PathBuf, Instant)>,
+    pub last_watcher_reload: Option<(PathBuf, Instant)>,
+    pub properties_cancel: Option<CancellationToken>,
 }
 
 impl App {
@@ -467,6 +486,9 @@ impl App {
             canvas_scroll_y: 0.0,
             canvas_viewport_height: 700.0,
             status_notice: None,
+            last_entry_click: None,
+            last_watcher_reload: None,
+            properties_cancel: None,
         };
 
         let auto_theme_task = if !app.config.theme_customized {
@@ -692,6 +714,25 @@ impl App {
                 self.navigate_active_tab(path)
             }
             Message::SelectEntry { index, modifiers } => {
+                self.context_menu = None;
+                let clicked_entry = self
+                    .current_tab()
+                    .and_then(|t| t.visible_entries.get(index))
+                    .map(|e| (self.active_tab, e.path.clone()));
+                if !modifiers.ctrl
+                    && !modifiers.shift
+                    && let Some((tab_id, path)) = clicked_entry.as_ref()
+                    && let Some((prev_tab, prev_path, prev_at)) = &self.last_entry_click
+                    && prev_tab == tab_id
+                    && prev_path == path
+                    && prev_at.elapsed() <= Duration::from_millis(450)
+                {
+                    self.last_entry_click = None;
+                    return self.update(Message::ActivateEntry(index));
+                }
+                self.last_entry_click =
+                    clicked_entry.map(|(tab_id, path)| (tab_id, path, Instant::now()));
+
                 let mut single_entry = None;
                 if let Some(tab) = self.current_tab_mut() {
                     tab.selection
@@ -942,7 +983,20 @@ impl App {
                         Ok(snapshot) => {
                             tab.last_error = None;
                             tab.fs_type = snapshot.fs_type;
-                            tab.raw_entries = snapshot.entries;
+                            let prev_counts: HashMap<PathBuf, u32> = tab
+                                .raw_entries
+                                .iter()
+                                .filter_map(|e| e.child_count.map(|c| (e.path.clone(), c)))
+                                .collect();
+                            let mut entries = snapshot.entries;
+                            if !prev_counts.is_empty() {
+                                for entry in &mut entries {
+                                    if let Some(&count) = prev_counts.get(&entry.path) {
+                                        entry.child_count = Some(count);
+                                    }
+                                }
+                            }
+                            tab.raw_entries = entries;
                             apply_tab_filter(tab);
                             tab.title = display_tab_title(&tab.current_path);
 
@@ -1105,13 +1159,27 @@ impl App {
                 }
                 Task::none()
             }
-            Message::DirectoryChangedOnDisk(watched_root) => {
-                let is_active_same = self
-                    .current_tab()
-                    .is_some_and(|t| t.current_path == watched_root && !t.is_loading);
-                if !is_active_same {
+            Message::DirectoryChangedOnDisk {
+                watched_root,
+                has_visible_change,
+            } => {
+                let Some(tab) = self.current_tab() else {
+                    return Task::none();
+                };
+                if tab.current_path != watched_root || tab.is_loading {
                     return Task::none();
                 }
+                if !has_visible_change && !tab.show_hidden {
+                    return Task::none();
+                }
+                let now = Instant::now();
+                if let Some((prev_path, prev_at)) = &self.last_watcher_reload
+                    && prev_path == &watched_root
+                    && now.duration_since(*prev_at) < Duration::from_millis(600)
+                {
+                    return Task::none();
+                }
+                self.last_watcher_reload = Some((watched_root.clone(), now));
                 let req = self.alloc_request_id();
                 let active = self.active_tab;
                 if let Some(tab) = self.current_tab_mut() {
@@ -1174,10 +1242,21 @@ impl App {
                         .clone()
                         .unwrap_or_else(|| basic_file_telemetry(selected));
                     if mime.is_some() {
-                        tel.mime_type = mime;
+                        tel.mime_type = mime.clone();
                     }
                     persist_entry = Some((selected.clone(), tel.clone()));
                     tab.selected_telemetry = Some(tel);
+                }
+                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+                    && props.entry.path == path
+                    && mime.is_some()
+                {
+                    let mut tel = props
+                        .telemetry
+                        .take()
+                        .unwrap_or_else(|| basic_file_telemetry(&props.entry));
+                    tel.mime_type = mime;
+                    props.telemetry = Some(tel);
                 }
                 if let Some((entry, tel)) = persist_entry {
                     self.persist_file_telemetry(&entry, &tel);
@@ -1201,12 +1280,24 @@ impl App {
                         .selected_telemetry
                         .clone()
                         .unwrap_or_else(|| basic_file_telemetry(selected));
-                    if let Some((prefix, full)) = sha {
-                        tel.sha256_prefix = Some(prefix);
-                        tel.sha256_full = Some(full);
+                    if let Some((ref prefix, ref full)) = sha {
+                        tel.sha256_prefix = Some(prefix.clone());
+                        tel.sha256_full = Some(full.clone());
                     }
                     persist_entry = Some((selected.clone(), tel.clone()));
                     tab.selected_telemetry = Some(tel);
+                }
+                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+                    && props.entry.path == path
+                    && let Some((prefix, full)) = sha
+                {
+                    let mut tel = props
+                        .telemetry
+                        .take()
+                        .unwrap_or_else(|| basic_file_telemetry(&props.entry));
+                    tel.sha256_prefix = Some(prefix);
+                    tel.sha256_full = Some(full);
+                    props.telemetry = Some(tel);
                 }
                 if let Some((entry, tel)) = persist_entry {
                     self.persist_file_telemetry(&entry, &tel);
@@ -1229,8 +1320,18 @@ impl App {
                         .selected_telemetry
                         .clone()
                         .unwrap_or_else(|| basic_file_telemetry(selected));
-                    tel.git_status = status;
+                    tel.git_status = status.clone();
                     tab.selected_telemetry = Some(tel);
+                }
+                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+                    && props.entry.path == path
+                {
+                    let mut tel = props
+                        .telemetry
+                        .take()
+                        .unwrap_or_else(|| basic_file_telemetry(&props.entry));
+                    tel.git_status = status;
+                    props.telemetry = Some(tel);
                 }
                 Task::none()
             }
@@ -1414,6 +1515,9 @@ impl App {
                 Task::none()
             }
             Message::CloseDialog => {
+                if let Some(cancel) = self.properties_cancel.take() {
+                    cancel.cancel();
+                }
                 self.active_dialog = None;
                 Task::none()
             }
@@ -1681,17 +1785,80 @@ impl App {
                 self.status_notice = Some(self.strings().path_copied.to_owned());
                 clipboard::write(text)
             }
+            Message::CopyText(text, notice) => {
+                self.context_menu = None;
+                self.status_notice = Some(notice);
+                clipboard::write(text)
+            }
             Message::OpenProperties(path) => {
                 self.context_menu = None;
-                let vfs = Arc::clone(&self.vfs);
-                Task::perform(
-                    async move { vfs.open_properties(&path).await },
-                    Message::PropertiesOpened,
-                )
+                if let Some(cancel) = self.properties_cancel.take() {
+                    cancel.cancel();
+                }
+                let entry = self.current_tab().and_then(|t| {
+                    t.visible_entries
+                        .iter()
+                        .find(|e| e.path == path)
+                        .or_else(|| t.raw_entries.iter().find(|e| e.path == path))
+                        .cloned()
+                });
+                let Some(entry) = entry else {
+                    return Task::none();
+                };
+                let existing_telemetry = self.current_tab().and_then(|t| {
+                    let selected = t.selection.single_selected(&t.visible_entries)?;
+                    (selected.path == entry.path)
+                        .then_some(t.selected_telemetry.as_ref())
+                        .flatten()
+                        .cloned()
+                });
+                let needs_file_telemetry = !entry.kind.is_dir_like()
+                    && fm_fs::archive::split_archive_path(&entry.path).is_none()
+                    && existing_telemetry
+                        .as_ref()
+                        .is_none_or(|tel| tel.mime_type.is_none() || tel.sha256_full.is_none());
+                let telemetry =
+                    Some(existing_telemetry.unwrap_or_else(|| basic_file_telemetry(&entry)));
+                let size_loading = entry.kind.is_dir_like()
+                    && fm_fs::archive::split_archive_path(&entry.path).is_none();
+
+                let mut tasks = Vec::new();
+                if size_loading {
+                    let cancel = CancellationToken::new();
+                    self.properties_cancel = Some(cancel.clone());
+                    let size_dir = entry.path.clone();
+                    let meta_cache = self.metadata_cache.clone();
+                    tasks.push(Task::perform(
+                        async move {
+                            let size = fm_telemetry::compute_folder_size_cached(
+                                size_dir.clone(),
+                                meta_cache,
+                                cancel,
+                            )
+                            .await;
+                            (size_dir, size)
+                        },
+                        |(path, size)| Message::PropertiesFolderSizeReady { path, size },
+                    ));
+                } else if needs_file_telemetry {
+                    tasks.push(self.maybe_load_selection_telemetry(Some(&entry)));
+                }
+
+                self.active_dialog =
+                    Some(ActiveDialog::Properties(Box::new(PropertiesDialogState {
+                        entry,
+                        telemetry,
+                        recursive_size: None,
+                        size_loading,
+                    })));
+                Task::batch(tasks)
             }
-            Message::PropertiesOpened(res) => {
-                if let Err(err) = res {
-                    self.status_notice = Some(err.to_string());
+            Message::PropertiesFolderSizeReady { path, size } => {
+                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+                    && props.entry.path == path
+                {
+                    props.recursive_size = size;
+                    props.size_loading = false;
                 }
                 Task::none()
             }
@@ -2068,7 +2235,7 @@ impl App {
                     }
                 })
             }
-            ActiveDialog::Conflict { .. } => Task::none(),
+            ActiveDialog::Conflict { .. } | ActiveDialog::Properties(_) => Task::none(),
         }
     }
 
@@ -2879,7 +3046,10 @@ fn watch_directory_stream(root: &PathBuf) -> impl iced::futures::Stream<Item = M
         };
         while let Some(ev) = rx.recv().await {
             if output
-                .send(Message::DirectoryChangedOnDisk(ev.watched_root))
+                .send(Message::DirectoryChangedOnDisk {
+                    watched_root: ev.watched_root,
+                    has_visible_change: ev.has_visible_change,
+                })
                 .await
                 .is_err()
             {

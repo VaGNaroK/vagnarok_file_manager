@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use fm_core::{
-    ConflictPolicy, DIR_FILTER_SENTINEL, FileEntry, Language, Strings, ThemePreset, ViewMode,
-    WindowDecorationsMode, format_bytes,
+    ConflictPolicy, DIR_FILTER_SENTINEL, FileEntry, Language, PermissionsMeta, Strings,
+    ThemePreset, ViewMode, WindowDecorationsMode, format_age, format_bytes,
 };
 use fm_theme::{FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_SEMIBOLD, ThemePalette, styles};
 use iced::Alignment::Center;
@@ -17,6 +17,7 @@ use lucide_icons::iced::{
 };
 
 use crate::app::{ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, dialog_input_id};
+use crate::views::entry_icon;
 
 pub fn dialog_modal<'a>(
     dialog: &'a ActiveDialog,
@@ -268,6 +269,182 @@ pub fn dialog_modal<'a>(
             .spacing(12)
             .into()
         }
+        ActiveDialog::Properties(props) => {
+            let entry = &props.entry;
+            let pt_br = strings.close == "Fechar";
+            let (icon_widget, _) = entry_icon(entry, palette, 24.0);
+            let is_dir = entry.kind.is_dir_like();
+
+            let type_desc = if is_dir {
+                strings.directories_only.to_owned()
+            } else if let Some(ext) = &entry.extension {
+                format!(".{}", ext.to_ascii_lowercase())
+            } else {
+                strings.files_unit.to_owned()
+            };
+
+            let size_desc = if is_dir {
+                if let Some(rs) = props.recursive_size {
+                    let prefix = if rs.truncated { "≈ " } else { "" };
+                    format!(
+                        "{prefix}{} ({} B)",
+                        format_bytes(rs.total_bytes),
+                        rs.total_bytes
+                    )
+                } else if props.size_loading {
+                    strings.computing_hash.to_owned()
+                } else {
+                    "-".to_owned()
+                }
+            } else {
+                format!(
+                    "{} ({} bytes)",
+                    format_bytes(entry.size_bytes),
+                    entry.size_bytes
+                )
+            };
+
+            let perms_desc = match entry.permissions {
+                PermissionsMeta::PosixMode(mode) => format!(
+                    "{} ({:04o})",
+                    entry.permissions.format_compact(is_dir),
+                    mode & 0o7777
+                ),
+                PermissionsMeta::WinAttributes(attrs) => format!(
+                    "{} (0x{:08X})",
+                    entry.permissions.format_compact(is_dir),
+                    attrs
+                ),
+            };
+
+            let prop_row = |label: &'a str, val: String| {
+                row![
+                    text(label)
+                        .size(11)
+                        .font(FONT_MONO_BOLD)
+                        .color(palette.text_muted)
+                        .width(Length::Fixed(124.0)),
+                    text(val)
+                        .size(12)
+                        .font(FONT_MONO)
+                        .color(palette.text_primary)
+                        .width(Length::Fill),
+                ]
+                .spacing(10)
+                .align_y(Center)
+            };
+
+            let mut info_rows = column![
+                prop_row(
+                    strings.location_label,
+                    entry.path.to_string_lossy().into_owned(),
+                ),
+                prop_row(strings.col_type, type_desc),
+                prop_row(strings.col_size, size_desc),
+                prop_row(strings.permissions, perms_desc),
+            ]
+            .spacing(8);
+
+            if let Some(modified) = entry.modified_at {
+                info_rows = info_rows.push(prop_row(
+                    strings.modified,
+                    format_age(modified, pt_br).to_string(),
+                ));
+            }
+            if let Some(created) = entry.created_at {
+                info_rows = info_rows.push(prop_row(
+                    strings.created,
+                    format_age(created, pt_br).to_string(),
+                ));
+            }
+
+            let mut sha_full_opt: Option<String> = None;
+            if let Some(tel) = &props.telemetry {
+                if let Some(mime) = &tel.mime_type {
+                    info_rows = info_rows.push(prop_row(strings.mime_type, mime.to_string()));
+                }
+                if let Some(git) = &tel.git_status {
+                    info_rows = info_rows.push(prop_row(strings.git_status_label, git.to_string()));
+                }
+                if let Some(full) = &tel.sha256_full {
+                    let full_s = full.to_string();
+                    sha_full_opt = Some(full_s.clone());
+                    info_rows = info_rows.push(prop_row(strings.checksum, full_s));
+                } else if !is_dir {
+                    info_rows = info_rows.push(prop_row(
+                        strings.checksum,
+                        strings.computing_hash.to_owned(),
+                    ));
+                }
+            }
+
+            let mut footer_btns = row![
+                button(
+                    row![
+                        icon_clipboard_copy().size(13),
+                        text(strings.copy_path).size(12),
+                    ]
+                    .spacing(6)
+                    .align_y(Center),
+                )
+                .padding([6, 12])
+                .style(styles::pill_secondary_button(palette))
+                .on_press(Message::CopyPath(entry.path.clone())),
+            ]
+            .spacing(8)
+            .align_y(Center);
+
+            if let Some(hash) = sha_full_opt {
+                footer_btns = footer_btns.push(
+                    button(
+                        row![
+                            icon_clipboard_copy().size(13),
+                            text(strings.copy_sha256).size(12),
+                        ]
+                        .spacing(6)
+                        .align_y(Center),
+                    )
+                    .padding([6, 12])
+                    .style(styles::pill_secondary_button(palette))
+                    .on_press(Message::CopyText(hash, strings.hash_copied.to_owned())),
+                );
+            }
+
+            footer_btns = footer_btns.push(space::horizontal()).push(
+                button(text(strings.close).size(12).font(FONT_UI_SEMIBOLD))
+                    .padding([6, 16])
+                    .style(styles::pill_primary_button(palette))
+                    .on_press(Message::CloseDialog),
+            );
+
+            column![
+                row![
+                    icon_widget,
+                    text(entry.name.as_str())
+                        .size(16)
+                        .font(FONT_UI_SEMIBOLD)
+                        .color(palette.text_primary),
+                    space::horizontal(),
+                    button(icon_x().size(14))
+                        .padding([4, 6])
+                        .style(styles::ghost_button(palette, 6.0))
+                        .on_press(Message::CloseDialog),
+                ]
+                .spacing(10)
+                .align_y(Center),
+                container(info_rows)
+                    .width(Length::Fill)
+                    .padding(12)
+                    .style(move |_| styles::panel_surface(
+                        palette.surface_low,
+                        palette.border,
+                        8.0
+                    )),
+                footer_btns,
+            ]
+            .spacing(12)
+            .into()
+        }
         ActiveDialog::Conflict {
             mode: _,
             sources,
@@ -363,7 +540,12 @@ pub fn dialog_modal<'a>(
         }
     };
 
-    let card = container(column![body].width(Length::Fixed(460.0)))
+    let modal_width = if matches!(dialog, ActiveDialog::Properties(_)) {
+        640.0
+    } else {
+        460.0
+    };
+    let card = container(column![body].width(Length::Fixed(modal_width)))
         .padding(20)
         .style(styles::modal_card(palette));
 

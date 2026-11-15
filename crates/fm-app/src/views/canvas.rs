@@ -765,7 +765,7 @@ fn grid_item_card<'a>(
         format_bytes(entry.size_bytes).to_string()
     };
 
-    let display_name = truncate_label(&entry.name, 18);
+    let display_name = truncate_label(&entry.name, 16);
     let name_widget: Element<'a, Message> = if selected {
         container(
             text(display_name)
@@ -774,6 +774,8 @@ fn grid_item_card<'a>(
                 .color(palette.accent_primary),
         )
         .padding([2, 8])
+        .height(22)
+        .align_y(Center)
         .style(styles::badge_container(
             palette.accent_surface,
             palette.accent_primary,
@@ -782,11 +784,16 @@ fn grid_item_card<'a>(
         ))
         .into()
     } else {
-        text(display_name)
-            .size(12)
-            .font(FONT_UI_SEMIBOLD)
-            .color(palette.text_primary)
-            .into()
+        container(
+            text(display_name)
+                .size(12)
+                .font(FONT_UI_SEMIBOLD)
+                .color(palette.text_primary),
+        )
+        .padding([2, 8])
+        .height(22)
+        .align_y(Center)
+        .into()
     };
 
     let card_content = column![
@@ -814,7 +821,6 @@ fn grid_item_card<'a>(
         .on_press(Message::SelectEntry { index, modifiers });
 
     mouse_area(card_btn)
-        .on_double_click(Message::ActivateEntry(index))
         .on_right_press(Message::OpenEntryContextMenu(index))
         .into()
 }
@@ -1005,11 +1011,7 @@ fn detail_table_view<'a>(
                 modifiers,
             });
 
-        rows = rows.push(
-            mouse_area(row_btn)
-                .on_double_click(Message::ActivateEntry(idx))
-                .on_right_press(Message::OpenEntryContextMenu(idx)),
-        );
+        rows = rows.push(mouse_area(row_btn).on_right_press(Message::OpenEntryContextMenu(idx)));
     }
 
     if win.bottom_spacer > 0.0 {
@@ -1197,11 +1199,8 @@ fn columns_view<'a>(
                 index: idx,
                 modifiers,
             });
-        active_col = active_col.push(
-            mouse_area(item_btn)
-                .on_double_click(Message::ActivateEntry(idx))
-                .on_right_press(Message::OpenEntryContextMenu(idx)),
-        );
+        active_col = active_col
+            .push(mouse_area(item_btn).on_right_press(Message::OpenEntryContextMenu(idx)));
     }
 
     if win.bottom_spacer > 0.0 {
