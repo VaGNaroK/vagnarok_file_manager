@@ -188,6 +188,22 @@ impl TabState {
             .retain(|id| valid_ids.contains(id));
     }
 
+    /// Atualiza `child_count` nas entradas já carregadas quando a telemetria rasa retorna.
+    pub fn apply_child_counts(&mut self, counts: &[(PathBuf, u32)]) {
+        use std::collections::HashMap;
+        let map: HashMap<&PathBuf, u32> = counts.iter().map(|(p, c)| (p, *c)).collect();
+        for entry in &mut self.raw_entries {
+            if let Some(&count) = map.get(&entry.path) {
+                entry.child_count = Some(count);
+            }
+        }
+        for entry in &mut self.visible_entries {
+            if let Some(&count) = map.get(&entry.path) {
+                entry.child_count = Some(count);
+            }
+        }
+    }
+
     /// Navega para `next_path`, registrando o atual no histórico de retorno.
     pub fn push_navigation(&mut self, next_path: PathBuf) {
         if self.current_path != next_path {

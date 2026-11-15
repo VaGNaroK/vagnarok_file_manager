@@ -1,5 +1,13 @@
 //! Pipeline de geração de thumbnails SIMD, cache LRU/persistente e QuickLook.
 
+pub mod thumbs;
+
+pub use thumbs::{
+    DEFAULT_THUMBNAIL_CACHE_CAPACITY, ThumbnailCache, ThumbnailRgba, generate_thumbnail,
+    is_image_extension,
+};
+
+use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -11,6 +19,19 @@ pub struct ThumbnailKey {
     pub path: PathBuf,
     pub size_bytes: u64,
     pub modified_nanos: u128,
+}
+
+/// Abre arquivo para leitura compartilhada sem bloquear locks no Windows.
+pub(crate) fn open_shared_read(path: &Path) -> Option<File> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_SHARE_READ (1) | FILE_SHARE_WRITE (2) | FILE_SHARE_DELETE (4)
+        opts.share_mode(0x7);
+    }
+    opts.open(path).ok()
 }
 
 /// Lê no máximo `max_bytes` de um arquivo de forma assíncrona e cancelável para prévia textual.
@@ -30,15 +51,7 @@ pub async fn read_text_preview(
         if cancel.is_cancelled() {
             return None;
         }
-        let mut opts = std::fs::OpenOptions::new();
-        opts.read(true);
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::fs::OpenOptionsExt;
-            // FILE_SHARE_READ (1) | FILE_SHARE_WRITE (2) | FILE_SHARE_DELETE (4)
-            opts.share_mode(0x7);
-        }
-        let file = opts.open(&target).ok()?;
+        let file = open_shared_read(&target)?;
         let mut reader = file.take(max_bytes as u64);
         let mut buf = Vec::with_capacity(max_bytes.min(16 * 1024));
         reader.read_to_end(&mut buf).ok()?;

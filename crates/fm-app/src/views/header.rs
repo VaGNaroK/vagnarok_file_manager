@@ -160,15 +160,27 @@ fn navigation_row<'a>(
     let breadcrumb = unified_breadcrumb(app, tab, palette);
 
     let query = tab.map(|t| t.filter_query.as_str()).unwrap_or("");
+    let deep_btn = button(
+        text(strings.deep_search)
+            .size(10)
+            .font(FONT_MONO)
+            .color(palette.accent_primary),
+    )
+    .padding([2, 6])
+    .style(styles::ghost_button(palette, 6.0))
+    .on_press(Message::OpenDeepSearch);
+
     let search_box = container(
         row![
             icon_search().size(14).color(palette.text_muted),
             text_input(strings.search_placeholder, query)
                 .id(search_input_id())
                 .on_input(Message::FilterChanged)
+                .on_submit(Message::OpenDeepSearch)
                 .size(12)
                 .padding([4, 6])
                 .style(styles::search_input_style(palette)),
+            deep_btn,
             container(
                 text("Ctrl+K")
                     .size(10)
@@ -186,7 +198,7 @@ fn navigation_row<'a>(
         .spacing(6)
         .align_y(Center),
     )
-    .width(Length::Fixed(310.0))
+    .width(Length::Fixed(360.0))
     .padding([2, 10])
     .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 9999.0));
 

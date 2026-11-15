@@ -1,20 +1,24 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 
 use compact_str::CompactString;
 use fm_core::{
-    AppConfig, DirectorySnapshot, DriveInfo, EntryId, FsError, SelectedFileTelemetry,
-    SelectionModifiers, SortField, Strings, TabId, TabState, UserPlaces, VfsProvider, ViewMode,
-    VolumeSpace,
+    AppConfig, DirectorySnapshot, DriveInfo, EntryId, FileEntry, FolderSummary, FsError,
+    SelectedFileTelemetry, SelectionModifiers, SortField, Strings, TabId, TabState, UserPlaces,
+    VfsProvider, ViewMode, VolumeSpace,
 };
 use fm_fs::LocalFs;
+use fm_index::SearchHit;
+use fm_preview::{ThumbnailCache, ThumbnailKey, ThumbnailRgba};
 use fm_theme::ThemePalette;
+use iced::futures::SinkExt;
 use iced::keyboard;
 use iced::keyboard::key::Named;
 use iced::widget::operation::RelativeOffset;
-use iced::widget::{Id, column, container, operation, row, stack};
-use iced::{Element, Event, Length, Subscription, Task, event, window};
+use iced::widget::{Id, column, container, image, operation, row, stack, text_editor};
+use iced::{Element, Event, Length, Subscription, Task, event, stream, window};
 use tokio_util::sync::CancellationToken;
 
 use crate::views;
@@ -23,12 +27,29 @@ pub fn search_input_id() -> Id {
     Id::new("fm_search_input")
 }
 
+pub fn deep_search_input_id() -> Id {
+    Id::new("fm_deep_search_input")
+}
+
 pub fn path_input_id() -> Id {
     Id::new("fm_path_input")
 }
 
 pub fn canvas_scroll_id() -> Id {
     Id::new("fm_canvas_scroll")
+}
+
+pub fn thumbnail_key_for_entry(entry: &FileEntry) -> ThumbnailKey {
+    let modified_nanos = entry
+        .modified_at
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    ThumbnailKey {
+        path: entry.path.clone(),
+        size_bytes: entry.size_bytes,
+        modified_nanos,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +125,45 @@ pub enum Message {
         path: PathBuf,
         snippet: Option<String>,
     },
+    QuickLookImageLoaded {
+        request_id: u64,
+        path: PathBuf,
+        rgba: Option<Arc<ThumbnailRgba>>,
+    },
+    QuickLookEditorAction(text_editor::Action),
+    DirectoryChangedOnDisk(PathBuf),
+    GitBranchReady {
+        tab_id: TabId,
+        request_id: u64,
+        branch: Option<CompactString>,
+    },
+    ChildCountsReady {
+        tab_id: TabId,
+        request_id: u64,
+        counts: Vec<(PathBuf, u32)>,
+    },
+    MimeDetected {
+        request_id: u64,
+        path: PathBuf,
+        mime: Option<CompactString>,
+    },
+    Sha256Computed {
+        request_id: u64,
+        path: PathBuf,
+        sha: Option<(CompactString, CompactString)>,
+    },
+    OpenDeepSearch,
+    CloseDeepSearch,
+    DeepSearchQueryChanged(String),
+    DeepSearchResults {
+        request_id: u64,
+        results: Vec<SearchHit>,
+    },
+    OpenSearchHit(PathBuf),
+    ThumbnailReady {
+        key: ThumbnailKey,
+        rgba: Option<Arc<ThumbnailRgba>>,
+    },
     OpenDefaultFinished(Result<(), FsError>),
     WindowMinimize,
     WindowToggleMaximize,
@@ -127,6 +187,21 @@ pub struct App {
     pub tab_cancels: HashMap<TabId, CancellationToken>,
     pub preview_cancel: Option<CancellationToken>,
     pub preview_request_id: u64,
+    pub selection_telemetry_cancel: Option<CancellationToken>,
+    pub selection_telemetry_request_id: u64,
+    pub deep_search_open: bool,
+    pub deep_search_query: String,
+    pub deep_search_loading: bool,
+    pub deep_search_results: Vec<SearchHit>,
+    pub deep_search_request_id: u64,
+    pub deep_search_cancel: Option<CancellationToken>,
+    pub pending_select_path: Option<PathBuf>,
+    pub thumbnail_cache: ThumbnailCache,
+    pub gpu_thumbnails: HashMap<ThumbnailKey, image::Handle>,
+    pub in_flight_thumbs: HashSet<PathBuf>,
+    pub quicklook_editor: text_editor::Content,
+    pub quicklook_extension: String,
+    pub quicklook_image: Option<(PathBuf, image::Handle)>,
     pub drives: Vec<DriveInfo>,
     pub active_sidebar: Option<SidebarTarget>,
     pub path_editing: bool,
@@ -179,6 +254,21 @@ impl App {
             tab_cancels,
             preview_cancel: None,
             preview_request_id: 0,
+            selection_telemetry_cancel: None,
+            selection_telemetry_request_id: 0,
+            deep_search_open: false,
+            deep_search_query: String::new(),
+            deep_search_loading: false,
+            deep_search_results: Vec::new(),
+            deep_search_request_id: 0,
+            deep_search_cancel: None,
+            pending_select_path: None,
+            thumbnail_cache: ThumbnailCache::default(),
+            gpu_thumbnails: HashMap::new(),
+            in_flight_thumbs: HashSet::new(),
+            quicklook_editor: text_editor::Content::new(),
+            quicklook_extension: String::new(),
+            quicklook_image: None,
             drives: Vec::new(),
             active_sidebar: Some(SidebarTarget::Documents),
             path_editing: false,
@@ -260,7 +350,11 @@ impl App {
                     self.path_editing = false;
                     self.quicklook_open = false;
                     self.canvas_scroll_y = 0.0;
-                    return operation::snap_to(canvas_scroll_id(), RelativeOffset::START);
+                    let thumb_task = self.queue_visible_thumbnails();
+                    return Task::batch([
+                        operation::snap_to(canvas_scroll_id(), RelativeOffset::START),
+                        thumb_task,
+                    ]);
                 }
                 Task::none()
             }
@@ -355,19 +449,17 @@ impl App {
                 self.navigate_active_tab(path)
             }
             Message::SelectEntry { index, modifiers } => {
+                let mut single_entry = None;
                 if let Some(tab) = self.current_tab_mut() {
                     tab.selection
                         .apply_click(index, modifiers, &tab.visible_entries);
-                    let single_entry = tab
+                    single_entry = tab
                         .selection
                         .single_selected(&tab.visible_entries)
                         .cloned();
                     tab.selected_telemetry = single_entry.as_ref().map(basic_file_telemetry);
-                    if self.quicklook_open || self.config.show_inspector {
-                        return self.maybe_load_preview(single_entry.as_ref());
-                    }
                 }
-                Task::none()
+                self.dispatch_selection_side_effects(single_entry.as_ref())
             }
             Message::ActivateEntry(index) => {
                 let target = self
@@ -392,7 +484,11 @@ impl App {
                     tab.view_mode = mode;
                 }
                 self.canvas_scroll_y = 0.0;
-                operation::snap_to(canvas_scroll_id(), RelativeOffset::START)
+                let thumb_task = self.queue_visible_thumbnails();
+                Task::batch([
+                    operation::snap_to(canvas_scroll_id(), RelativeOffset::START),
+                    thumb_task,
+                ])
             }
             Message::CycleSortField => {
                 if let Some(tab) = self.current_tab_mut() {
@@ -402,31 +498,31 @@ impl App {
                         SortField::Modified => SortField::Kind,
                         SortField::Kind => SortField::Name,
                     };
-                    tab.recompute_visible();
+                    apply_tab_filter(tab);
                 }
-                Task::none()
+                self.queue_visible_thumbnails()
             }
             Message::ToggleSortDirection => {
                 if let Some(tab) = self.current_tab_mut() {
                     tab.sort.direction = tab.sort.direction.toggled();
-                    tab.recompute_visible();
+                    apply_tab_filter(tab);
                 }
-                Task::none()
+                self.queue_visible_thumbnails()
             }
             Message::ToggleHidden => {
                 if let Some(tab) = self.current_tab_mut() {
                     tab.show_hidden = !tab.show_hidden;
-                    tab.recompute_visible();
+                    apply_tab_filter(tab);
                 }
-                Task::none()
+                self.queue_visible_thumbnails()
             }
             Message::FilterChanged(query) => {
                 if let Some(tab) = self.current_tab_mut() {
                     tab.filter_query = query;
-                    tab.recompute_visible();
+                    apply_tab_filter(tab);
                 }
                 self.canvas_scroll_y = 0.0;
-                Task::none()
+                self.queue_visible_thumbnails()
             }
             Message::TogglePathEdit => {
                 self.path_editing = !self.path_editing;
@@ -471,7 +567,7 @@ impl App {
                         .current_tab()
                         .and_then(|t| t.selection.single_selected(&t.visible_entries))
                         .cloned();
-                    return self.maybe_load_preview(single.as_ref());
+                    return self.dispatch_selection_side_effects(single.as_ref());
                 }
                 Task::none()
             }
@@ -486,6 +582,7 @@ impl App {
                     .cloned();
                 if self.quicklook_open {
                     self.quicklook_open = false;
+                    self.quicklook_image = None;
                     if let Some(cancel) = self.preview_cancel.take() {
                         cancel.cancel();
                     }
@@ -499,6 +596,7 @@ impl App {
             }
             Message::CloseQuickLook => {
                 self.quicklook_open = false;
+                self.quicklook_image = None;
                 if let Some(cancel) = self.preview_cancel.take() {
                     cancel.cancel();
                 }
@@ -512,7 +610,7 @@ impl App {
                 if viewport_height > 0.0 {
                     self.canvas_viewport_height = viewport_height;
                 }
-                Task::none()
+                self.queue_visible_thumbnails()
             }
             Message::DrivesLoaded(res) => {
                 if let Ok(drives) = res {
@@ -526,6 +624,9 @@ impl App {
                 result,
                 volume_space,
             } => {
+                let mut tasks = Vec::new();
+                let mut pending_selected_entry = None;
+
                 if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
                     // Descarta respostas obsoletas de navegações canceladas.
                     if tab.active_request_id != request_id {
@@ -539,8 +640,71 @@ impl App {
                             tab.last_error = None;
                             tab.fs_type = snapshot.fs_type;
                             tab.raw_entries = snapshot.entries;
-                            tab.recompute_visible();
+                            apply_tab_filter(tab);
                             tab.title = display_tab_title(&tab.current_path);
+
+                            if tab_id == self.active_tab
+                                && let Some(target_path) = self.pending_select_path.take()
+                                && let Some(idx) = tab
+                                    .visible_entries
+                                    .iter()
+                                    .position(|e| e.path == target_path)
+                            {
+                                tab.selection.select_single(idx, &tab.visible_entries);
+                                let single = tab
+                                    .selection
+                                    .single_selected(&tab.visible_entries)
+                                    .cloned();
+                                tab.selected_telemetry =
+                                    single.as_ref().map(basic_file_telemetry);
+                                pending_selected_entry = single;
+                            }
+
+                            let cancel = self
+                                .tab_cancels
+                                .get(&tab_id)
+                                .cloned()
+                                .unwrap_or_default();
+                            let dir_path = tab.current_path.clone();
+                            tasks.push(Task::perform(
+                                {
+                                    let cancel = cancel.clone();
+                                    async move {
+                                        let branch =
+                                            fm_telemetry::detect_git_branch(&dir_path, cancel)
+                                                .await;
+                                        (tab_id, request_id, branch)
+                                    }
+                                },
+                                |(tab_id, request_id, branch)| Message::GitBranchReady {
+                                    tab_id,
+                                    request_id,
+                                    branch,
+                                },
+                            ));
+
+                            let child_dirs: Vec<PathBuf> = tab
+                                .raw_entries
+                                .iter()
+                                .filter(|e| e.kind.is_dir_like())
+                                .take(64)
+                                .map(|e| e.path.clone())
+                                .collect();
+                            if !child_dirs.is_empty() {
+                                tasks.push(Task::perform(
+                                    async move {
+                                        let counts =
+                                            fm_telemetry::count_direct_children(child_dirs, cancel)
+                                                .await;
+                                        (tab_id, request_id, counts)
+                                    },
+                                    |(tab_id, request_id, counts)| Message::ChildCountsReady {
+                                        tab_id,
+                                        request_id,
+                                        counts,
+                                    },
+                                ));
+                            }
                         }
                         Err(FsError::Cancelled) => {}
                         Err(err) => {
@@ -551,7 +715,16 @@ impl App {
                         }
                     }
                 }
-                Task::none()
+
+                if pending_selected_entry.is_some() {
+                    tasks.push(
+                        self.dispatch_selection_side_effects(pending_selected_entry.as_ref()),
+                    );
+                } else if tab_id == self.active_tab {
+                    tasks.push(self.queue_visible_thumbnails());
+                }
+
+                Task::batch(tasks)
             }
             Message::TextPreviewLoaded {
                 request_id,
@@ -560,6 +733,16 @@ impl App {
             } => {
                 if request_id != self.preview_request_id {
                     return Task::none();
+                }
+                if let Some(code) = &snippet {
+                    self.quicklook_editor = text_editor::Content::with_text(code);
+                    self.quicklook_extension = path
+                        .extension()
+                        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+                        .unwrap_or_else(|| "txt".to_owned());
+                } else {
+                    self.quicklook_editor = text_editor::Content::new();
+                    self.quicklook_extension.clear();
                 }
                 if let Some(tab) = self.current_tab_mut()
                     && let Some(selected) = tab.selection.single_selected(&tab.visible_entries)
@@ -571,6 +754,183 @@ impl App {
                         .unwrap_or_else(|| basic_file_telemetry(selected));
                     tel.preview_snippet = snippet;
                     tab.selected_telemetry = Some(tel);
+                }
+                Task::none()
+            }
+            Message::QuickLookImageLoaded {
+                request_id,
+                path,
+                rgba,
+            } => {
+                if request_id != self.preview_request_id {
+                    return Task::none();
+                }
+                self.quicklook_image = rgba
+                    .map(|thumb| {
+                        (
+                            path,
+                            image::Handle::from_rgba(
+                                thumb.width,
+                                thumb.height,
+                                thumb.pixels.clone(),
+                            ),
+                        )
+                    });
+                Task::none()
+            }
+            Message::QuickLookEditorAction(action) => {
+                // Mantém QuickLook estritamente somente leitura, permitindo seleção e rolagem.
+                if !matches!(action, text_editor::Action::Edit(_)) {
+                    self.quicklook_editor.perform(action);
+                }
+                Task::none()
+            }
+            Message::DirectoryChangedOnDisk(watched_root) => {
+                let is_active_same = self
+                    .current_tab()
+                    .is_some_and(|t| t.current_path == watched_root && !t.is_loading);
+                if !is_active_same {
+                    return Task::none();
+                }
+                let req = self.alloc_request_id();
+                let active = self.active_tab;
+                if let Some(tab) = self.current_tab_mut() {
+                    tab.active_request_id = req;
+                }
+                let cancel = self.reset_tab_cancel(active);
+                spawn_list_task(Arc::clone(&self.vfs), active, watched_root, req, cancel)
+            }
+            Message::GitBranchReady {
+                tab_id,
+                request_id,
+                branch,
+            } => {
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+                    && tab.active_request_id == request_id
+                {
+                    tab.telemetry.git_branch = branch;
+                }
+                Task::none()
+            }
+            Message::ChildCountsReady {
+                tab_id,
+                request_id,
+                counts,
+            } => {
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+                    && tab.active_request_id == request_id
+                {
+                    tab.apply_child_counts(&counts);
+                }
+                Task::none()
+            }
+            Message::MimeDetected {
+                request_id,
+                path,
+                mime,
+            } => {
+                if request_id != self.selection_telemetry_request_id {
+                    return Task::none();
+                }
+                if let Some(tab) = self.current_tab_mut()
+                    && let Some(selected) = tab.selection.single_selected(&tab.visible_entries)
+                    && selected.path == path
+                {
+                    let mut tel = tab
+                        .selected_telemetry
+                        .clone()
+                        .unwrap_or_else(|| basic_file_telemetry(selected));
+                    if mime.is_some() {
+                        tel.mime_type = mime;
+                    }
+                    tab.selected_telemetry = Some(tel);
+                }
+                Task::none()
+            }
+            Message::Sha256Computed {
+                request_id,
+                path,
+                sha,
+            } => {
+                if request_id != self.selection_telemetry_request_id {
+                    return Task::none();
+                }
+                if let Some(tab) = self.current_tab_mut()
+                    && let Some(selected) = tab.selection.single_selected(&tab.visible_entries)
+                    && selected.path == path
+                {
+                    let mut tel = tab
+                        .selected_telemetry
+                        .clone()
+                        .unwrap_or_else(|| basic_file_telemetry(selected));
+                    if let Some((prefix, full)) = sha {
+                        tel.sha256_prefix = Some(prefix);
+                        tel.sha256_full = Some(full);
+                    }
+                    tab.selected_telemetry = Some(tel);
+                }
+                Task::none()
+            }
+            Message::OpenDeepSearch => {
+                self.deep_search_open = true;
+                if self.deep_search_query.is_empty()
+                    && let Some(q) = self.current_tab().map(|t| t.filter_query.clone())
+                    && !q.trim().is_empty()
+                {
+                    self.deep_search_query = q;
+                }
+                let search_task = self.spawn_deep_search_task();
+                Task::batch([operation::focus(deep_search_input_id()), search_task])
+            }
+            Message::CloseDeepSearch => {
+                self.deep_search_open = false;
+                self.deep_search_loading = false;
+                if let Some(cancel) = self.deep_search_cancel.take() {
+                    cancel.cancel();
+                }
+                Task::none()
+            }
+            Message::DeepSearchQueryChanged(query) => {
+                self.deep_search_query = query;
+                self.spawn_deep_search_task()
+            }
+            Message::DeepSearchResults {
+                request_id,
+                results,
+            } => {
+                if request_id == self.deep_search_request_id {
+                    self.deep_search_loading = false;
+                    self.deep_search_results = results;
+                }
+                Task::none()
+            }
+            Message::OpenSearchHit(hit_path) => {
+                self.deep_search_open = false;
+                self.deep_search_loading = false;
+                if let Some(cancel) = self.deep_search_cancel.take() {
+                    cancel.cancel();
+                }
+                if hit_path.is_dir() {
+                    self.pending_select_path = None;
+                    return self.navigate_active_tab(hit_path);
+                }
+                if let Some(parent) = hit_path.parent().map(PathBuf::from) {
+                    self.pending_select_path = Some(hit_path);
+                    return self.navigate_active_tab(parent);
+                }
+                Task::none()
+            }
+            Message::ThumbnailReady { key, rgba } => {
+                self.in_flight_thumbs.remove(&key.path);
+                if let Some(thumb) = rgba {
+                    self.thumbnail_cache.insert(key.clone(), Arc::clone(&thumb));
+                    if self.gpu_thumbnails.len() >= fm_preview::DEFAULT_THUMBNAIL_CACHE_CAPACITY {
+                        self.gpu_thumbnails.clear();
+                    }
+                    self.gpu_thumbnails.insert(
+                        key,
+                        image::Handle::from_rgba(thumb.width, thumb.height, thumb.pixels.clone()),
+                    );
                 }
                 Task::none()
             }
@@ -593,7 +953,7 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        event::listen_with(|event, status, _window| match event {
+        let keyboard_sub = event::listen_with(|event, status, _window| match event {
             Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
                 Some(Message::ModifiersChanged(modifiers))
             }
@@ -611,7 +971,14 @@ impl App {
                 }
             }
             _ => None,
-        })
+        });
+
+        if let Some(active_path) = self.current_tab().map(|t| t.current_path.clone()) {
+            let watch_sub = Subscription::run_with(active_path, watch_directory_stream);
+            Subscription::batch([keyboard_sub, watch_sub])
+        } else {
+            keyboard_sub
+        }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -649,7 +1016,13 @@ impl App {
         if self.quicklook_open {
             stack![
                 main_shell,
-                views::inspector::quicklook_modal(tab, palette, strings),
+                views::inspector::quicklook_modal(self, tab, palette, strings),
+            ]
+            .into()
+        } else if self.deep_search_open {
+            stack![
+                main_shell,
+                views::inspector::deep_search_modal(self, palette, strings),
             ]
             .into()
         } else {
@@ -690,6 +1063,12 @@ impl App {
     ) -> Task<Message> {
         self.path_editing = false;
         self.quicklook_open = false;
+        self.quicklook_image = None;
+        self.quicklook_editor = text_editor::Content::new();
+        self.quicklook_extension.clear();
+        if let Some(cancel) = self.selection_telemetry_cancel.take() {
+            cancel.cancel();
+        }
         self.status_notice = None;
         self.canvas_scroll_y = 0.0;
         let cancel = self.reset_tab_cancel(tab_id);
@@ -699,10 +1078,71 @@ impl App {
         ])
     }
 
-    fn maybe_load_preview(&mut self, entry: Option<&fm_core::FileEntry>) -> Task<Message> {
+    fn dispatch_selection_side_effects(&mut self, entry: Option<&FileEntry>) -> Task<Message> {
+        let tel_task = self.maybe_load_selection_telemetry(entry);
+        let preview_task = if self.quicklook_open || self.config.show_inspector {
+            self.maybe_load_preview(entry)
+        } else {
+            Task::none()
+        };
+        let thumb_task = self.queue_visible_thumbnails();
+        Task::batch([tel_task, preview_task, thumb_task])
+    }
+
+    fn maybe_load_selection_telemetry(&mut self, entry: Option<&FileEntry>) -> Task<Message> {
+        if let Some(prev) = self.selection_telemetry_cancel.take() {
+            prev.cancel();
+        }
+        let Some(entry) = entry else {
+            return Task::none();
+        };
+        if entry.kind.is_dir_like() {
+            return Task::none();
+        }
+        self.selection_telemetry_request_id += 1;
+        let req_id = self.selection_telemetry_request_id;
+        let cancel = CancellationToken::new();
+        self.selection_telemetry_cancel = Some(cancel.clone());
+
+        let path_mime = entry.path.clone();
+        let path_sha = entry.path.clone();
+        let cancel_mime = cancel.clone();
+
+        let mime_task = Task::perform(
+            async move {
+                let mime = fm_telemetry::detect_mime_type(&path_mime, cancel_mime).await;
+                (req_id, path_mime, mime)
+            },
+            |(request_id, path, mime)| Message::MimeDetected {
+                request_id,
+                path,
+                mime,
+            },
+        );
+
+        let sha_task = Task::perform(
+            async move {
+                let sha = fm_telemetry::compute_sha256(&path_sha, cancel).await;
+                (req_id, path_sha, sha)
+            },
+            |(request_id, path, sha)| Message::Sha256Computed {
+                request_id,
+                path,
+                sha,
+            },
+        );
+
+        Task::batch([mime_task, sha_task])
+    }
+
+    fn maybe_load_preview(&mut self, entry: Option<&FileEntry>) -> Task<Message> {
         if let Some(prev) = self.preview_cancel.take() {
             prev.cancel();
         }
+        self.quicklook_image = None;
+        self.quicklook_editor = text_editor::Content::new();
+        self.quicklook_extension.clear();
+
         let Some(entry) = entry else {
             return Task::none();
         };
@@ -715,6 +1155,21 @@ impl App {
         self.preview_cancel = Some(cancel.clone());
         let path = entry.path.clone();
 
+        if fm_preview::is_image_extension(entry.extension.as_deref()) {
+            let max_px = if self.quicklook_open { 560 } else { 160 };
+            return Task::perform(
+                async move {
+                    let rgba = fm_preview::generate_thumbnail(&path, max_px, cancel).await;
+                    (req_id, path, rgba)
+                },
+                |(request_id, path, rgba)| Message::QuickLookImageLoaded {
+                    request_id,
+                    path,
+                    rgba,
+                },
+            );
+        }
+
         Task::perform(
             async move {
                 let snippet = fm_preview::read_text_preview(&path, 64 * 1024, cancel).await;
@@ -726,6 +1181,123 @@ impl App {
                 snippet,
             },
         )
+    }
+
+    fn spawn_deep_search_task(&mut self) -> Task<Message> {
+        if let Some(prev) = self.deep_search_cancel.take() {
+            prev.cancel();
+        }
+        let query = self.deep_search_query.trim().to_owned();
+        if query.is_empty() {
+            self.deep_search_loading = false;
+            self.deep_search_results.clear();
+            return Task::none();
+        }
+        let Some(root) = self.current_tab().map(|t| t.current_path.clone()) else {
+            return Task::none();
+        };
+
+        self.deep_search_request_id += 1;
+        let req_id = self.deep_search_request_id;
+        let cancel = CancellationToken::new();
+        self.deep_search_cancel = Some(cancel.clone());
+        self.deep_search_loading = true;
+
+        Task::perform(
+            async move {
+                let results = fm_index::deep_search(&root, &query, 100, cancel).await;
+                (req_id, results)
+            },
+            |(request_id, results)| Message::DeepSearchResults {
+                request_id,
+                results,
+            },
+        )
+    }
+
+    fn queue_visible_thumbnails(&mut self) -> Task<Message> {
+        let Some(tab) = self.current_tab() else {
+            return Task::none();
+        };
+
+        let mut candidates: Vec<(ThumbnailKey, PathBuf)> = Vec::new();
+
+        if tab.view_mode == ViewMode::Grid {
+            let dirs_count = tab
+                .visible_entries
+                .iter()
+                .filter(|e| e.kind.is_dir_like())
+                .count();
+            let files: Vec<&FileEntry> = tab
+                .visible_entries
+                .iter()
+                .filter(|e| !e.kind.is_dir_like())
+                .collect();
+
+            if !files.is_empty() {
+                let step = 148.0;
+                let min_row = ((self.canvas_scroll_y - 32.0).max(0.0) / step).floor() as usize;
+                let max_row = ((self.canvas_scroll_y + self.canvas_viewport_height + 280.0) / step)
+                    .ceil() as usize;
+
+                let start_idx = min_row.saturating_sub(dirs_count.div_ceil(2) + 2) * 2;
+                let end_idx = (max_row.saturating_sub(dirs_count / 8) * 8 + 16).min(files.len());
+                let clamped_start = start_idx.min(end_idx);
+
+                for entry in &files[clamped_start..end_idx] {
+                    if fm_preview::is_image_extension(entry.extension.as_deref()) {
+                        candidates.push((thumbnail_key_for_entry(entry), entry.path.clone()));
+                    }
+                }
+            }
+        }
+
+        if let Some(selected) = tab.selection.single_selected(&tab.visible_entries)
+            && !selected.kind.is_dir_like()
+            && fm_preview::is_image_extension(selected.extension.as_deref())
+        {
+            candidates.push((thumbnail_key_for_entry(selected), selected.path.clone()));
+        }
+
+        let cancel = self
+            .tab_cancels
+            .get(&self.active_tab)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut tasks = Vec::new();
+        for (key, path) in candidates {
+            if tasks.len() >= 24 {
+                break;
+            }
+            if self.gpu_thumbnails.contains_key(&key) {
+                continue;
+            }
+            if let Some(cached) = self.thumbnail_cache.get(&key) {
+                if self.gpu_thumbnails.len() >= fm_preview::DEFAULT_THUMBNAIL_CACHE_CAPACITY {
+                    self.gpu_thumbnails.clear();
+                }
+                self.gpu_thumbnails.insert(
+                    key,
+                    image::Handle::from_rgba(cached.width, cached.height, cached.pixels.clone()),
+                );
+                continue;
+            }
+            if self.in_flight_thumbs.contains(&path) {
+                continue;
+            }
+            self.in_flight_thumbs.insert(path.clone());
+            let cancel = cancel.clone();
+            tasks.push(Task::perform(
+                async move {
+                    let rgba = fm_preview::generate_thumbnail(&path, 160, cancel).await;
+                    (key, rgba)
+                },
+                |(key, rgba)| Message::ThumbnailReady { key, rgba },
+            ));
+        }
+
+        Task::batch(tasks)
     }
 
     fn handle_global_key(
@@ -755,15 +1327,22 @@ impl App {
             keyboard::Key::Character("k") if modifiers.control() => {
                 operation::focus(search_input_id())
             }
+            keyboard::Key::Character("f") if modifiers.control() && modifiers.shift() => {
+                self.update(Message::OpenDeepSearch)
+            }
             keyboard::Key::Character("l") if modifiers.control() => {
                 self.update(Message::TogglePathEdit)
             }
-            keyboard::Key::Named(Named::Space) if !modifiers.control() && !modifiers.alt() => {
+            keyboard::Key::Named(Named::Space)
+                if !modifiers.control() && !modifiers.alt() && !self.deep_search_open =>
+            {
                 self.update(Message::ToggleQuickLook)
             }
             keyboard::Key::Named(Named::Escape) => {
                 if self.quicklook_open {
                     self.update(Message::CloseQuickLook)
+                } else if self.deep_search_open {
+                    self.update(Message::CloseDeepSearch)
                 } else if self.path_editing {
                     self.path_editing = false;
                     Task::none()
@@ -773,7 +1352,9 @@ impl App {
             }
             keyboard::Key::Named(Named::ArrowRight | Named::ArrowDown) => self.move_selection(1),
             keyboard::Key::Named(Named::ArrowLeft | Named::ArrowUp) => self.move_selection(-1),
-            keyboard::Key::Named(Named::Enter) if !self.path_editing => {
+            keyboard::Key::Named(Named::Enter)
+                if !self.path_editing && !self.deep_search_open =>
+            {
                 if let Some(focused) = self.current_tab().and_then(|t| t.selection.focused) {
                     return self.update(Message::ActivateEntry(focused));
                 }
@@ -800,11 +1381,51 @@ impl App {
             tab.selected_telemetry = single.as_ref().map(basic_file_telemetry);
             selected_entry = single;
         }
-        if self.quicklook_open || self.config.show_inspector {
-            return self.maybe_load_preview(selected_entry.as_ref());
-        }
-        Task::none()
+        self.dispatch_selection_side_effects(selected_entry.as_ref())
     }
+}
+
+#[allow(clippy::ptr_arg)] // Requerido por `Subscription::run_with::<PathBuf, _>` (`fn(&D) -> S`).
+fn watch_directory_stream(root: &PathBuf) -> impl iced::futures::Stream<Item = Message> + use<> {
+    let root = root.clone();
+    stream::channel(16, async move |mut output| {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let Ok(_debouncer) = fm_index::watcher::start_directory_watcher(root.clone(), tx) else {
+            return;
+        };
+        while let Some(ev) = rx.recv().await {
+            if output
+                .send(Message::DirectoryChangedOnDisk(ev.watched_root))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    })
+}
+
+fn apply_tab_filter(tab: &mut TabState) {
+    if tab.filter_query.trim().is_empty() {
+        tab.recompute_visible();
+        return;
+    }
+
+    let mut base: Vec<FileEntry> = tab
+        .raw_entries
+        .iter()
+        .filter(|entry| tab.show_hidden || !entry.is_hidden)
+        .cloned()
+        .collect();
+    base.sort_by(|a, b| tab.sort.compare(a, b));
+    let ranked = fm_index::fuzzy_rank_entries(&base, &tab.filter_query);
+    tab.telemetry.folder_stats = FolderSummary::from_entries(&ranked);
+    tab.visible_entries = ranked;
+
+    let valid_ids: HashSet<EntryId> = tab.visible_entries.iter().map(|e| e.id).collect();
+    tab.selection
+        .selected_ids
+        .retain(|id| valid_ids.contains(id));
 }
 
 fn spawn_list_task(

@@ -7,15 +7,17 @@ use fm_theme::{
 };
 use iced::Alignment::Center;
 use iced::widget::{
-    Space, button, column, container, mouse_area, responsive, row, scrollable, space, text,
+    Space, button, column, container, image, mouse_area, responsive, row, scrollable, space, text,
 };
-use iced::{Color, Element, Length, Padding};
+use iced::{Color, ContentFit, Element, Length, Padding};
 use lucide_icons::iced::{
     icon_arrow_up_down, icon_chevron_right, icon_eye, icon_eye_off, icon_info, icon_plus,
     icon_terminal,
 };
 
-use crate::app::{App, Message, canvas_scroll_id, selected_id_set_contains};
+use crate::app::{
+    App, Message, canvas_scroll_id, selected_id_set_contains, thumbnail_key_for_entry,
+};
 use crate::views::entry_icon;
 use crate::views::virtualized::{
     DETAIL_ROW_HEIGHT, DETAIL_ROW_STEP, GRID_BAND_SPACING, GridBand, build_grid_bands,
@@ -407,11 +409,14 @@ fn grid_view<'a>(
                 GridBand::Items(chunk) => {
                     let mut r = row![].spacing(12).width(Length::Fill);
                     for &(idx, entry) in chunk {
+                        let thumb = app.gpu_thumbnails.get(&thumbnail_key_for_entry(entry));
                         r = r.push(grid_item_card(
                             idx,
                             entry,
                             selected_id_set_contains(tab, entry.id),
                             modifiers,
+                            thumb,
+                            strings,
                             palette,
                         ));
                     }
@@ -466,41 +471,54 @@ fn grid_item_card<'a>(
     entry: &'a FileEntry,
     selected: bool,
     modifiers: SelectionModifiers,
+    thumb: Option<&'a image::Handle>,
+    strings: Strings,
     palette: ThemePalette,
 ) -> Element<'a, Message> {
-    let (icon_widget, _color) = entry_icon(entry, palette, 34.0);
-
-    let mut icon_box_col = column![icon_widget].align_x(Center);
-    if let Some(badge) = &entry.mime_badge {
-        let badge_bg = if selected {
-            palette.accent_primary
-        } else {
-            palette.surface_low
-        };
-        let badge_fg = if selected {
-            palette.on_accent
-        } else {
-            palette.text_secondary
-        };
-        icon_box_col = icon_box_col.push(
-            container(
-                text(badge.as_str())
-                    .size(9)
-                    .font(FONT_MONO_BOLD)
-                    .color(badge_fg),
-            )
-            .padding([1, 5])
-            .style(styles::badge_container(
-                badge_bg,
-                badge_fg,
-                palette.border,
-                4.0,
-            )),
-        );
-    }
+    let preview_widget: Element<'a, Message> = if let Some(handle) = thumb {
+        image(handle.clone())
+            .width(58)
+            .height(58)
+            .content_fit(ContentFit::Contain)
+            .into()
+    } else {
+        let (icon_widget, _color) = entry_icon(entry, palette, 34.0);
+        let mut icon_box_col = column![icon_widget].align_x(Center);
+        if let Some(badge) = &entry.mime_badge {
+            let badge_bg = if selected {
+                palette.accent_primary
+            } else {
+                palette.surface_low
+            };
+            let badge_fg = if selected {
+                palette.on_accent
+            } else {
+                palette.text_secondary
+            };
+            icon_box_col = icon_box_col.push(
+                container(
+                    text(badge.as_str())
+                        .size(9)
+                        .font(FONT_MONO_BOLD)
+                        .color(badge_fg),
+                )
+                .padding([1, 5])
+                .style(styles::badge_container(
+                    badge_bg,
+                    badge_fg,
+                    palette.border,
+                    4.0,
+                )),
+            );
+        }
+        icon_box_col.into()
+    };
 
     let sub_label = if entry.kind.is_dir_like() {
-        "DIR".to_owned()
+        entry
+            .child_count
+            .map(|c| format!("{c} {}", strings.items_unit))
+            .unwrap_or_else(|| "DIR".to_owned())
     } else {
         format_bytes(entry.size_bytes).to_string()
     };
@@ -530,7 +548,7 @@ fn grid_item_card<'a>(
     };
 
     let card_content = column![
-        container(icon_box_col)
+        container(preview_widget)
             .width(62)
             .height(62)
             .align_x(Center)
@@ -623,7 +641,10 @@ fn detail_table_view<'a>(
         let selected = selected_id_set_contains(tab, entry.id);
         let (icon_widget, _) = entry_icon(entry, palette, 16.0);
         let size_txt = if entry.kind.is_dir_like() {
-            "—".to_owned()
+            entry
+                .child_count
+                .map(|c| format!("{c} {}", strings.items_unit))
+                .unwrap_or_else(|| "—".to_owned())
         } else {
             format_bytes(entry.size_bytes).to_string()
         };

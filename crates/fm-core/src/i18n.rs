@@ -47,6 +47,11 @@ pub struct Strings {
     pub retry: &'static str,
     pub root_fs: &'static str,
     pub binary_preview_hint: &'static str,
+    pub deep_search: &'static str,
+    pub deep_search_title: &'static str,
+    pub deep_search_empty: &'static str,
+    pub searching: &'static str,
+    pub computing_hash: &'static str,
 }
 
 impl Strings {
@@ -102,7 +107,12 @@ impl Strings {
             go_back: "Voltar",
             retry: "Tentar novamente",
             root_fs: "Sistema",
-            binary_preview_hint: "Arquivo binário ou muito grande — prévia completa com decodificadores entra na Fase P2.",
+            binary_preview_hint: "Arquivo binário ou muito grande — formato sem prévia direta.",
+            deep_search: "Subpastas",
+            deep_search_title: "Busca Profunda (Fuzzy)",
+            deep_search_empty: "Nenhum arquivo encontrado nas subpastas.",
+            searching: "Buscando em subpastas...",
+            computing_hash: "calculando...",
         }
     }
 
@@ -151,7 +161,12 @@ impl Strings {
             go_back: "Go back",
             retry: "Retry",
             root_fs: "System",
-            binary_preview_hint: "Binary or oversized file — rich decoder previews arrive in Phase P2.",
+            binary_preview_hint: "Binary or oversized file — no direct preview available.",
+            deep_search: "Subfolders",
+            deep_search_title: "Deep Search (Fuzzy)",
+            deep_search_empty: "No matching files found in subfolders.",
+            searching: "Searching subfolders...",
+            computing_hash: "computing...",
         }
     }
 }

@@ -5,4 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+compact_str.workspace = true
 fm-core.workspace = true
+ignore.workspace = true
+notify.workspace = true
+notify-debouncer-mini.workspace = true
+nucleo-matcher.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
