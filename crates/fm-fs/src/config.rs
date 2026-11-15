@@ -85,6 +85,7 @@ mod tests {
             window_decorations: WindowDecorationsMode::IntegratedCsd,
             default_view_mode: ViewMode::Columns,
             grid_group_folders: false,
+            grid_card_width: 172.0,
             dirs_first: false,
             favorites: vec![PathBuf::from("/tmp/work")],
         };

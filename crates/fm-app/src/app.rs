@@ -14,12 +14,12 @@ use fm_fs::LocalFs;
 use fm_index::SearchHit;
 use fm_preview::{DiskThumbnailCache, ThumbnailCache, ThumbnailKey, ThumbnailRgba};
 use fm_telemetry::{CachedFileTelemetry, DiskMetadataCache};
-use fm_theme::ThemePalette;
+use fm_theme::{Spacing, ThemePalette};
 use iced::futures::SinkExt;
 use iced::keyboard;
 use iced::keyboard::key::Named;
 use iced::mouse;
-use iced::widget::operation::RelativeOffset;
+use iced::widget::operation::{AbsoluteOffset, RelativeOffset};
 use iced::widget::{Id, column, container, image, operation, row, stack, text_editor};
 use iced::{
     Element, Event, Length, Point, Size, Subscription, Task, clipboard, event, stream, system,
@@ -185,6 +185,7 @@ pub enum Message {
     CanvasScrolled {
         offset_y: f32,
         viewport_height: f32,
+        viewport_width: f32,
     },
     DrivesLoaded(Result<Vec<DriveInfo>, FsError>),
     DirectoryLoaded {
@@ -310,7 +311,11 @@ pub enum Message {
     CopyPath(PathBuf),
     CopyText(String, String),
     StartColumnResize(usize),
+    StartGridResize,
+    StartColumnsPanelResize,
     EndColumnResize,
+    StepGridCardWidth(f32),
+    ResetGridCardWidth,
     CursorMoved(Point),
     WindowResized(Size),
     FileDropped(PathBuf),
@@ -351,6 +356,9 @@ pub struct App {
     pub column_ancestors_cancel: Option<CancellationToken>,
     pub table_col_weights: [f32; 5],
     pub resizing_col: Option<(usize, f32, [f32; 5])>,
+    pub resizing_grid: Option<(f32, f32)>,
+    pub columns_panel_width: f32,
+    pub resizing_columns_panel: Option<(f32, f32)>,
     pub deep_search_open: bool,
     pub deep_search_query: String,
     pub deep_search_loading: bool,
@@ -387,6 +395,7 @@ pub struct App {
     pub drop_batch_id: u64,
     pub canvas_scroll_y: f32,
     pub canvas_viewport_height: f32,
+    pub canvas_viewport_width: Option<f32>,
     pub status_notice: Option<String>,
     pub last_entry_click: Option<(TabId, PathBuf, Instant)>,
     pub last_watcher_reload: Option<(PathBuf, Instant)>,
@@ -447,8 +456,11 @@ impl App {
             column_ancestors: Vec::new(),
             column_ancestors_request_id: 0,
             column_ancestors_cancel: None,
-            table_col_weights: [42.0, 12.0, 10.0, 22.0, 14.0],
+            table_col_weights: [48.0, 11.0, 9.0, 17.0, 15.0],
             resizing_col: None,
+            resizing_grid: None,
+            columns_panel_width: 280.0,
+            resizing_columns_panel: None,
             deep_search_open: false,
             deep_search_query: String::new(),
             deep_search_loading: false,
@@ -479,12 +491,13 @@ impl App {
             quicklook_open: false,
             current_modifiers: keyboard::Modifiers::empty(),
             cursor_position: Point::new(240.0, 140.0),
-            window_size: Size::new(1280.0, 820.0),
+            window_size: Size::new(1320.0, 860.0),
             context_menu: None,
             pending_dropped_paths: Vec::new(),
             drop_batch_id: 0,
             canvas_scroll_y: 0.0,
             canvas_viewport_height: 700.0,
+            canvas_viewport_width: None,
             status_notice: None,
             last_entry_click: None,
             last_watcher_reload: None,
@@ -899,10 +912,12 @@ impl App {
             }
             Message::ToggleSidebar => {
                 self.config.sidebar_collapsed = !self.config.sidebar_collapsed;
+                self.canvas_viewport_width = None;
                 self.persist_config_task()
             }
             Message::ToggleInspector => {
                 self.config.show_inspector = !self.config.show_inspector;
+                self.canvas_viewport_width = None;
                 let persist = self.persist_config_task();
                 if self.config.show_inspector {
                     let single = self
@@ -949,10 +964,14 @@ impl App {
             Message::CanvasScrolled {
                 offset_y,
                 viewport_height,
+                viewport_width,
             } => {
                 self.canvas_scroll_y = offset_y;
                 if viewport_height > 0.0 {
                     self.canvas_viewport_height = viewport_height;
+                }
+                if viewport_width > 0.0 {
+                    self.canvas_viewport_width = Some(viewport_width);
                 }
                 self.queue_visible_thumbnails()
             }
@@ -1893,9 +1912,35 @@ impl App {
                 }
                 Task::none()
             }
+            Message::StartGridResize => {
+                self.resizing_grid = Some((
+                    self.cursor_position.x,
+                    views::virtualized::clamp_grid_card_width(self.config.grid_card_width),
+                ));
+                Task::none()
+            }
+            Message::StartColumnsPanelResize => {
+                self.resizing_columns_panel =
+                    Some((self.cursor_position.x, self.columns_panel_width));
+                Task::none()
+            }
             Message::EndColumnResize => {
                 self.resizing_col = None;
+                self.resizing_columns_panel = None;
+                if self.resizing_grid.take().is_some() {
+                    return self.persist_config_task();
+                }
                 Task::none()
+            }
+            Message::StepGridCardWidth(delta) => {
+                let next =
+                    views::virtualized::clamp_grid_card_width(self.config.grid_card_width + delta);
+                self.config.grid_card_width = next;
+                self.persist_config_task()
+            }
+            Message::ResetGridCardWidth => {
+                self.config.grid_card_width = views::virtualized::GRID_CARD_WIDTH_DEFAULT;
+                self.persist_config_task()
             }
             Message::CursorMoved(pos) => {
                 self.cursor_position = pos;
@@ -1910,6 +1955,13 @@ impl App {
                     let new_left = (initial_weights[idx] + delta_weight).clamp(min_w, max_w);
                     self.table_col_weights[idx] = new_left;
                     self.table_col_weights[idx + 1] = pair_sum - new_left;
+                }
+                if let Some((start_x, initial_w)) = self.resizing_grid {
+                    self.config.grid_card_width =
+                        views::virtualized::clamp_grid_card_width(initial_w + (pos.x - start_x));
+                }
+                if let Some((start_x, initial_w)) = self.resizing_columns_panel {
+                    self.columns_panel_width = (initial_w + (pos.x - start_x)).clamp(200.0, 480.0);
                 }
                 Task::none()
             }
@@ -1928,6 +1980,7 @@ impl App {
             }
             Message::WindowResized(size) => {
                 self.window_size = size;
+                self.canvas_viewport_width = None;
                 Task::none()
             }
             Message::FileDropped(path) => {
@@ -2887,8 +2940,19 @@ impl App {
                     self.update(Message::FilterChanged(String::new()))
                 }
             }
-            keyboard::Key::Named(Named::ArrowRight | Named::ArrowDown) => self.move_selection(1),
-            keyboard::Key::Named(Named::ArrowLeft | Named::ArrowUp) => self.move_selection(-1),
+            keyboard::Key::Character("=" | "+") if modifiers.control() => {
+                self.update(Message::StepGridCardWidth(16.0))
+            }
+            keyboard::Key::Character("-") if modifiers.control() => {
+                self.update(Message::StepGridCardWidth(-16.0))
+            }
+            keyboard::Key::Character("0") if modifiers.control() => {
+                self.update(Message::ResetGridCardWidth)
+            }
+            keyboard::Key::Named(Named::ArrowDown) => self.navigate_selection_arrow(0, 1),
+            keyboard::Key::Named(Named::ArrowUp) => self.navigate_selection_arrow(0, -1),
+            keyboard::Key::Named(Named::ArrowRight) => self.navigate_selection_arrow(1, 0),
+            keyboard::Key::Named(Named::ArrowLeft) => self.navigate_selection_arrow(-1, 0),
             keyboard::Key::Named(Named::Enter) => {
                 if let Some(focused) = self.current_tab().and_then(|t| t.selection.focused) {
                     return self.update(Message::ActivateEntry(focused));
@@ -3018,21 +3082,143 @@ impl App {
         operation::move_cursor_to_end(path_input_id())
     }
 
-    fn move_selection(&mut self, delta: isize) -> Task<Message> {
-        let mut selected_entry = None;
-        if let Some(tab) = self.current_tab_mut() {
-            if tab.visible_entries.is_empty() {
-                return Task::none();
+    fn effective_canvas_width(&self) -> f32 {
+        if let Some(measured) = self.canvas_viewport_width {
+            return measured.max(200.0);
+        }
+        let sidebar = if self.config.sidebar_collapsed {
+            0.0
+        } else {
+            Spacing::SIDEBAR_WIDTH
+        };
+        let inspector = if self.config.show_inspector {
+            Spacing::INSPECTOR_WIDTH
+        } else {
+            0.0
+        };
+        (self.window_size.width - sidebar - inspector - 40.0).max(200.0)
+    }
+
+    fn navigate_selection_arrow(&mut self, dx: isize, dy: isize) -> Task<Message> {
+        let Some(tab) = self.current_tab() else {
+            return Task::none();
+        };
+        if tab.visible_entries.is_empty() {
+            return Task::none();
+        }
+
+        let view_mode = tab.view_mode;
+        let focused = tab.selection.focused;
+
+        if view_mode == ViewMode::Columns && dy == 0 {
+            if dx < 0 {
+                return self.update(Message::NavigateUp);
             }
+            if dx > 0
+                && let Some(idx) = focused
+                && let Some(entry) = tab.visible_entries.get(idx)
+                && entry.kind.is_dir_like()
+            {
+                let path = entry.path.clone();
+                return self.navigate_active_tab(path);
+            }
+            return Task::none();
+        }
+
+        let next_idx = if view_mode == ViewMode::Grid {
+            let card_w = views::virtualized::clamp_grid_card_width(self.config.grid_card_width);
+            let cols =
+                views::virtualized::grid_columns_for_width(self.effective_canvas_width(), card_w);
+            let strings = self.strings();
+            let bands = views::virtualized::build_tab_grid_bands(
+                &tab.visible_entries,
+                cols,
+                self.config.grid_group_folders,
+                strings,
+            );
+            views::virtualized::step_grid_selection(&bands, focused, dx, dy)
+        } else {
+            let delta = if dy != 0 { dy } else { dx };
             let len = tab.visible_entries.len() as isize;
-            let current = tab.selection.focused.unwrap_or(0) as isize;
-            let next = (current + delta).clamp(0, len - 1) as usize;
-            tab.selection.select_single(next, &tab.visible_entries);
-            let single = tab.selection.single_selected(&tab.visible_entries).cloned();
-            tab.selected_telemetry = single.as_ref().map(basic_file_telemetry);
+            let current = focused.unwrap_or(0) as isize;
+            Some((current + delta).clamp(0, len - 1) as usize)
+        };
+
+        let Some(next_idx) = next_idx else {
+            return Task::none();
+        };
+
+        let mut selected_entry = None;
+        if let Some(tab_mut) = self.current_tab_mut() {
+            tab_mut
+                .selection
+                .select_single(next_idx, &tab_mut.visible_entries);
+            let single = tab_mut
+                .selection
+                .single_selected(&tab_mut.visible_entries)
+                .cloned();
+            tab_mut.selected_telemetry = single.as_ref().map(basic_file_telemetry);
             selected_entry = single;
         }
-        self.dispatch_selection_side_effects(selected_entry.as_ref())
+
+        let side_task = self.dispatch_selection_side_effects(selected_entry.as_ref());
+        let scroll_task = self.scroll_entry_into_view(next_idx);
+        Task::batch([side_task, scroll_task])
+    }
+
+    fn scroll_entry_into_view(&self, idx: usize) -> Task<Message> {
+        let Some(tab) = self.current_tab() else {
+            return Task::none();
+        };
+        let (top_y, bottom_y) = match tab.view_mode {
+            ViewMode::Grid => {
+                let card_w = views::virtualized::clamp_grid_card_width(self.config.grid_card_width);
+                let row_h = views::virtualized::grid_card_height(card_w);
+                let cols = views::virtualized::grid_columns_for_width(
+                    self.effective_canvas_width(),
+                    card_w,
+                );
+                let bands = views::virtualized::build_tab_grid_bands(
+                    &tab.visible_entries,
+                    cols,
+                    self.config.grid_group_folders,
+                    self.strings(),
+                );
+                let Some(span) = views::virtualized::grid_band_y_span(&bands, idx, row_h) else {
+                    return Task::none();
+                };
+                span
+            }
+            ViewMode::DetailTable => {
+                let top = idx as f32 * views::virtualized::DETAIL_ROW_STEP;
+                (top, top + views::virtualized::DETAIL_ROW_HEIGHT)
+            }
+            ViewMode::Columns => {
+                let top = idx as f32 * 32.0;
+                (top, top + 28.0)
+            }
+        };
+
+        let vh = self.canvas_viewport_height.max(120.0);
+        if top_y < self.canvas_scroll_y {
+            operation::scroll_to(
+                canvas_scroll_id(),
+                AbsoluteOffset {
+                    x: None,
+                    y: Some(top_y.max(0.0)),
+                },
+            )
+        } else if bottom_y > self.canvas_scroll_y + vh {
+            operation::scroll_to(
+                canvas_scroll_id(),
+                AbsoluteOffset {
+                    x: None,
+                    y: Some((bottom_y - vh).max(0.0)),
+                },
+            )
+        } else {
+            Task::none()
+        }
     }
 }
 

@@ -316,6 +316,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_grid_card_width() -> f32 {
+    140.0
+}
+
 /// Preferências persistíveis da aplicação.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -331,6 +335,8 @@ pub struct AppConfig {
     pub default_view_mode: ViewMode,
     #[serde(default = "default_true")]
     pub grid_group_folders: bool,
+    #[serde(default = "default_grid_card_width")]
+    pub grid_card_width: f32,
     #[serde(default = "default_true")]
     pub dirs_first: bool,
     #[serde(default)]
@@ -349,6 +355,7 @@ impl Default for AppConfig {
             window_decorations: WindowDecorationsMode::NativeWm,
             default_view_mode: ViewMode::Grid,
             grid_group_folders: true,
+            grid_card_width: default_grid_card_width(),
             dirs_first: true,
             favorites: Vec::new(),
         }

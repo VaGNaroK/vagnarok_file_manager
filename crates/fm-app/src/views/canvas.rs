@@ -5,16 +5,17 @@ use fm_core::{
 use fm_theme::{
     FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_BOLD, FONT_UI_SEMIBOLD, ThemePalette, styles,
 };
-use iced::Alignment::Center;
+use iced::Alignment::{self, Center};
 use iced::mouse;
 use iced::widget::{
-    Space, button, column, container, image, mouse_area, responsive, row, scrollable, space, text,
+    Space, button, column, container, image, mouse_area, responsive, row, scrollable, space, stack,
+    text,
 };
 use iced::{Color, ContentFit, Element, Length, Padding};
 use lucide_icons::iced::{
     icon_arrow_up_down, icon_chevron_right, icon_clipboard_paste, icon_copy, icon_eye,
-    icon_eye_off, icon_filter, icon_info, icon_pencil, icon_plus, icon_rotate_ccw, icon_scissors,
-    icon_star, icon_terminal, icon_trash_2, icon_x,
+    icon_eye_off, icon_filter, icon_folder_tree, icon_info, icon_minus, icon_pencil, icon_plus,
+    icon_rotate_ccw, icon_scissors, icon_star, icon_terminal, icon_trash_2, icon_x,
 };
 
 use crate::app::{
@@ -23,8 +24,9 @@ use crate::app::{
 use crate::views::entry_icon;
 use crate::views::modals::format_transfer_summary;
 use crate::views::virtualized::{
-    DETAIL_ROW_HEIGHT, DETAIL_ROW_STEP, GRID_BAND_SPACING, GridBand, build_grid_bands,
-    build_unified_grid_bands, compute_band_window, compute_fixed_window,
+    DETAIL_ROW_HEIGHT, DETAIL_ROW_STEP, GRID_BAND_SPACING, GRID_GAP, GridBand,
+    build_tab_grid_bands, clamp_grid_card_width, compute_band_window_with_row_height,
+    compute_fixed_window, grid_card_height, grid_columns_for_width,
 };
 
 pub fn view<'a>(
@@ -392,25 +394,61 @@ fn action_bar<'a>(
     .style(styles::ghost_button(palette, 9999.0))
     .on_press(Message::ToggleInspector);
 
-    row![
-        left_info,
-        space::horizontal(),
-        row![
-            new_btn,
-            ops_row,
-            sort_btn,
-            sort_dir_btn,
-            filter_btn,
-            hidden_btn,
-            terminal_btn,
-            fav_btn,
-            info_btn
-        ]
-        .spacing(8)
-        .align_y(Center),
-    ]
-    .align_y(Center)
-    .into()
+    let mut toolbar_right = row![new_btn, ops_row].spacing(8).align_y(Center);
+
+    if tab.view_mode == ViewMode::Grid {
+        let card_px = clamp_grid_card_width(app.config.grid_card_width).round() as u32;
+        let group_active = app.config.grid_group_folders;
+        let group_btn = button(icon_folder_tree().size(13).color(if group_active {
+            palette.accent_primary
+        } else {
+            palette.text_secondary
+        }))
+        .padding([6, 8])
+        .style(styles::pill_secondary_button(palette))
+        .on_press(Message::ToggleGridGroupFolders);
+
+        let size_controls = container(
+            row![
+                button(icon_minus().size(12).color(palette.text_primary))
+                    .padding([4, 6])
+                    .style(styles::ghost_button(palette, 6.0))
+                    .on_press(Message::StepGridCardWidth(-16.0)),
+                button(
+                    text(format!("{card_px}px"))
+                        .size(11)
+                        .font(FONT_MONO)
+                        .color(palette.text_secondary),
+                )
+                .padding([3, 6])
+                .style(styles::ghost_button(palette, 6.0))
+                .on_press(Message::ResetGridCardWidth),
+                button(icon_plus().size(12).color(palette.text_primary))
+                    .padding([4, 6])
+                    .style(styles::ghost_button(palette, 6.0))
+                    .on_press(Message::StepGridCardWidth(16.0)),
+            ]
+            .spacing(2)
+            .align_y(Center),
+        )
+        .padding(2)
+        .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 8.0));
+
+        toolbar_right = toolbar_right.push(group_btn).push(size_controls);
+    }
+
+    toolbar_right = toolbar_right
+        .push(sort_btn)
+        .push(sort_dir_btn)
+        .push(filter_btn)
+        .push(hidden_btn)
+        .push(terminal_btn)
+        .push(fav_btn)
+        .push(info_btn);
+
+    row![left_info, space::horizontal(), toolbar_right]
+        .align_y(Center)
+        .into()
 }
 
 fn transfer_banner<'a>(
@@ -604,19 +642,6 @@ fn grid_view<'a>(
     palette: ThemePalette,
     strings: Strings,
 ) -> Element<'a, Message> {
-    let dirs: Vec<(usize, &FileEntry)> = tab
-        .visible_entries
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| e.kind.is_dir_like())
-        .collect();
-    let files: Vec<(usize, &FileEntry)> = tab
-        .visible_entries
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| !e.kind.is_dir_like())
-        .collect();
-
     let group_folders = app.config.grid_group_folders;
     let modifiers = SelectionModifiers {
         ctrl: app.current_modifiers.control(),
@@ -624,17 +649,41 @@ fn grid_view<'a>(
     };
     let scroll_y = app.canvas_scroll_y;
     let viewport_h = app.canvas_viewport_height;
+    let card_width = clamp_grid_card_width(app.config.grid_card_width);
+    let card_height = grid_card_height(card_width);
+    let preview_box = ((card_width - 32.0) * 0.58).round().clamp(44.0, 128.0);
+    let label_chars = ((card_width - 16.0) / 7.2).round().clamp(12.0, 34.0) as usize;
 
     responsive(move |size| {
-        let cols = ((size.width / 148.0).floor() as usize).clamp(2, 8);
-        let bands = if group_folders {
-            build_grid_bands(&dirs, &files, cols, strings.folders, strings.files)
-        } else {
-            build_unified_grid_bands(&tab.visible_entries, cols)
-        };
-        let win = compute_band_window(&bands, scroll_y, viewport_h, 280.0);
+        let fit_cols = grid_columns_for_width(size.width, card_width);
+        let bands = build_tab_grid_bands(&tab.visible_entries, fit_cols, group_folders, strings);
+        let win =
+            compute_band_window_with_row_height(&bands, card_height, scroll_y, viewport_h, 280.0);
 
-        let mut list = column![].spacing(GRID_BAND_SPACING).width(Length::Fill);
+        let max_row_items = bands
+            .iter()
+            .filter_map(|b| match b {
+                GridBand::Items(chunk) => Some(chunk.len()),
+                GridBand::SectionHeader { .. } => None,
+            })
+            .max()
+            .unwrap_or(0);
+        let active_cols = if max_row_items > 0 && max_row_items < fit_cols {
+            max_row_items
+        } else {
+            fit_cols
+        };
+        let grid_block_width =
+            active_cols as f32 * card_width + active_cols.saturating_sub(1) as f32 * GRID_GAP;
+        let min_header_w = 300.0_f32.min(size.width.max(card_width));
+        let block_width = grid_block_width
+            .max(min_header_w)
+            .min(size.width.max(card_width));
+        let center_sparse_rows = max_row_items > 0 && max_row_items < fit_cols;
+
+        let mut list = column![]
+            .spacing(GRID_BAND_SPACING)
+            .width(Length::Fixed(block_width));
         if win.top_spacer > 0.0 {
             list = list.push(Space::new().height(win.top_spacer));
         }
@@ -649,7 +698,7 @@ fn grid_view<'a>(
                     list = list.push(section_title_bar(title, *count, perms, palette));
                 }
                 GridBand::Items(chunk) => {
-                    let mut r = row![].spacing(12).width(Length::Fill);
+                    let mut r = row![].spacing(GRID_GAP);
                     for &(idx, entry) in chunk {
                         let thumb = app.gpu_thumbnails.get(&thumbnail_key_for_entry(entry));
                         r = r.push(grid_item_card(
@@ -658,14 +707,23 @@ fn grid_view<'a>(
                             selected_id_set_contains(tab, entry.id),
                             modifiers,
                             thumb,
+                            card_width,
+                            card_height,
+                            preview_box,
+                            label_chars,
                             strings,
                             palette,
                         ));
                     }
-                    for _ in chunk.len()..cols {
-                        r = r.push(Space::new().width(Length::Fill));
-                    }
-                    list = list.push(r);
+                    let row_wrap =
+                        container(r)
+                            .width(Length::Fill)
+                            .align_x(if center_sparse_rows {
+                                Center
+                            } else {
+                                Alignment::Start
+                            });
+                    list = list.push(row_wrap);
                 }
             }
         }
@@ -674,12 +732,16 @@ fn grid_view<'a>(
             list = list.push(Space::new().height(win.bottom_spacer));
         }
 
-        scrollable(list)
+        let centered_canvas = container(list).width(Length::Fill).align_x(Center);
+
+        scrollable(centered_canvas)
             .id(canvas_scroll_id())
+            .width(Length::Fill)
             .height(Length::Fill)
             .on_scroll(|vp| Message::CanvasScrolled {
                 offset_y: vp.absolute_offset().y,
                 viewport_height: vp.bounds().height,
+                viewport_width: vp.bounds().width,
             })
             .into()
     })
@@ -708,23 +770,29 @@ fn section_title_bar<'a>(
     .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn grid_item_card<'a>(
     index: usize,
     entry: &'a FileEntry,
     selected: bool,
     modifiers: SelectionModifiers,
     thumb: Option<&'a image::Handle>,
+    card_width: f32,
+    card_height: f32,
+    preview_box: f32,
+    label_chars: usize,
     strings: Strings,
     palette: ThemePalette,
 ) -> Element<'a, Message> {
     let preview_widget: Element<'a, Message> = if let Some(handle) = thumb {
         image(handle.clone())
-            .width(58)
-            .height(58)
+            .width(preview_box - 4.0)
+            .height(preview_box - 4.0)
             .content_fit(ContentFit::Contain)
             .into()
     } else {
-        let (icon_widget, _color) = entry_icon(entry, palette, 34.0);
+        let icon_px = (preview_box * 0.56).clamp(26.0, 68.0);
+        let (icon_widget, _color) = entry_icon(entry, palette, icon_px);
         let mut icon_box_col = column![icon_widget].align_x(Center);
         if let Some(badge) = &entry.mime_badge {
             let badge_bg = if selected {
@@ -765,13 +833,14 @@ fn grid_item_card<'a>(
         format_bytes(entry.size_bytes).to_string()
     };
 
-    let display_name = truncate_label(&entry.name, 16);
+    let display_name = truncate_label(&entry.name, label_chars);
     let name_widget: Element<'a, Message> = if selected {
         container(
             text(display_name)
                 .size(12)
                 .font(FONT_UI_SEMIBOLD)
-                .color(palette.accent_primary),
+                .color(palette.accent_primary)
+                .wrapping(text::Wrapping::None),
         )
         .padding([2, 8])
         .height(22)
@@ -788,7 +857,8 @@ fn grid_item_card<'a>(
             text(display_name)
                 .size(12)
                 .font(FONT_UI_SEMIBOLD)
-                .color(palette.text_primary),
+                .color(palette.text_primary)
+                .wrapping(text::Wrapping::None),
         )
         .padding([2, 8])
         .height(22)
@@ -798,8 +868,8 @@ fn grid_item_card<'a>(
 
     let card_content = column![
         container(preview_widget)
-            .width(62)
-            .height(62)
+            .width(preview_box)
+            .height(preview_box)
             .align_x(Center)
             .align_y(Center),
         name_widget,
@@ -814,14 +884,50 @@ fn grid_item_card<'a>(
     .width(Length::Fill);
 
     let card_btn = button(card_content)
-        .width(Length::Fill)
-        .height(136)
+        .width(Length::Fixed(card_width))
+        .height(Length::Fixed(card_height))
         .padding([8, 6])
         .style(styles::entry_card_button(palette, selected, 14.0))
         .on_press(Message::SelectEntry { index, modifiers });
 
-    mouse_area(card_btn)
-        .on_right_press(Message::OpenEntryContextMenu(index))
+    let card_area = mouse_area(card_btn).on_right_press(Message::OpenEntryContextMenu(index));
+
+    let grip_visual = container(Space::new().width(3).height(18)).style(move |_| {
+        styles::panel_surface(
+            if selected {
+                palette.accent_border
+            } else {
+                palette.border
+            },
+            Color::TRANSPARENT,
+            9999.0,
+        )
+    });
+    let resize_grip = container(
+        mouse_area(
+            container(grip_visual)
+                .width(10)
+                .height(28)
+                .align_x(Center)
+                .align_y(Center),
+        )
+        .interaction(mouse::Interaction::ResizingHorizontally)
+        .on_press(Message::StartGridResize),
+    )
+    .width(Length::Fixed(card_width))
+    .height(Length::Fixed(card_height))
+    .padding(Padding {
+        top: 0.0,
+        right: 2.0,
+        bottom: 6.0,
+        left: 0.0,
+    })
+    .align_x(Alignment::End)
+    .align_y(Alignment::End);
+
+    stack![card_area, resize_grip]
+        .width(Length::Fixed(card_width))
+        .height(Length::Fixed(card_height))
         .into()
 }
 
@@ -878,6 +984,15 @@ fn col_resize_handle<'a>(divider_idx: usize, palette: ThemePalette) -> Element<'
 
 fn portion(weight: f32) -> u16 {
     (weight * 10.0).round().clamp(50.0, 9000.0) as u16
+}
+
+fn single_line_label<'a>(
+    label: iced::widget::text::Text<'a, iced::Theme, iced::Renderer>,
+) -> Element<'a, Message> {
+    container(label.wrapping(text::Wrapping::None))
+        .width(Length::Fill)
+        .clip(true)
+        .into()
 }
 
 fn detail_table_view<'a>(
@@ -966,38 +1081,56 @@ fn detail_table_view<'a>(
         let row_content = row![
             row![
                 icon_widget,
-                text(entry.name.as_str())
-                    .size(13)
-                    .font(if selected { FONT_UI_SEMIBOLD } else { FONT_UI })
-                    .color(palette.text_primary),
+                single_line_label(
+                    text(entry.name.as_str())
+                        .size(13)
+                        .font(if selected { FONT_UI_SEMIBOLD } else { FONT_UI })
+                        .color(palette.text_primary),
+                ),
             ]
             .spacing(10)
             .align_y(Center)
             .width(Length::FillPortion(p[0])),
             Space::new().width(8),
-            text(size_txt)
-                .size(12)
-                .font(FONT_MONO)
-                .color(palette.text_secondary)
-                .width(Length::FillPortion(p[1])),
+            container(
+                text(size_txt)
+                    .size(12)
+                    .font(FONT_MONO)
+                    .color(palette.text_secondary)
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(Length::FillPortion(p[1]))
+            .clip(true),
             Space::new().width(8),
-            text(kind_txt)
-                .size(11)
-                .font(FONT_MONO)
-                .color(palette.text_muted)
-                .width(Length::FillPortion(p[2])),
+            container(
+                text(kind_txt)
+                    .size(11)
+                    .font(FONT_MONO)
+                    .color(palette.text_muted)
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(Length::FillPortion(p[2]))
+            .clip(true),
             Space::new().width(8),
-            text(perms.as_str().to_owned())
-                .size(12)
-                .font(FONT_MONO)
-                .color(palette.text_secondary)
-                .width(Length::FillPortion(p[3])),
+            container(
+                text(perms.as_str().to_owned())
+                    .size(12)
+                    .font(FONT_MONO)
+                    .color(palette.text_secondary)
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(Length::FillPortion(p[3]))
+            .clip(true),
             Space::new().width(8),
-            text(age_txt)
-                .size(11)
-                .font(FONT_MONO)
-                .color(palette.text_muted)
-                .width(Length::FillPortion(p[4])),
+            container(
+                text(age_txt)
+                    .size(11)
+                    .font(FONT_MONO)
+                    .color(palette.text_muted)
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(Length::FillPortion(p[4]))
+            .clip(true),
         ]
         .align_y(Center);
 
@@ -1024,6 +1157,7 @@ fn detail_table_view<'a>(
         .on_scroll(|vp| Message::CanvasScrolled {
             offset_y: vp.absolute_offset().y,
             viewport_height: vp.bounds().height,
+            viewport_width: vp.bounds().width,
         });
 
     column![sticky_header, scroll]
@@ -1116,14 +1250,13 @@ fn columns_view<'a>(
                 let (c_icon, _) = entry_icon(child, palette, 14.0);
                 let mut r = row![
                     c_icon,
-                    text(truncate_label(child.name.as_str(), 22)).size(12).font(
+                    single_line_label(text(child.name.as_str()).size(12).font(
                         if is_on_active_chain {
                             FONT_UI_SEMIBOLD
                         } else {
                             FONT_UI
                         }
-                    ),
-                    space::horizontal(),
+                    )),
                 ]
                 .spacing(6)
                 .align_y(Center);
@@ -1138,7 +1271,8 @@ fn columns_view<'a>(
                 list = list.push(
                     button(r)
                         .width(Length::Fill)
-                        .padding([5, 8])
+                        .height(26)
+                        .padding([4, 8])
                         .style(styles::entry_card_button(palette, is_on_active_chain, 6.0))
                         .on_press(Message::NavigateTo(target_nav)),
                 );
@@ -1182,8 +1316,12 @@ fn columns_view<'a>(
         let (icon_widget, _) = entry_icon(entry, palette, 15.0);
         let mut r = row![
             icon_widget,
-            text(entry.name.as_str()).size(13),
-            space::horizontal(),
+            single_line_label(
+                text(entry.name.as_str())
+                    .size(13)
+                    .font(if selected { FONT_UI_SEMIBOLD } else { FONT_UI })
+                    .color(palette.text_primary),
+            ),
         ]
         .spacing(8)
         .align_y(Center);
@@ -1214,12 +1352,26 @@ fn columns_view<'a>(
             .on_scroll(|vp| Message::CanvasScrolled {
                 offset_y: vp.absolute_offset().y,
                 viewport_height: vp.bounds().height,
+                viewport_width: vp.bounds().width,
             }),
     )
-    .width(Length::Fixed(280.0))
+    .width(Length::Fixed(app.columns_panel_width))
     .height(Length::Fill)
     .padding(12)
     .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
+
+    let col_divider = mouse_area(
+        container(
+            container(Space::new().width(2).height(36))
+                .style(move |_| styles::panel_surface(palette.border, Color::TRANSPARENT, 9999.0)),
+        )
+        .width(8)
+        .height(Length::Fill)
+        .align_x(Center)
+        .align_y(Center),
+    )
+    .interaction(mouse::Interaction::ResizingHorizontally)
+    .on_press(Message::StartColumnsPanelResize);
 
     let col3: Element<'a, Message> = if let Some(selected) =
         tab.selection.single_selected(&tab.visible_entries)
@@ -1250,10 +1402,11 @@ fn columns_view<'a>(
                             let (c_icon, _) = entry_icon(child, palette, 14.0);
                             let mut r = row![
                                 c_icon,
-                                text(child.name.as_str())
-                                    .size(12)
-                                    .color(palette.text_primary),
-                                space::horizontal(),
+                                single_line_label(
+                                    text(child.name.as_str())
+                                        .size(12)
+                                        .color(palette.text_primary),
+                                ),
                             ]
                             .spacing(8)
                             .align_y(Center);
@@ -1264,7 +1417,8 @@ fn columns_view<'a>(
                                     text(format_bytes(child.size_bytes).to_string())
                                         .size(11)
                                         .font(FONT_MONO)
-                                        .color(palette.text_muted),
+                                        .color(palette.text_muted)
+                                        .wrapping(text::Wrapping::None),
                                 );
                             }
                             let target_path = if child.kind.is_dir_like() {
@@ -1275,7 +1429,8 @@ fn columns_view<'a>(
                             sub_list = sub_list.push(
                                 button(r)
                                     .width(Length::Fill)
-                                    .padding([5, 8])
+                                    .height(26)
+                                    .padding([4, 8])
                                     .style(styles::ghost_button(palette, 6.0))
                                     .on_press(Message::NavigateTo(target_path)),
                             );
@@ -1297,7 +1452,7 @@ fn columns_view<'a>(
             };
 
             container(sub_content)
-                .width(Length::Fixed(270.0))
+                .width(Length::Fixed(app.columns_panel_width.max(270.0)))
                 .height(Length::Fill)
                 .padding(12)
                 .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0))
@@ -1374,7 +1529,7 @@ fn columns_view<'a>(
         .into()
     };
 
-    cols_row = cols_row.push(col2).push(col3);
+    cols_row = cols_row.push(col2).push(col_divider).push(col3);
 
     scrollable(cols_row)
         .direction(scrollable::Direction::Horizontal(

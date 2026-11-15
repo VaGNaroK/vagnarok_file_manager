@@ -1,14 +1,37 @@
 use std::ops::Range;
 
-use fm_core::FileEntry;
+use fm_core::{FileEntry, Strings};
 
 pub const DETAIL_ROW_HEIGHT: f32 = 34.0;
 pub const DETAIL_ROW_SPACING: f32 = 4.0;
 pub const DETAIL_ROW_STEP: f32 = DETAIL_ROW_HEIGHT + DETAIL_ROW_SPACING;
 
 pub const GRID_HEADER_HEIGHT: f32 = 24.0;
-pub const GRID_ROW_HEIGHT: f32 = 136.0;
 pub const GRID_BAND_SPACING: f32 = 12.0;
+pub const GRID_GAP: f32 = 12.0;
+pub const GRID_CARD_WIDTH_MIN: f32 = 104.0;
+pub const GRID_CARD_WIDTH_MAX: f32 = 260.0;
+pub const GRID_CARD_WIDTH_DEFAULT: f32 = 140.0;
+
+pub fn clamp_grid_card_width(width: f32) -> f32 {
+    if width.is_finite() {
+        width.clamp(GRID_CARD_WIDTH_MIN, GRID_CARD_WIDTH_MAX)
+    } else {
+        GRID_CARD_WIDTH_DEFAULT
+    }
+}
+
+pub fn grid_card_height(card_width: f32) -> f32 {
+    (clamp_grid_card_width(card_width) * 0.96)
+        .round()
+        .clamp(112.0, 240.0)
+}
+
+pub fn grid_columns_for_width(available_width: f32, card_width: f32) -> usize {
+    let w = clamp_grid_card_width(card_width);
+    let usable = (available_width - 8.0).max(w);
+    (((usable + GRID_GAP) / (w + GRID_GAP)).floor() as usize).max(1)
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VirtualWindow {
@@ -62,10 +85,10 @@ pub enum GridBand<'a> {
 }
 
 impl<'a> GridBand<'a> {
-    fn height(&self) -> f32 {
+    fn height_with(&self, row_height: f32) -> f32 {
         match self {
             Self::SectionHeader { .. } => GRID_HEADER_HEIGHT,
-            Self::Items(_) => GRID_ROW_HEIGHT,
+            Self::Items(_) => row_height,
         }
     }
 }
@@ -116,8 +139,32 @@ pub fn build_unified_grid_bands<'a>(entries: &'a [FileEntry], cols: usize) -> Ve
         .collect()
 }
 
-pub fn compute_band_window(
+/// Constrói as bandas da aba respeitando `group_folders` e `cols`.
+pub fn build_tab_grid_bands<'a>(
+    entries: &'a [FileEntry],
+    cols: usize,
+    group_folders: bool,
+    strings: Strings,
+) -> Vec<GridBand<'a>> {
+    if !group_folders {
+        return build_unified_grid_bands(entries, cols);
+    }
+    let dirs: Vec<(usize, &FileEntry)> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.kind.is_dir_like())
+        .collect();
+    let files: Vec<(usize, &FileEntry)> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| !e.kind.is_dir_like())
+        .collect();
+    build_grid_bands(&dirs, &files, cols, strings.folders, strings.files)
+}
+
+pub fn compute_band_window_with_row_height(
     bands: &[GridBand<'_>],
+    row_height: f32,
     scroll_y: f32,
     viewport_height: f32,
     overscan_px: f32,
@@ -134,7 +181,7 @@ pub fn compute_band_window(
     let mut acc = 0.0_f32;
     offsets.push(0.0);
     for (i, band) in bands.iter().enumerate() {
-        acc += band.height();
+        acc += band.height_with(row_height);
         if i + 1 < bands.len() {
             acc += GRID_BAND_SPACING;
         }
@@ -160,6 +207,85 @@ pub fn compute_band_window(
         top_spacer,
         bottom_spacer,
     }
+}
+
+/// Retorna `(top_y, bottom_y)` da banda de grade que contém `entry_idx`.
+pub fn grid_band_y_span(
+    bands: &[GridBand<'_>],
+    entry_idx: usize,
+    row_height: f32,
+) -> Option<(f32, f32)> {
+    let mut y = 0.0_f32;
+    for (i, band) in bands.iter().enumerate() {
+        let h = band.height_with(row_height);
+        if let GridBand::Items(chunk) = band
+            && chunk.iter().any(|(idx, _)| *idx == entry_idx)
+        {
+            return Some((y, y + h));
+        }
+        y += h;
+        if i + 1 < bands.len() {
+            y += GRID_BAND_SPACING;
+        }
+    }
+    None
+}
+
+/// Move a seleção na grade em 2D (`dx` horizontal, `dy` vertical por linha).
+pub fn step_grid_selection(
+    bands: &[GridBand<'_>],
+    current_entry_idx: Option<usize>,
+    dx: isize,
+    dy: isize,
+) -> Option<usize> {
+    let rows: Vec<Vec<usize>> = bands
+        .iter()
+        .filter_map(|b| match b {
+            GridBand::Items(chunk) if !chunk.is_empty() => {
+                Some(chunk.iter().map(|(idx, _)| *idx).collect())
+            }
+            _ => None,
+        })
+        .collect();
+    if rows.is_empty() {
+        return None;
+    }
+
+    let Some(cur) = current_entry_idx else {
+        return if dx < 0 || dy < 0 {
+            rows.last().and_then(|r| r.last().copied())
+        } else {
+            rows.first().and_then(|r| r.first().copied())
+        };
+    };
+
+    let mut pos: Option<(usize, usize)> = None;
+    for (r_idx, row) in rows.iter().enumerate() {
+        if let Some(c_idx) = row.iter().position(|&idx| idx == cur) {
+            pos = Some((r_idx, c_idx));
+            break;
+        }
+    }
+    let Some((r_idx, c_idx)) = pos else {
+        return rows.first().and_then(|r| r.first().copied());
+    };
+
+    if dy != 0 {
+        let target_r = (r_idx as isize + dy).clamp(0, rows.len() as isize - 1) as usize;
+        let target_row = &rows[target_r];
+        let target_c = c_idx.min(target_row.len().saturating_sub(1));
+        return Some(target_row[target_c]);
+    }
+
+    if dx != 0 {
+        let flat: Vec<usize> = rows.into_iter().flatten().collect();
+        if let Some(flat_pos) = flat.iter().position(|&idx| idx == cur) {
+            let next = (flat_pos as isize + dx).clamp(0, flat.len() as isize - 1) as usize;
+            return Some(flat[next]);
+        }
+    }
+
+    Some(cur)
 }
 
 #[cfg(test)]
@@ -200,7 +326,7 @@ mod tests {
         let indexed: Vec<(usize, &FileEntry)> = entries.iter().enumerate().collect();
         let bands = build_grid_bands(&[], &indexed, 6, "PASTAS", "ARQUIVOS");
 
-        let win = compute_band_window(&bands, 10_000.0, 720.0, 200.0);
+        let win = compute_band_window_with_row_height(&bands, 136.0, 10_000.0, 720.0, 200.0);
         assert!(win.range.len() <= 12);
         assert!(win.top_spacer > 9_000.0);
         assert!(win.bottom_spacer > 100_000.0);
@@ -212,5 +338,31 @@ mod tests {
         let bands = build_unified_grid_bands(&entries, 4);
         assert_eq!(bands.len(), 4);
         assert!(bands.iter().all(|b| matches!(b, GridBand::Items(_))));
+    }
+
+    #[test]
+    fn grid_2d_arrow_navigation_moves_vertically_across_rows_and_sections() {
+        let mut entries: Vec<FileEntry> = (0..7).map(dummy_file).collect();
+        for e in entries.iter_mut().take(4) {
+            e.kind = EntryKind::Directory;
+        }
+        let dirs: Vec<(usize, &FileEntry)> = entries.iter().enumerate().take(4).collect();
+        let files: Vec<(usize, &FileEntry)> = entries.iter().enumerate().skip(4).collect();
+        let bands = build_grid_bands(&dirs, &files, 3, "PASTAS", "ARQUIVOS");
+
+        // Linha 0 dirs: [0, 1, 2], Linha 1 dirs: [3], Linha 2 files: [4, 5, 6]
+        assert_eq!(step_grid_selection(&bands, Some(1), 0, 1), Some(3));
+        assert_eq!(step_grid_selection(&bands, Some(0), 0, 1), Some(3));
+        assert_eq!(step_grid_selection(&bands, Some(3), 0, 1), Some(4));
+        assert_eq!(step_grid_selection(&bands, Some(5), 0, -1), Some(3));
+        assert_eq!(step_grid_selection(&bands, Some(2), 1, 0), Some(3));
+        assert_eq!(step_grid_selection(&bands, Some(3), -1, 0), Some(2));
+    }
+
+    #[test]
+    fn grid_columns_scale_with_card_width_and_viewport() {
+        assert_eq!(grid_columns_for_width(900.0, 140.0), 5);
+        assert_eq!(grid_columns_for_width(1400.0, 140.0), 9);
+        assert_eq!(grid_columns_for_width(900.0, 220.0), 3);
     }
 }
