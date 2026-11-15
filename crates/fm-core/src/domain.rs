@@ -184,6 +184,14 @@ pub struct SelectedFileTelemetry {
     pub preview_snippet: Option<String>,
 }
 
+/// Metadados adicionais sob demanda exibidos na janela de propriedades.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EntryExtraInfo {
+    pub accessed_at: Option<SystemTime>,
+    pub symlink_target: Option<PathBuf>,
+    pub is_readonly: bool,
+}
+
 /// Tipo de dispositivo/volume exibido na barra lateral.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriveKind {
@@ -395,6 +403,69 @@ pub fn format_age(modified: SystemTime, pt_br: bool) -> CompactString {
     }
 }
 
+/// Formata um inteiro sem sinal com separador de milhares (`.` em PT-BR, `,` em EN-US).
+pub fn format_grouped_u64(value: u64, pt_br: bool) -> CompactString {
+    let raw = value.to_string();
+    let sep = if pt_br { '.' } else { ',' };
+    let mut out = String::with_capacity(raw.len() + raw.len() / 3);
+    for (idx, ch) in raw.chars().rev().enumerate() {
+        if idx > 0 && idx.is_multiple_of(3) {
+            out.push(sep);
+        }
+        out.push(ch);
+    }
+    let grouped: String = out.chars().rev().collect();
+    CompactString::from(grouped)
+}
+
+/// Formata data/hora local curta (`Hoje, 17:45`, `Ontem, 18:05` ou `10 Nov 2026, 14:32`).
+pub fn format_timestamp_short(ts: SystemTime, pt_br: bool) -> CompactString {
+    use chrono::{DateTime, Datelike, Local, Timelike};
+
+    let dt: DateTime<Local> = DateTime::from(ts);
+    let now = Local::now();
+    let today = now.date_naive();
+    let date = dt.date_naive();
+    if date == today {
+        return CompactString::from(format!(
+            "{}, {:02}:{:02}",
+            if pt_br { "Hoje" } else { "Today" },
+            dt.hour(),
+            dt.minute()
+        ));
+    }
+    if today.pred_opt() == Some(date) {
+        return CompactString::from(format!(
+            "{}, {:02}:{:02}",
+            if pt_br { "Ontem" } else { "Yesterday" },
+            dt.hour(),
+            dt.minute()
+        ));
+    }
+
+    const MONTHS_PT: [&str; 12] = [
+        "Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+    ];
+    const MONTHS_EN: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let month_idx = dt.month0() as usize;
+    let month_name = if pt_br {
+        MONTHS_PT.get(month_idx).copied().unwrap_or("Jan")
+    } else {
+        MONTHS_EN.get(month_idx).copied().unwrap_or("Jan")
+    };
+
+    CompactString::from(format!(
+        "{:02} {} {:04}, {:02}:{:02}",
+        dt.day(),
+        month_name,
+        dt.year(),
+        dt.hour(),
+        dt.minute()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,5 +520,19 @@ mod tests {
     fn formats_human_sizes() {
         assert_eq!(format_bytes(842), "842 B");
         assert_eq!(format_bytes(9114), "8.9 KB");
+    }
+
+    #[test]
+    fn formats_grouped_integers_and_timestamps() {
+        assert_eq!(format_grouped_u64(0, true), "0");
+        assert_eq!(format_grouped_u64(999, true), "999");
+        assert_eq!(format_grouped_u64(14_931_200, true), "14.931.200");
+        assert_eq!(format_grouped_u64(14_931_200, false), "14,931,200");
+
+        let now_str = format_timestamp_short(SystemTime::now(), true);
+        assert!(now_str.starts_with("Hoje, "));
+        let past = std::time::UNIX_EPOCH + std::time::Duration::from_secs(86_400 * 400);
+        let past_str = format_timestamp_short(past, false);
+        assert!(past_str.contains("1971"));
     }
 }

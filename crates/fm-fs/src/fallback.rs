@@ -35,6 +35,16 @@ pub fn extract_permissions_and_hidden(name: &str, _meta: &Metadata) -> (Permissi
     (PermissionsMeta::PosixMode(0o644), name.starts_with('.'))
 }
 
+pub fn apply_entry_properties(path: &Path, patch: &crate::PropertyPatch) -> Result<(), FsError> {
+    if let Some(readonly) = patch.readonly {
+        let meta = std::fs::metadata(path).map_err(|e| crate::map_io_err(path, e))?;
+        let mut perms = meta.permissions();
+        perms.set_readonly(readonly);
+        std::fs::set_permissions(path, perms).map_err(|e| crate::map_io_err(path, e))?;
+    }
+    Ok(())
+}
+
 pub fn volume_space(_path: &Path) -> Option<VolumeSpace> {
     None
 }

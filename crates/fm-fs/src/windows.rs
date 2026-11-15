@@ -13,10 +13,11 @@ use fm_core::{
 use tokio_util::sync::CancellationToken;
 use windows::Win32::Foundation::{ERROR_NO_MORE_FILES, HANDLE, HWND};
 use windows::Win32::Storage::FileSystem::{
-    COPYFILE_FLAGS, COPYPROGRESSROUTINE_PROGRESS, CopyFileExW, FIND_FIRST_EX_LARGE_FETCH,
-    FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
-    GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDriveStringsW, GetVolumeInformationW,
-    LPPROGRESS_ROUTINE_CALLBACK_REASON, PROGRESS_CANCEL, PROGRESS_CONTINUE, WIN32_FIND_DATAW,
+    COPYFILE_FLAGS, COPYPROGRESSROUTINE_PROGRESS, CopyFileExW, FILE_FLAGS_AND_ATTRIBUTES,
+    FIND_FIRST_EX_LARGE_FETCH, FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW,
+    FindNextFileW, GetDiskFreeSpaceExW, GetDriveTypeW, GetFileAttributesW, GetLogicalDriveStringsW,
+    GetVolumeInformationW, INVALID_FILE_ATTRIBUTES, LPPROGRESS_ROUTINE_CALLBACK_REASON,
+    PROGRESS_CANCEL, PROGRESS_CONTINUE, SetFileAttributesW, WIN32_FIND_DATAW,
 };
 use windows::Win32::UI::Shell::{
     SEE_MASK_FLAG_NO_UI, SEE_MASK_INVOKEIDLIST, SHELLEXECUTEINFOW, ShellExecuteExW,
@@ -24,13 +25,15 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::core::{BOOL, PCWSTR};
 
-use crate::{make_file_entry, map_io_err};
+use crate::{PropertyPatch, make_file_entry, map_io_err};
 
 const DRIVE_REMOVABLE: u32 = 2;
 const DRIVE_FIXED: u32 = 3;
 const DRIVE_REMOTE: u32 = 4;
+const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
 const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
 
 struct FindHandle(HANDLE);
@@ -286,6 +289,39 @@ pub fn extract_permissions_and_hidden(_name: &str, meta: &Metadata) -> (Permissi
     let attrs = meta.file_attributes();
     let is_hidden = (attrs & FILE_ATTRIBUTE_HIDDEN) != 0;
     (PermissionsMeta::WinAttributes(attrs), is_hidden)
+}
+
+/// Atualiza atributos `READONLY` e `HIDDEN` do Windows via `GetFileAttributesW`/`SetFileAttributesW`.
+pub fn apply_entry_properties(path: &Path, patch: &PropertyPatch) -> Result<(), FsError> {
+    if patch.readonly.is_none() && patch.hidden.is_none() {
+        return Ok(());
+    }
+    let wide = to_long_wide(path);
+    // SAFETY: `wide` é null-terminated válido.
+    let mut attrs = unsafe { GetFileAttributesW(PCWSTR(wide.as_ptr())) };
+    if attrs == INVALID_FILE_ATTRIBUTES {
+        return Err(map_io_err(path, std::io::Error::last_os_error()));
+    }
+    if let Some(readonly) = patch.readonly {
+        if readonly {
+            attrs |= FILE_ATTRIBUTE_READONLY;
+        } else {
+            attrs &= !FILE_ATTRIBUTE_READONLY;
+        }
+    }
+    if let Some(hidden) = patch.hidden {
+        if hidden {
+            attrs |= FILE_ATTRIBUTE_HIDDEN;
+        } else {
+            attrs &= !FILE_ATTRIBUTE_HIDDEN;
+        }
+    }
+    if attrs == 0 {
+        attrs = FILE_ATTRIBUTE_NORMAL;
+    }
+    // SAFETY: `wide` é null-terminated válido e `attrs` é bitmask válida de atributos Win32.
+    unsafe { SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_FLAGS_AND_ATTRIBUTES(attrs)) }
+        .map_err(|e| map_io_err(path, std::io::Error::from(e)))
 }
 
 pub fn volume_space(path: &Path) -> Option<VolumeSpace> {

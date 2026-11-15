@@ -31,8 +31,8 @@ use std::path::{Path, PathBuf};
 use compact_str::CompactString;
 use directories::{BaseDirs, UserDirs};
 use fm_core::{
-    DirectorySnapshot, DriveInfo, EntryKind, FileEntry, FsError, PermissionsMeta, UserPlaces,
-    VfsProvider, VolumeSpace, compute_entry_id,
+    DirectorySnapshot, DriveInfo, EntryExtraInfo, EntryKind, FileEntry, FsError, PermissionsMeta,
+    UserPlaces, VfsProvider, VolumeSpace, compute_entry_id,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -554,6 +554,102 @@ fn map_io_err(path: &Path, err: std::io::Error) -> FsError {
     }
 }
 
+/// Alterações aplicáveis em metadados/permissões pela janela de propriedades.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PropertyPatch {
+    pub readonly: Option<bool>,
+    pub hidden: Option<bool>,
+    pub posix_mode: Option<u32>,
+}
+
+/// Lê metadados adicionais sob demanda (último acesso, alvo de symlink, estado somente leitura).
+pub async fn read_entry_extra_info(path: PathBuf) -> EntryExtraInfo {
+    tokio::task::spawn_blocking(move || {
+        let Ok(link_meta) = std::fs::symlink_metadata(&path) else {
+            return EntryExtraInfo::default();
+        };
+        let symlink_target = if link_meta.file_type().is_symlink() {
+            std::fs::read_link(&path).ok()
+        } else {
+            None
+        };
+        let effective = std::fs::metadata(&path).unwrap_or(link_meta);
+        EntryExtraInfo {
+            accessed_at: effective.accessed().ok(),
+            symlink_target,
+            is_readonly: effective.permissions().readonly(),
+        }
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Aplica alterações de permissões / atributos no item de forma assíncrona.
+pub async fn apply_entry_properties(path: PathBuf, patch: PropertyPatch) -> Result<(), FsError> {
+    tokio::task::spawn_blocking(move || platform::apply_entry_properties(&path, &patch))
+        .await
+        .map_err(|err| FsError::Io {
+            path: PathBuf::new(),
+            message: err.to_string(),
+        })?
+}
+
+/// Consulta metadados atualizados de um único arquivo/diretório no sistema local.
+pub async fn stat_entry(path: PathBuf) -> Result<FileEntry, FsError> {
+    let err_path = path.clone();
+    tokio::task::spawn_blocking(move || stat_entry_blocking(&path))
+        .await
+        .map_err(|err| FsError::Io {
+            path: err_path,
+            message: err.to_string(),
+        })?
+}
+
+fn stat_entry_blocking(entry_path: &Path) -> Result<FileEntry, FsError> {
+    let link_meta = std::fs::symlink_metadata(entry_path).map_err(|e| map_io_err(entry_path, e))?;
+    let name = entry_path
+        .file_name()
+        .map(|n| CompactString::from(n.to_string_lossy().as_ref()))
+        .unwrap_or_else(|| CompactString::from(entry_path.to_string_lossy().as_ref()));
+    let file_type = link_meta.file_type();
+    let (kind, effective_meta) = if file_type.is_symlink() {
+        match std::fs::metadata(entry_path) {
+            Ok(target_meta) => (
+                EntryKind::Symlink {
+                    target_is_dir: target_meta.is_dir(),
+                },
+                target_meta,
+            ),
+            Err(_) => (
+                EntryKind::Symlink {
+                    target_is_dir: false,
+                },
+                link_meta,
+            ),
+        }
+    } else if file_type.is_dir() {
+        (EntryKind::Directory, link_meta)
+    } else if file_type.is_file() {
+        (EntryKind::File, link_meta)
+    } else {
+        (EntryKind::Special, link_meta)
+    };
+    let size_bytes = effective_meta.len();
+    let modified_at = effective_meta.modified().ok();
+    let created_at = effective_meta.created().ok();
+    let (permissions, is_hidden) = platform::extract_permissions_and_hidden(&name, &effective_meta);
+    Ok(make_file_entry(
+        name,
+        entry_path.to_path_buf(),
+        kind,
+        size_bytes,
+        modified_at,
+        created_at,
+        permissions,
+        is_hidden,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -674,6 +770,48 @@ mod tests {
             assert!(space.is_some());
             #[cfg(not(target_os = "linux"))]
             let _ = space;
+        });
+    }
+
+    #[test]
+    fn reads_extra_info_and_updates_readonly_property() {
+        block_on(async {
+            let tmp = TestDir::new();
+            let file = tmp.0.join("sample.txt");
+            std::fs::write(&file, b"hello").expect("write file");
+
+            let extra = read_entry_extra_info(file.clone()).await;
+            assert!(extra.symlink_target.is_none());
+
+            apply_entry_properties(
+                file.clone(),
+                PropertyPatch {
+                    readonly: Some(true),
+                    hidden: None,
+                    posix_mode: None,
+                },
+            )
+            .await
+            .expect("set readonly");
+            let updated_extra = read_entry_extra_info(file.clone()).await;
+            assert!(updated_extra.is_readonly);
+
+            apply_entry_properties(
+                file.clone(),
+                PropertyPatch {
+                    readonly: Some(false),
+                    hidden: None,
+                    posix_mode: None,
+                },
+            )
+            .await
+            .expect("clear readonly");
+            let cleared_extra = read_entry_extra_info(file.clone()).await;
+            assert!(!cleared_extra.is_readonly);
+
+            let entry = stat_entry(file).await.expect("stat_entry");
+            assert_eq!(entry.name, "sample.txt");
+            assert_eq!(entry.size_bytes, 5);
         });
     }
 }

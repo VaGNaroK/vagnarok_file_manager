@@ -9,9 +9,10 @@ pub mod vfs;
 
 pub use domain::{
     ClipboardTransfer, ConflictPolicy, CopyMode, DirectorySnapshot, DirectoryTelemetry, DriveInfo,
-    DriveKind, EntryId, EntryKind, FileEntry, FolderSummary, JobProgress, JobState,
+    DriveKind, EntryExtraInfo, EntryId, EntryKind, FileEntry, FolderSummary, JobProgress, JobState,
     PermissionsMeta, RecursiveSize, SelectedFileTelemetry, SortDirection, SortField, SortSpec,
     UserPlaces, ViewMode, VolumeSpace, compute_entry_id, format_age, format_bytes,
+    format_grouped_u64, format_timestamp_short,
 };
 pub use i18n::Strings;
 pub use state::{

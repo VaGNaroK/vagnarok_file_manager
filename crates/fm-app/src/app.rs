@@ -6,9 +6,10 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use compact_str::CompactString;
 use fm_core::{
     AppConfig, ClipboardTransfer, ConflictPolicy, CopyMode, DIR_FILTER_SENTINEL, DirectorySnapshot,
-    DriveInfo, EntryId, FileEntry, FolderSummary, FsError, JobProgress, JobState, RecursiveSize,
-    SelectedFileTelemetry, SelectionModifiers, SortDirection, SortField, Strings, TabId, TabState,
-    ThemePreset, UserPlaces, VfsProvider, ViewMode, VolumeSpace, WindowDecorationsMode,
+    DriveInfo, EntryExtraInfo, EntryId, FileEntry, FolderSummary, FsError, JobProgress, JobState,
+    PermissionsMeta, RecursiveSize, SelectedFileTelemetry, SelectionModifiers, SortDirection,
+    SortField, Strings, TabId, TabState, ThemePreset, UserPlaces, VfsProvider, ViewMode,
+    VolumeSpace, WindowDecorationsMode,
 };
 use fm_fs::LocalFs;
 use fm_index::SearchHit;
@@ -63,12 +64,50 @@ pub struct ContextMenuState {
     pub position: Point,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PropertiesTab {
+    #[default]
+    General,
+    Security,
+    History,
+    Metadata,
+    Permissions,
+}
+
 #[derive(Debug, Clone)]
 pub struct PropertiesDialogState {
     pub entry: FileEntry,
     pub telemetry: Option<SelectedFileTelemetry>,
     pub recursive_size: Option<RecursiveSize>,
     pub size_loading: bool,
+    pub extra: Option<EntryExtraInfo>,
+    pub active_tab: PropertiesTab,
+    pub draft_name: String,
+    pub readonly_draft: bool,
+    pub initial_readonly: bool,
+    pub hidden_draft: bool,
+    pub initial_hidden: bool,
+    pub posix_mode_draft: Option<u32>,
+    pub initial_posix_mode: Option<u32>,
+    pub applying: bool,
+}
+
+impl PropertiesDialogState {
+    pub fn is_archive(&self) -> bool {
+        fm_fs::archive::split_archive_path(&self.entry.path).is_some()
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        if self.is_archive() {
+            return false;
+        }
+        let trimmed = self.draft_name.trim();
+        let name_changed = !trimmed.is_empty() && trimmed != self.entry.name.as_str();
+        name_changed
+            || self.readonly_draft != self.initial_readonly
+            || self.hidden_draft != self.initial_hidden
+            || self.posix_mode_draft != self.initial_posix_mode
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -302,6 +341,24 @@ pub enum Message {
         path: PathBuf,
         size: Option<RecursiveSize>,
     },
+    PropertiesExtraInfoReady {
+        path: PathBuf,
+        extra: EntryExtraInfo,
+    },
+    PropertiesSelectTab(PropertiesTab),
+    PropertiesNameChanged(String),
+    PropertiesToggleReadonly,
+    PropertiesToggleHidden,
+    PropertiesTogglePosixBit(u32),
+    PropertiesApply {
+        close_after: bool,
+    },
+    PropertiesApplied {
+        original_path: PathBuf,
+        close_after: bool,
+        result: Result<(FileEntry, EntryExtraInfo), FsError>,
+    },
+    PropertiesOpenDefault(PathBuf),
     OpenNewMenu,
     OpenFilterMenu,
     SetExtensionFilter(Option<CompactString>),
@@ -1831,15 +1888,15 @@ impl App {
                         .flatten()
                         .cloned()
                 });
+                let is_archive = fm_fs::archive::split_archive_path(&entry.path).is_some();
                 let needs_file_telemetry = !entry.kind.is_dir_like()
-                    && fm_fs::archive::split_archive_path(&entry.path).is_none()
+                    && !is_archive
                     && existing_telemetry
                         .as_ref()
                         .is_none_or(|tel| tel.mime_type.is_none() || tel.sha256_full.is_none());
                 let telemetry =
                     Some(existing_telemetry.unwrap_or_else(|| basic_file_telemetry(&entry)));
-                let size_loading = entry.kind.is_dir_like()
-                    && fm_fs::archive::split_archive_path(&entry.path).is_none();
+                let size_loading = entry.kind.is_dir_like() && !is_archive;
 
                 let mut tasks = Vec::new();
                 if size_loading {
@@ -1863,12 +1920,43 @@ impl App {
                     tasks.push(self.maybe_load_selection_telemetry(Some(&entry)));
                 }
 
+                if !is_archive {
+                    let extra_path = entry.path.clone();
+                    tasks.push(Task::perform(
+                        async move {
+                            let extra = fm_fs::read_entry_extra_info(extra_path.clone()).await;
+                            (extra_path, extra)
+                        },
+                        |(path, extra)| Message::PropertiesExtraInfoReady { path, extra },
+                    ));
+                }
+
+                let (initial_posix_mode, initial_readonly) = match entry.permissions {
+                    PermissionsMeta::PosixMode(mode) => {
+                        let perms = mode & 0o777;
+                        (Some(perms), (perms & 0o222) == 0)
+                    }
+                    PermissionsMeta::WinAttributes(attrs) => (None, (attrs & 0x1) != 0),
+                };
+                let draft_name = entry.name.to_string();
+                let initial_hidden = entry.is_hidden;
+
                 self.active_dialog =
                     Some(ActiveDialog::Properties(Box::new(PropertiesDialogState {
                         entry,
                         telemetry,
                         recursive_size: None,
                         size_loading,
+                        extra: None,
+                        active_tab: PropertiesTab::General,
+                        draft_name,
+                        readonly_draft: initial_readonly,
+                        initial_readonly,
+                        hidden_draft: initial_hidden,
+                        initial_hidden,
+                        posix_mode_draft: initial_posix_mode,
+                        initial_posix_mode,
+                        applying: false,
                     })));
                 Task::batch(tasks)
             }
@@ -1880,6 +1968,217 @@ impl App {
                     props.size_loading = false;
                 }
                 Task::none()
+            }
+            Message::PropertiesExtraInfoReady { path, extra } => {
+                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+                    && props.entry.path == path
+                {
+                    if props.readonly_draft == props.initial_readonly {
+                        props.initial_readonly = extra.is_readonly;
+                        props.readonly_draft = extra.is_readonly;
+                    }
+                    props.extra = Some(extra);
+                }
+                Task::none()
+            }
+            Message::PropertiesSelectTab(tab) => {
+                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog {
+                    props.active_tab = tab;
+                }
+                Task::none()
+            }
+            Message::PropertiesNameChanged(val) => {
+                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+                    && !props.is_archive()
+                    && !props.applying
+                {
+                    props.draft_name = val;
+                    if props.posix_mode_draft.is_some() {
+                        props.hidden_draft = props.draft_name.trim_start().starts_with('.');
+                    }
+                }
+                Task::none()
+            }
+            Message::PropertiesToggleReadonly => {
+                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+                    && !props.is_archive()
+                    && !props.applying
+                {
+                    props.readonly_draft = !props.readonly_draft;
+                    if let Some(mode) = &mut props.posix_mode_draft {
+                        if props.readonly_draft {
+                            *mode &= !0o222;
+                        } else {
+                            *mode |= 0o200;
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::PropertiesToggleHidden => {
+                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+                    && !props.is_archive()
+                    && !props.applying
+                {
+                    props.hidden_draft = !props.hidden_draft;
+                    if props.posix_mode_draft.is_some() {
+                        if props.hidden_draft {
+                            if !props.draft_name.starts_with('.') {
+                                props.draft_name.insert(0, '.');
+                            }
+                        } else {
+                            let stripped = props.draft_name.trim_start_matches('.').to_owned();
+                            if !stripped.is_empty() {
+                                props.draft_name = stripped;
+                            } else {
+                                props.hidden_draft = true;
+                            }
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::PropertiesTogglePosixBit(bit) => {
+                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+                    && !props.is_archive()
+                    && !props.applying
+                    && let Some(mode) = &mut props.posix_mode_draft
+                {
+                    *mode ^= bit;
+                    props.readonly_draft = (*mode & 0o222) == 0;
+                }
+                Task::none()
+            }
+            Message::PropertiesApply { close_after } => {
+                let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog else {
+                    return Task::none();
+                };
+                if props.applying {
+                    return Task::none();
+                }
+                if !props.is_dirty() {
+                    if close_after {
+                        return self.update(Message::CloseDialog);
+                    }
+                    return Task::none();
+                }
+                let trimmed = props.draft_name.trim().to_owned();
+                if trimmed.is_empty() || trimmed.contains(['/', '\\']) {
+                    self.status_notice = Some("Nome inválido.".to_owned());
+                    return Task::none();
+                }
+                let original_path = props.entry.path.clone();
+                let original_name = props.entry.name.to_string();
+                let readonly = (props.readonly_draft != props.initial_readonly)
+                    .then_some(props.readonly_draft);
+                let hidden =
+                    (props.hidden_draft != props.initial_hidden).then_some(props.hidden_draft);
+                let posix_mode = (props.posix_mode_draft != props.initial_posix_mode)
+                    .then_some(props.posix_mode_draft)
+                    .flatten();
+                props.applying = true;
+
+                let vfs = Arc::clone(&self.vfs);
+                Task::perform(
+                    async move {
+                        let target_path = if trimmed != original_name {
+                            let Some(parent) = original_path.parent() else {
+                                return (
+                                    original_path.clone(),
+                                    Err(FsError::Io {
+                                        path: original_path,
+                                        message: "caminho pai ausente".to_owned(),
+                                    }),
+                                );
+                            };
+                            let dst = parent.join(&trimmed);
+                            if let Err(err) = vfs.rename(&original_path, &dst).await {
+                                return (original_path, Err(err));
+                            }
+                            dst
+                        } else {
+                            original_path.clone()
+                        };
+
+                        if readonly.is_some() || hidden.is_some() || posix_mode.is_some() {
+                            let patch = fm_fs::PropertyPatch {
+                                readonly,
+                                hidden,
+                                posix_mode,
+                            };
+                            if let Err(err) =
+                                fm_fs::apply_entry_properties(target_path.clone(), patch).await
+                            {
+                                return (original_path, Err(err));
+                            }
+                        }
+
+                        match fm_fs::stat_entry(target_path.clone()).await {
+                            Ok(updated_entry) => {
+                                let updated_extra = fm_fs::read_entry_extra_info(target_path).await;
+                                (original_path, Ok((updated_entry, updated_extra)))
+                            }
+                            Err(err) => (original_path, Err(err)),
+                        }
+                    },
+                    move |(original_path, result)| Message::PropertiesApplied {
+                        original_path,
+                        close_after,
+                        result,
+                    },
+                )
+            }
+            Message::PropertiesApplied {
+                original_path,
+                close_after,
+                result,
+            } => match result {
+                Ok((updated_entry, updated_extra)) => {
+                    let select_path = updated_entry.path.clone();
+                    self.status_notice = Some(self.strings().prop_applied_notice.to_owned());
+                    if close_after {
+                        if let Some(cancel) = self.properties_cancel.take() {
+                            cancel.cancel();
+                        }
+                        self.active_dialog = None;
+                    } else if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+                        && props.entry.path == original_path
+                    {
+                        let (pm, ro) = match updated_entry.permissions {
+                            PermissionsMeta::PosixMode(mode) => {
+                                let perms = mode & 0o777;
+                                (Some(perms), updated_extra.is_readonly)
+                            }
+                            PermissionsMeta::WinAttributes(_) => (None, updated_extra.is_readonly),
+                        };
+                        props.draft_name = updated_entry.name.to_string();
+                        props.hidden_draft = updated_entry.is_hidden;
+                        props.initial_hidden = updated_entry.is_hidden;
+                        props.readonly_draft = ro;
+                        props.initial_readonly = ro;
+                        props.posix_mode_draft = pm;
+                        props.initial_posix_mode = pm;
+                        props.entry = updated_entry;
+                        props.extra = Some(updated_extra);
+                        props.applying = false;
+                    }
+                    self.pending_select_path = Some(select_path);
+                    self.update(Message::RefreshActiveTab)
+                }
+                Err(err) => {
+                    if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog {
+                        props.applying = false;
+                    }
+                    self.status_notice = Some(err.to_string());
+                    Task::none()
+                }
+            },
+            Message::PropertiesOpenDefault(path) => {
+                let vfs = Arc::clone(&self.vfs);
+                Task::perform(
+                    async move { vfs.open_default(&path).await },
+                    Message::OpenDefaultFinished,
+                )
             }
             Message::OpenFilterMenu => {
                 self.breadcrumb_menu = None;

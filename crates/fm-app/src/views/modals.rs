@@ -2,21 +2,27 @@ use std::path::Path;
 
 use fm_core::{
     ConflictPolicy, DIR_FILTER_SENTINEL, FileEntry, Language, PermissionsMeta, Strings,
-    ThemePreset, ViewMode, WindowDecorationsMode, format_age, format_bytes,
+    ThemePreset, ViewMode, WindowDecorationsMode, format_age, format_bytes, format_grouped_u64,
+    format_timestamp_short,
 };
 use fm_theme::{FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_SEMIBOLD, ThemePalette, styles};
 use iced::Alignment::Center;
 use iced::widget::{
     Space, button, column, container, mouse_area, row, scrollable, space, text, text_input,
 };
-use iced::{Element, Length, Padding};
+use iced::{Background, Border, Color, Element, Length, Padding, border::Radius};
 use lucide_icons::iced::{
-    icon_check_square, icon_clipboard_copy, icon_clipboard_paste, icon_copy, icon_external_link,
-    icon_eye, icon_file_plus, icon_filter, icon_folder, icon_folder_plus, icon_info, icon_pencil,
-    icon_rotate_ccw, icon_scissors, icon_terminal, icon_trash_2, icon_x,
+    icon_check, icon_check_square, icon_clipboard_copy, icon_clipboard_paste, icon_copy,
+    icon_external_link, icon_eye, icon_file_plus, icon_file_text, icon_filter, icon_folder,
+    icon_folder_plus, icon_hard_drive, icon_info, icon_lock, icon_pencil, icon_rotate_ccw,
+    icon_scissors, icon_settings, icon_shield_check, icon_sliders_horizontal, icon_terminal,
+    icon_trash_2, icon_x,
 };
 
-use crate::app::{ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, dialog_input_id};
+use crate::app::{
+    ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, PropertiesDialogState,
+    PropertiesTab, dialog_input_id,
+};
 use crate::views::{entry_icon, sanitize_single_line};
 
 pub fn dialog_modal<'a>(
@@ -269,182 +275,7 @@ pub fn dialog_modal<'a>(
             .spacing(12)
             .into()
         }
-        ActiveDialog::Properties(props) => {
-            let entry = &props.entry;
-            let pt_br = strings.close == "Fechar";
-            let (icon_widget, _) = entry_icon(entry, palette, 24.0);
-            let is_dir = entry.kind.is_dir_like();
-
-            let type_desc = if is_dir {
-                strings.directories_only.to_owned()
-            } else if let Some(ext) = &entry.extension {
-                format!(".{}", ext.to_ascii_lowercase())
-            } else {
-                strings.files_unit.to_owned()
-            };
-
-            let size_desc = if is_dir {
-                if let Some(rs) = props.recursive_size {
-                    let prefix = if rs.truncated { "≈ " } else { "" };
-                    format!(
-                        "{prefix}{} ({} B)",
-                        format_bytes(rs.total_bytes),
-                        rs.total_bytes
-                    )
-                } else if props.size_loading {
-                    strings.computing_hash.to_owned()
-                } else {
-                    "-".to_owned()
-                }
-            } else {
-                format!(
-                    "{} ({} bytes)",
-                    format_bytes(entry.size_bytes),
-                    entry.size_bytes
-                )
-            };
-
-            let perms_desc = match entry.permissions {
-                PermissionsMeta::PosixMode(mode) => format!(
-                    "{} ({:04o})",
-                    entry.permissions.format_compact(is_dir),
-                    mode & 0o7777
-                ),
-                PermissionsMeta::WinAttributes(attrs) => format!(
-                    "{} (0x{:08X})",
-                    entry.permissions.format_compact(is_dir),
-                    attrs
-                ),
-            };
-
-            let prop_row = |label: &'a str, val: String| {
-                row![
-                    text(label)
-                        .size(11)
-                        .font(FONT_MONO_BOLD)
-                        .color(palette.text_muted)
-                        .width(Length::Fixed(124.0)),
-                    text(val)
-                        .size(12)
-                        .font(FONT_MONO)
-                        .color(palette.text_primary)
-                        .width(Length::Fill),
-                ]
-                .spacing(10)
-                .align_y(Center)
-            };
-
-            let mut info_rows = column![
-                prop_row(
-                    strings.location_label,
-                    sanitize_single_line(&entry.path.to_string_lossy()),
-                ),
-                prop_row(strings.col_type, type_desc),
-                prop_row(strings.col_size, size_desc),
-                prop_row(strings.permissions, perms_desc),
-            ]
-            .spacing(8);
-
-            if let Some(modified) = entry.modified_at {
-                info_rows = info_rows.push(prop_row(
-                    strings.modified,
-                    format_age(modified, pt_br).to_string(),
-                ));
-            }
-            if let Some(created) = entry.created_at {
-                info_rows = info_rows.push(prop_row(
-                    strings.created,
-                    format_age(created, pt_br).to_string(),
-                ));
-            }
-
-            let mut sha_full_opt: Option<String> = None;
-            if let Some(tel) = &props.telemetry {
-                if let Some(mime) = &tel.mime_type {
-                    info_rows = info_rows.push(prop_row(strings.mime_type, mime.to_string()));
-                }
-                if let Some(git) = &tel.git_status {
-                    info_rows = info_rows.push(prop_row(strings.git_status_label, git.to_string()));
-                }
-                if let Some(full) = &tel.sha256_full {
-                    let full_s = full.to_string();
-                    sha_full_opt = Some(full_s.clone());
-                    info_rows = info_rows.push(prop_row(strings.checksum, full_s));
-                } else if !is_dir {
-                    info_rows = info_rows.push(prop_row(
-                        strings.checksum,
-                        strings.computing_hash.to_owned(),
-                    ));
-                }
-            }
-
-            let mut footer_btns = row![
-                button(
-                    row![
-                        icon_clipboard_copy().size(13),
-                        text(strings.copy_path).size(12),
-                    ]
-                    .spacing(6)
-                    .align_y(Center),
-                )
-                .padding([6, 12])
-                .style(styles::pill_secondary_button(palette))
-                .on_press(Message::CopyPath(entry.path.clone())),
-            ]
-            .spacing(8)
-            .align_y(Center);
-
-            if let Some(hash) = sha_full_opt {
-                footer_btns = footer_btns.push(
-                    button(
-                        row![
-                            icon_clipboard_copy().size(13),
-                            text(strings.copy_sha256).size(12),
-                        ]
-                        .spacing(6)
-                        .align_y(Center),
-                    )
-                    .padding([6, 12])
-                    .style(styles::pill_secondary_button(palette))
-                    .on_press(Message::CopyText(hash, strings.hash_copied.to_owned())),
-                );
-            }
-
-            footer_btns = footer_btns.push(space::horizontal()).push(
-                button(text(strings.close).size(12).font(FONT_UI_SEMIBOLD))
-                    .padding([6, 16])
-                    .style(styles::pill_primary_button(palette))
-                    .on_press(Message::CloseDialog),
-            );
-
-            column![
-                row![
-                    icon_widget,
-                    text(sanitize_single_line(entry.name.as_str()))
-                        .size(16)
-                        .font(FONT_UI_SEMIBOLD)
-                        .color(palette.text_primary),
-                    space::horizontal(),
-                    button(icon_x().size(14))
-                        .padding([4, 6])
-                        .style(styles::ghost_button(palette, 6.0))
-                        .on_press(Message::CloseDialog),
-                ]
-                .spacing(10)
-                .align_y(Center),
-                container(info_rows)
-                    .width(Length::Fill)
-                    .padding(12)
-                    .style(move |_| styles::panel_surface(
-                        palette.surface_low,
-                        palette.border,
-                        8.0
-                    )),
-                footer_btns,
-            ]
-            .spacing(12)
-            .into()
-        }
+        ActiveDialog::Properties(props) => properties_dialog_view(props, palette, strings),
         ActiveDialog::Conflict {
             mode: _,
             sources,
@@ -541,7 +372,7 @@ pub fn dialog_modal<'a>(
     };
 
     let modal_width = if matches!(dialog, ActiveDialog::Properties(_)) {
-        640.0
+        700.0
     } else {
         460.0
     };
@@ -556,6 +387,1185 @@ pub fn dialog_modal<'a>(
         .align_y(Center)
         .style(move |_| styles::modal_backdrop()(&iced::Theme::Light))
         .into()
+}
+
+fn properties_dialog_view<'a>(
+    props: &'a PropertiesDialogState,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let entry = &props.entry;
+    let pt_br = strings.close == "Fechar";
+    let is_dir = entry.kind.is_dir_like();
+    let is_archive = props.is_archive();
+    let dirty = props.is_dirty();
+
+    // 1. Cabeçalho
+    let header_title = format!(
+        "{}{}",
+        strings.properties_header_prefix,
+        sanitize_single_line(entry.name.as_str())
+    );
+    let header = row![
+        container(icon_info().size(15).color(palette.accent_primary))
+            .padding(6)
+            .style(move |_| styles::panel_surface(
+                palette.accent_surface,
+                palette.accent_border,
+                8.0
+            )),
+        container(
+            text(header_title)
+                .size(15)
+                .font(FONT_UI_SEMIBOLD)
+                .color(palette.text_primary)
+                .wrapping(text::Wrapping::None),
+        )
+        .width(Length::Fill)
+        .clip(true),
+        button(icon_x().size(14))
+            .padding([5, 7])
+            .style(styles::ghost_button(palette, 6.0))
+            .on_press(Message::CloseDialog),
+    ]
+    .spacing(10)
+    .align_y(Center);
+
+    // 2. Barra de abas (Geral | Segurança | Histórico | Metadados | Permissões)
+    let tab_item = |tab: PropertiesTab, label: &'a str| {
+        let active = props.active_tab == tab;
+        let underline_color = if active {
+            palette.accent_primary
+        } else {
+            Color::TRANSPARENT
+        };
+        let label_color = if active {
+            palette.text_primary
+        } else {
+            palette.text_muted
+        };
+        button(
+            column![
+                container(
+                    text(label)
+                        .size(12)
+                        .font(if active { FONT_UI_SEMIBOLD } else { FONT_UI })
+                        .color(label_color)
+                        .wrapping(text::Wrapping::None),
+                )
+                .width(Length::Fill)
+                .align_x(Center)
+                .padding([6, 4]),
+                container(Space::new().width(Length::Fill).height(2)).style(move |_| {
+                    container::Style {
+                        background: Some(Background::Color(underline_color)),
+                        ..Default::default()
+                    }
+                }),
+            ]
+            .spacing(2),
+        )
+        .width(Length::Fill)
+        .padding(0)
+        .style(move |_, status| {
+            let bg = match status {
+                button::Status::Hovered | button::Status::Pressed if !active => {
+                    Some(Background::Color(palette.surface_low))
+                }
+                _ => None,
+            };
+            button::Style {
+                background: bg,
+                text_color: label_color,
+                border: Border::default(),
+                ..Default::default()
+            }
+        })
+        .on_press(Message::PropertiesSelectTab(tab))
+    };
+
+    let tab_bar = column![
+        row![
+            tab_item(PropertiesTab::General, strings.prop_tab_general),
+            tab_item(PropertiesTab::Security, strings.prop_tab_security),
+            tab_item(PropertiesTab::History, strings.prop_tab_history),
+            tab_item(PropertiesTab::Metadata, strings.prop_tab_metadata),
+            tab_item(PropertiesTab::Permissions, strings.prop_tab_permissions),
+        ]
+        .spacing(4)
+        .width(Length::Fill),
+        container(Space::new().width(Length::Fill).height(1)).style(styles::divider_line(palette)),
+    ];
+
+    // 3. Conteúdo da aba ativa
+    let tab_body: Element<'a, Message> = match props.active_tab {
+        PropertiesTab::General => properties_general_tab(props, palette, strings, pt_br, is_dir),
+        PropertiesTab::Security => properties_security_tab(props, palette, strings, pt_br, is_dir),
+        PropertiesTab::History => properties_history_tab(props, palette, strings, pt_br),
+        PropertiesTab::Metadata => properties_metadata_tab(props, palette, strings, pt_br, is_dir),
+        PropertiesTab::Permissions => properties_permissions_tab(props, palette, strings, pt_br),
+    };
+
+    // 4. Rodapé (Confirmar | Cancelar | Aplicar)
+    let status_hint: Element<'a, Message> = if is_archive {
+        text(strings.prop_archive_notice)
+            .size(11)
+            .font(FONT_UI)
+            .color(palette.text_muted)
+            .into()
+    } else if dirty {
+        text(if pt_br {
+            "Alterações pendentes"
+        } else {
+            "Pending changes"
+        })
+        .size(11)
+        .font(FONT_UI_SEMIBOLD)
+        .color(palette.accent_primary)
+        .into()
+    } else {
+        Space::new().width(0).height(0).into()
+    };
+
+    let confirm_btn = button(text(strings.prop_confirm).size(12).font(FONT_UI_SEMIBOLD))
+        .padding([7, 16])
+        .style(styles::pill_primary_button(palette))
+        .on_press_maybe(
+            (!props.applying).then_some(Message::PropertiesApply { close_after: true }),
+        );
+
+    let cancel_btn = button(text(strings.cancel).size(12).font(FONT_UI))
+        .padding([7, 16])
+        .style(styles::pill_secondary_button(palette))
+        .on_press(Message::CloseDialog);
+
+    let apply_active = dirty && !props.applying;
+    let apply_btn = button(text(strings.prop_apply).size(12).font(if apply_active {
+        FONT_UI_SEMIBOLD
+    } else {
+        FONT_UI
+    }))
+    .padding([7, 16])
+    .style(move |theme, status| {
+        if apply_active {
+            styles::pill_primary_button(palette)(theme, status)
+        } else {
+            button::Style {
+                background: Some(Background::Color(palette.surface_high)),
+                text_color: palette.text_muted,
+                border: Border {
+                    color: palette.border,
+                    width: 1.0,
+                    radius: Radius::from(9999.0),
+                },
+                ..Default::default()
+            }
+        }
+    })
+    .on_press_maybe(apply_active.then_some(Message::PropertiesApply { close_after: false }));
+
+    let footer = row![
+        status_hint,
+        space::horizontal(),
+        row![confirm_btn, cancel_btn, apply_btn].spacing(8),
+    ]
+    .align_y(Center);
+
+    column![header, tab_bar, tab_body, footer]
+        .spacing(12)
+        .into()
+}
+
+fn properties_general_tab<'a>(
+    props: &'a PropertiesDialogState,
+    palette: ThemePalette,
+    strings: Strings,
+    pt_br: bool,
+    is_dir: bool,
+) -> Element<'a, Message> {
+    let entry = &props.entry;
+    let is_archive = props.is_archive();
+    let (hero_icon, _) = entry_icon(entry, palette, 28.0);
+
+    // Caixa Hero (ícone 52x52 + campo editável do nome)
+    let icon_tile = container(hero_icon)
+        .width(Length::Fixed(52.0))
+        .height(Length::Fixed(52.0))
+        .align_x(Center)
+        .align_y(Center)
+        .style(move |_| styles::panel_surface(palette.accent_surface, palette.accent_border, 10.0));
+
+    let name_control: Element<'a, Message> = if is_archive {
+        text(sanitize_single_line(entry.name.as_str()))
+            .size(16)
+            .font(FONT_UI_SEMIBOLD)
+            .color(palette.text_primary)
+            .wrapping(text::Wrapping::None)
+            .into()
+    } else {
+        text_input("", &props.draft_name)
+            .size(15)
+            .padding([8, 12])
+            .style(move |_, status| {
+                let border_color = match status {
+                    text_input::Status::Focused { .. } => palette.accent_primary,
+                    text_input::Status::Hovered => palette.border_strong,
+                    _ => Color::TRANSPARENT,
+                };
+                text_input::Style {
+                    background: Background::Color(palette.surface_lowest),
+                    border: Border {
+                        color: border_color,
+                        width: 1.0,
+                        radius: Radius::from(8.0),
+                    },
+                    icon: palette.text_muted,
+                    placeholder: palette.text_muted,
+                    value: palette.text_primary,
+                    selection: palette.accent_surface,
+                }
+            })
+            .on_input(Message::PropertiesNameChanged)
+            .on_submit(Message::PropertiesApply { close_after: true })
+            .into()
+    };
+
+    let hero_box = container(
+        row![icon_tile, container(name_control).width(Length::Fill),]
+            .spacing(12)
+            .align_y(Center),
+    )
+    .width(Length::Fill)
+    .padding(10)
+    .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 12.0));
+
+    // Grade de metadados em 2 colunas
+    let kind_desc = describe_entry_kind(entry, pt_br);
+    let mime_desc = props
+        .telemetry
+        .as_ref()
+        .and_then(|t| t.mime_type.as_ref())
+        .map(|m| m.to_string())
+        .unwrap_or_else(|| {
+            if is_dir {
+                "inode/directory".to_owned()
+            } else if let Some(ext) = &entry.extension {
+                format!(".{}", ext.to_ascii_lowercase())
+            } else {
+                "application/octet-stream".to_owned()
+            }
+        });
+
+    let parent_str =
+        sanitize_single_line(&entry.path.parent().unwrap_or(&entry.path).to_string_lossy());
+
+    let (size_short, size_exact, size_ratio): (String, String, f32) = if is_dir {
+        if props.size_loading {
+            (
+                if pt_br {
+                    "Calculando...".to_owned()
+                } else {
+                    "Calculating...".to_owned()
+                },
+                String::new(),
+                0.35,
+            )
+        } else if let Some(sz) = props.recursive_size {
+            let prefix = if sz.truncated { ">" } else { "" };
+            let short = format!("{prefix}{}", format_bytes(sz.total_bytes));
+            let exact = format!("({} bytes)", format_grouped_u64(sz.total_bytes, pt_br));
+            (short, exact, size_bar_ratio(sz.total_bytes))
+        } else {
+            ("—".to_owned(), String::new(), 0.0)
+        }
+    } else {
+        (
+            format_bytes(entry.size_bytes).to_string(),
+            format!("({} bytes)", format_grouped_u64(entry.size_bytes, pt_br)),
+            size_bar_ratio(entry.size_bytes),
+        )
+    };
+
+    let col_kind = row![
+        icon_file_text().size(16).color(palette.text_muted),
+        column![
+            text(strings.prop_kind_label)
+                .size(11)
+                .font(FONT_UI)
+                .color(palette.text_muted),
+            text(kind_desc)
+                .size(13)
+                .font(FONT_UI_SEMIBOLD)
+                .color(palette.text_primary)
+                .wrapping(text::Wrapping::None),
+        ]
+        .spacing(2)
+        .width(Length::Fill),
+    ]
+    .spacing(10)
+    .align_y(Center)
+    .width(Length::FillPortion(1));
+
+    let col_system = row![
+        icon_sliders_horizontal().size(16).color(palette.text_muted),
+        container(
+            column![
+                text(strings.prop_system_mime_label)
+                    .size(11)
+                    .font(FONT_UI)
+                    .color(palette.text_muted),
+                text(sanitize_single_line(&mime_desc))
+                    .size(13)
+                    .font(FONT_UI_SEMIBOLD)
+                    .color(palette.text_primary)
+                    .wrapping(text::Wrapping::None),
+            ]
+            .spacing(2),
+        )
+        .width(Length::Fill)
+        .clip(true),
+        button(icon_external_link().size(13))
+            .padding([6, 8])
+            .style(styles::pill_secondary_button(palette))
+            .on_press_maybe(
+                (!is_archive).then(|| Message::PropertiesOpenDefault(entry.path.clone()))
+            ),
+    ]
+    .spacing(10)
+    .align_y(Center)
+    .width(Length::FillPortion(1));
+
+    let col_path = row![
+        icon_folder().size(16).color(palette.text_muted),
+        container(
+            column![
+                text(strings.location_label)
+                    .size(11)
+                    .font(FONT_UI)
+                    .color(palette.text_muted),
+                text(parent_str)
+                    .size(12)
+                    .font(FONT_MONO)
+                    .color(palette.text_primary)
+                    .wrapping(text::Wrapping::None),
+            ]
+            .spacing(2),
+        )
+        .width(Length::Fill)
+        .clip(true),
+        button(icon_copy().size(13))
+            .padding([6, 8])
+            .style(styles::ghost_button(palette, 6.0))
+            .on_press(Message::CopyPath(entry.path.clone())),
+    ]
+    .spacing(10)
+    .align_y(Center)
+    .width(Length::FillPortion(1));
+
+    let filled_units = (size_ratio * 100.0).round() as u16;
+    let empty_units = 100u16.saturating_sub(filled_units);
+    let mut bar_children: Vec<Element<'a, Message>> = Vec::new();
+    if filled_units > 0 {
+        bar_children.push(
+            container(Space::new().width(Length::Fill).height(6))
+                .width(Length::FillPortion(filled_units))
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(palette.accent_primary)),
+                    border: Border {
+                        radius: Radius::from(3.0),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .into(),
+        );
+    }
+    if empty_units > 0 {
+        bar_children.push(
+            Space::new()
+                .width(Length::FillPortion(empty_units))
+                .height(6)
+                .into(),
+        );
+    }
+    let size_bar = container(row(bar_children).height(Length::Fixed(6.0)))
+        .width(Length::Fill)
+        .height(Length::Fixed(6.0))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(palette.surface_high)),
+            border: Border {
+                radius: Radius::from(3.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+    let col_size = row![
+        icon_hard_drive().size(16).color(palette.text_muted),
+        column![
+            row![
+                text(strings.col_size)
+                    .size(11)
+                    .font(FONT_UI)
+                    .color(palette.text_muted),
+                size_bar,
+            ]
+            .spacing(10)
+            .align_y(Center),
+            row![
+                text(size_short)
+                    .size(13)
+                    .font(FONT_UI_SEMIBOLD)
+                    .color(palette.text_primary),
+                space::horizontal(),
+                text(size_exact)
+                    .size(11)
+                    .font(FONT_MONO)
+                    .color(palette.text_muted),
+            ]
+            .align_y(Center),
+        ]
+        .spacing(4)
+        .width(Length::Fill),
+    ]
+    .spacing(10)
+    .align_y(Center)
+    .width(Length::FillPortion(1));
+
+    let meta_grid = container(
+        column![
+            row![col_kind, col_system].spacing(20).align_y(Center),
+            row![col_path, col_size].spacing(20).align_y(Center),
+        ]
+        .spacing(14),
+    )
+    .width(Length::Fill)
+    .padding([4, 6]);
+
+    // Linha do tempo de timestamps (3 nós verticais)
+    let created_val = entry
+        .created_at
+        .map(|t| format_timestamp_short(t, pt_br).to_string())
+        .unwrap_or_else(|| "—".to_owned());
+    let modified_val = entry
+        .modified_at
+        .map(|t| format_timestamp_short(t, pt_br).to_string())
+        .unwrap_or_else(|| "—".to_owned());
+    let accessed_val = props
+        .extra
+        .as_ref()
+        .and_then(|e| e.accessed_at)
+        .map(|t| format_timestamp_short(t, pt_br).to_string())
+        .unwrap_or_else(|| "—".to_owned());
+
+    let timeline_node =
+        |dot_color: Color, label: &'a str, val: String, connect_top: bool, connect_bottom: bool| {
+            let top_seg =
+                container(Space::new().width(2).height(7)).style(move |_| container::Style {
+                    background: if connect_top {
+                        Some(Background::Color(palette.border_strong))
+                    } else {
+                        None
+                    },
+                    ..Default::default()
+                });
+            let bottom_seg =
+                container(Space::new().width(2).height(7)).style(move |_| container::Style {
+                    background: if connect_bottom {
+                        Some(Background::Color(palette.border_strong))
+                    } else {
+                        None
+                    },
+                    ..Default::default()
+                });
+            let dot = container(Space::new().width(8).height(8)).style(move |_| container::Style {
+                background: Some(Background::Color(dot_color)),
+                border: Border {
+                    radius: Radius::from(4.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            row![
+                column![top_seg, dot, bottom_seg]
+                    .width(Length::Fixed(14.0))
+                    .align_x(Center),
+                text(format!("{label}: "))
+                    .size(12)
+                    .font(FONT_UI)
+                    .color(palette.text_muted),
+                text(val)
+                    .size(12)
+                    .font(FONT_UI_SEMIBOLD)
+                    .color(palette.text_primary),
+            ]
+            .spacing(8)
+            .align_y(Center)
+        };
+
+    let timeline = container(
+        column![
+            timeline_node(
+                palette.accent_primary,
+                strings.created,
+                created_val,
+                false,
+                true,
+            ),
+            timeline_node(
+                palette.accent_tertiary,
+                strings.modified,
+                modified_val,
+                true,
+                true,
+            ),
+            timeline_node(
+                palette.status_success,
+                strings.prop_accessed_label,
+                accessed_val,
+                true,
+                false,
+            ),
+        ]
+        .spacing(0),
+    )
+    .width(Length::Fill)
+    .padding([2, 8]);
+
+    // Propriedades Rápidas + Configurações Avançadas
+    let quick_bar = row![
+        text(strings.prop_quick_props)
+            .size(12)
+            .font(FONT_UI)
+            .color(palette.text_muted),
+        quick_toggle_pill(
+            strings.prop_readonly,
+            props.readonly_draft,
+            !is_archive && !props.applying,
+            palette,
+            Message::PropertiesToggleReadonly,
+        ),
+        quick_toggle_pill(
+            strings.prop_hidden,
+            props.hidden_draft,
+            !is_archive && !props.applying,
+            palette,
+            Message::PropertiesToggleHidden,
+        ),
+        space::horizontal(),
+        button(
+            row![
+                icon_settings().size(13),
+                text(strings.prop_advanced_settings).size(12),
+            ]
+            .spacing(6)
+            .align_y(Center),
+        )
+        .padding([6, 12])
+        .style(styles::pill_secondary_button(palette))
+        .on_press(Message::PropertiesSelectTab(PropertiesTab::Permissions)),
+    ]
+    .spacing(10)
+    .align_y(Center);
+
+    column![
+        hero_box,
+        meta_grid,
+        container(Space::new().width(Length::Fill).height(1)).style(styles::divider_line(palette)),
+        timeline,
+        container(Space::new().width(Length::Fill).height(1)).style(styles::divider_line(palette)),
+        quick_bar,
+    ]
+    .spacing(10)
+    .into()
+}
+
+fn quick_toggle_pill<'a>(
+    label: &'a str,
+    checked: bool,
+    enabled: bool,
+    palette: ThemePalette,
+    msg: Message,
+) -> Element<'a, Message> {
+    let track_bg = if checked {
+        palette.accent_primary
+    } else {
+        palette.surface_high
+    };
+    let thumb_color = if checked {
+        palette.on_accent
+    } else {
+        palette.text_muted
+    };
+    let left_pad = if checked { 12 } else { 2 };
+    let switch_track = container(
+        row![
+            Space::new().width(Length::Fixed(left_pad as f32)),
+            container(Space::new().width(10).height(10)).style(move |_| container::Style {
+                background: Some(Background::Color(thumb_color)),
+                border: Border {
+                    radius: Radius::from(5.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        ]
+        .align_y(Center),
+    )
+    .width(Length::Fixed(26.0))
+    .height(Length::Fixed(16.0))
+    .padding(2)
+    .style(move |_| container::Style {
+        background: Some(Background::Color(track_bg)),
+        border: Border {
+            color: if checked {
+                palette.accent_primary
+            } else {
+                palette.border_strong
+            },
+            width: 1.0,
+            radius: Radius::from(8.0),
+        },
+        ..Default::default()
+    });
+
+    button(
+        row![
+            switch_track,
+            text(label)
+                .size(12)
+                .font(if checked { FONT_UI_SEMIBOLD } else { FONT_UI })
+                .color(if checked {
+                    palette.text_primary
+                } else {
+                    palette.text_secondary
+                }),
+        ]
+        .spacing(8)
+        .align_y(Center),
+    )
+    .padding([5, 10])
+    .style(move |_, status| {
+        let bg = if checked {
+            palette.accent_surface
+        } else {
+            match status {
+                button::Status::Hovered | button::Status::Pressed if enabled => {
+                    palette.surface_high
+                }
+                _ => palette.surface_low,
+            }
+        };
+        button::Style {
+            background: Some(Background::Color(bg)),
+            text_color: palette.text_primary,
+            border: Border {
+                color: if checked {
+                    palette.accent_border
+                } else {
+                    palette.border
+                },
+                width: 1.0,
+                radius: Radius::from(9999.0),
+            },
+            ..Default::default()
+        }
+    })
+    .on_press_maybe(enabled.then_some(msg))
+    .into()
+}
+
+fn properties_security_tab<'a>(
+    props: &'a PropertiesDialogState,
+    palette: ThemePalette,
+    strings: Strings,
+    pt_br: bool,
+    is_dir: bool,
+) -> Element<'a, Message> {
+    let entry = &props.entry;
+    let full_sha = props
+        .telemetry
+        .as_ref()
+        .and_then(|t| t.sha256_full.as_ref())
+        .map(|s| s.to_string());
+    let sha_text = full_sha.clone().unwrap_or_else(|| {
+        if is_dir {
+            if pt_br {
+                "Não aplicável a pastas".to_owned()
+            } else {
+                "Not applicable to folders".to_owned()
+            }
+        } else if pt_br {
+            "Calculando hash SHA-256...".to_owned()
+        } else {
+            "Computing SHA-256 hash...".to_owned()
+        }
+    });
+
+    let mut sha_card = column![
+        row![
+            icon_shield_check().size(15).color(palette.accent_primary),
+            text("SHA-256")
+                .size(13)
+                .font(FONT_UI_SEMIBOLD)
+                .color(palette.text_primary),
+        ]
+        .spacing(8)
+        .align_y(Center),
+        container(
+            text(sha_text)
+                .size(12)
+                .font(FONT_MONO)
+                .color(palette.text_secondary),
+        )
+        .width(Length::Fill)
+        .padding(10)
+        .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 8.0)),
+    ]
+    .spacing(8);
+
+    if let Some(sha) = full_sha {
+        let notice = strings.hash_copied.to_owned();
+        sha_card = sha_card.push(
+            row![
+                space::horizontal(),
+                button(
+                    row![icon_copy().size(13), text(strings.copy_sha256).size(12)]
+                        .spacing(6)
+                        .align_y(Center),
+                )
+                .padding([6, 12])
+                .style(styles::pill_secondary_button(palette))
+                .on_press(Message::CopyText(sha, notice)),
+            ]
+            .align_y(Center),
+        );
+    }
+
+    let symlink_row: Option<Element<'a, Message>> = props
+        .extra
+        .as_ref()
+        .and_then(|e| e.symlink_target.as_ref())
+        .map(|target| {
+            prop_kv_row(
+                strings.prop_symlink_target,
+                target.to_string_lossy().into_owned(),
+                true,
+                palette,
+            )
+        });
+
+    let yes = if pt_br { "Sim" } else { "Yes" };
+    let no = if pt_br { "Não" } else { "No" };
+    let mut flags_col = column![
+        prop_kv_row(
+            strings.prop_readonly,
+            if props.readonly_draft { yes } else { no }.to_owned(),
+            false,
+            palette,
+        ),
+        prop_kv_row(
+            strings.prop_hidden,
+            if props.hidden_draft { yes } else { no }.to_owned(),
+            false,
+            palette,
+        ),
+        prop_kv_row(
+            strings.permissions,
+            entry.permissions.format_compact(is_dir).to_string(),
+            true,
+            palette,
+        ),
+    ]
+    .spacing(8);
+
+    if let Some(sr) = symlink_row {
+        flags_col = flags_col.push(sr);
+    }
+
+    column![
+        container(sha_card)
+            .width(Length::Fill)
+            .padding(12)
+            .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0)),
+        container(flags_col)
+            .width(Length::Fill)
+            .padding(12)
+            .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0)),
+    ]
+    .spacing(10)
+    .into()
+}
+
+fn properties_history_tab<'a>(
+    props: &'a PropertiesDialogState,
+    palette: ThemePalette,
+    strings: Strings,
+    pt_br: bool,
+) -> Element<'a, Message> {
+    let entry = &props.entry;
+    let format_ts = |opt: Option<std::time::SystemTime>| -> String {
+        opt.map(|t| {
+            format!(
+                "{} ({})",
+                format_timestamp_short(t, pt_br),
+                format_age(t, pt_br)
+            )
+        })
+        .unwrap_or_else(|| "—".to_owned())
+    };
+    let git_val = props
+        .telemetry
+        .as_ref()
+        .and_then(|t| t.git_status.as_ref())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "—".to_owned());
+
+    container(
+        column![
+            prop_kv_row(strings.created, format_ts(entry.created_at), false, palette),
+            prop_kv_row(
+                strings.modified,
+                format_ts(entry.modified_at),
+                false,
+                palette,
+            ),
+            prop_kv_row(
+                strings.prop_accessed_label,
+                format_ts(props.extra.as_ref().and_then(|e| e.accessed_at)),
+                false,
+                palette,
+            ),
+            prop_kv_row("Git", git_val, true, palette),
+        ]
+        .spacing(10),
+    )
+    .width(Length::Fill)
+    .padding(14)
+    .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0))
+    .into()
+}
+
+fn properties_metadata_tab<'a>(
+    props: &'a PropertiesDialogState,
+    palette: ThemePalette,
+    strings: Strings,
+    pt_br: bool,
+    is_dir: bool,
+) -> Element<'a, Message> {
+    let entry = &props.entry;
+    let ext = entry
+        .extension
+        .as_ref()
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "—".to_owned());
+    let mime = props
+        .telemetry
+        .as_ref()
+        .and_then(|t| t.mime_type.as_ref())
+        .map(|m| m.to_string())
+        .unwrap_or_else(|| "—".to_owned());
+    let size_line = if is_dir {
+        props
+            .recursive_size
+            .map(|sz| {
+                format!(
+                    "{}{} ({} bytes)",
+                    if sz.truncated { ">" } else { "" },
+                    format_bytes(sz.total_bytes),
+                    format_grouped_u64(sz.total_bytes, pt_br)
+                )
+            })
+            .unwrap_or_else(|| "—".to_owned())
+    } else {
+        format!(
+            "{} ({} bytes)",
+            format_bytes(entry.size_bytes),
+            format_grouped_u64(entry.size_bytes, pt_br)
+        )
+    };
+
+    container(
+        column![
+            prop_kv_row(
+                if pt_br { "Nome" } else { "Name" },
+                entry.name.to_string(),
+                false,
+                palette,
+            ),
+            row![
+                prop_kv_row(
+                    strings.location_label,
+                    entry.path.to_string_lossy().into_owned(),
+                    true,
+                    palette,
+                ),
+                button(icon_copy().size(13))
+                    .padding([5, 7])
+                    .style(styles::ghost_button(palette, 6.0))
+                    .on_press(Message::CopyPath(entry.path.clone())),
+            ]
+            .spacing(8)
+            .align_y(Center),
+            prop_kv_row(
+                if pt_br { "Extensão" } else { "Extension" },
+                ext,
+                true,
+                palette,
+            ),
+            prop_kv_row("MIME", mime, true, palette),
+            prop_kv_row(strings.col_size, size_line, true, palette),
+            prop_kv_row("EntryId", format!("0x{:016X}", entry.id.0), true, palette),
+        ]
+        .spacing(10),
+    )
+    .width(Length::Fill)
+    .padding(14)
+    .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0))
+    .into()
+}
+
+fn properties_permissions_tab<'a>(
+    props: &'a PropertiesDialogState,
+    palette: ThemePalette,
+    strings: Strings,
+    pt_br: bool,
+) -> Element<'a, Message> {
+    let is_archive = props.is_archive();
+    let is_dir = props.entry.kind.is_dir_like();
+    let editable = !is_archive && !props.applying;
+
+    if let Some(mode) = props.posix_mode_draft {
+        let octal_label = format!("0o{mode:03o}");
+        let symbolic = PermissionsMeta::PosixMode(mode)
+            .format_compact(is_dir)
+            .to_string();
+
+        let bit_btn = |title: &'static str, bit: u32| {
+            let active = (mode & bit) != 0;
+            button(
+                row![
+                    container(if active {
+                        Element::from(icon_check().size(11).color(palette.on_accent))
+                    } else {
+                        Space::new().width(11).height(11).into()
+                    })
+                    .width(Length::Fixed(18.0))
+                    .height(Length::Fixed(18.0))
+                    .align_x(Center)
+                    .align_y(Center)
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(if active {
+                            palette.accent_primary
+                        } else {
+                            palette.surface_lowest
+                        })),
+                        border: Border {
+                            color: if active {
+                                palette.accent_primary
+                            } else {
+                                palette.border_strong
+                            },
+                            width: 1.0,
+                            radius: Radius::from(4.0),
+                        },
+                        ..Default::default()
+                    }),
+                    text(title)
+                        .size(12)
+                        .font(FONT_UI)
+                        .color(palette.text_primary),
+                ]
+                .spacing(6)
+                .align_y(Center),
+            )
+            .padding([5, 10])
+            .style(styles::ghost_button(palette, 6.0))
+            .on_press_maybe(editable.then_some(Message::PropertiesTogglePosixBit(bit)))
+        };
+
+        let r_lbl = if pt_br { "Leitura" } else { "Read" };
+        let w_lbl = if pt_br { "Escrita" } else { "Write" };
+        let x_lbl = if pt_br { "Execução" } else { "Execute" };
+
+        let perm_group = |title: &'a str, r: u32, w: u32, x: u32| {
+            row![
+                text(title)
+                    .size(12)
+                    .font(FONT_UI_SEMIBOLD)
+                    .color(palette.text_secondary)
+                    .width(Length::Fixed(110.0)),
+                bit_btn(r_lbl, r),
+                bit_btn(w_lbl, w),
+                bit_btn(x_lbl, x),
+            ]
+            .spacing(10)
+            .align_y(Center)
+        };
+
+        return column![
+            container(
+                row![
+                    icon_lock().size(15).color(palette.accent_primary),
+                    text(strings.prop_octal_mode)
+                        .size(12)
+                        .font(FONT_UI)
+                        .color(palette.text_muted),
+                    text(octal_label)
+                        .size(13)
+                        .font(FONT_MONO_BOLD)
+                        .color(palette.text_primary),
+                    space::horizontal(),
+                    text(symbolic)
+                        .size(13)
+                        .font(FONT_MONO)
+                        .color(palette.accent_primary),
+                ]
+                .spacing(10)
+                .align_y(Center),
+            )
+            .width(Length::Fill)
+            .padding(12)
+            .style(move |_| styles::panel_surface(
+                palette.surface_low,
+                palette.border,
+                10.0
+            )),
+            container(
+                column![
+                    perm_group(strings.prop_owner, 0o400, 0o200, 0o100),
+                    perm_group(strings.prop_group, 0o040, 0o020, 0o010),
+                    perm_group(strings.prop_others, 0o004, 0o002, 0o001),
+                ]
+                .spacing(8),
+            )
+            .width(Length::Fill)
+            .padding(12)
+            .style(move |_| styles::panel_surface(
+                palette.surface_low,
+                palette.border,
+                10.0
+            )),
+        ]
+        .spacing(10)
+        .into();
+    }
+
+    // Windows / fallback attributes
+    let attrs_hex = match props.entry.permissions {
+        PermissionsMeta::WinAttributes(a) => format!("0x{a:08X}"),
+        PermissionsMeta::PosixMode(m) => format!("0o{m:04o}"),
+    };
+    container(
+        column![
+            prop_kv_row(
+                strings.permissions,
+                props.entry.permissions.format_compact(is_dir).to_string(),
+                true,
+                palette,
+            ),
+            prop_kv_row("Attributes", attrs_hex, true, palette),
+            row![
+                quick_toggle_pill(
+                    strings.prop_readonly,
+                    props.readonly_draft,
+                    editable,
+                    palette,
+                    Message::PropertiesToggleReadonly,
+                ),
+                quick_toggle_pill(
+                    strings.prop_hidden,
+                    props.hidden_draft,
+                    editable,
+                    palette,
+                    Message::PropertiesToggleHidden,
+                ),
+            ]
+            .spacing(10),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fill)
+    .padding(14)
+    .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0))
+    .into()
+}
+
+fn prop_kv_row<'a>(
+    label: &'a str,
+    val: String,
+    mono: bool,
+    palette: ThemePalette,
+) -> Element<'a, Message> {
+    row![
+        text(label)
+            .size(12)
+            .font(FONT_UI_SEMIBOLD)
+            .color(palette.text_muted)
+            .width(Length::Fixed(130.0)),
+        container(
+            text(sanitize_single_line(&val))
+                .size(12)
+                .font(if mono { FONT_MONO } else { FONT_UI })
+                .color(palette.text_primary)
+                .wrapping(text::Wrapping::None),
+        )
+        .width(Length::Fill)
+        .clip(true),
+    ]
+    .spacing(8)
+    .align_y(Center)
+    .into()
+}
+
+fn describe_entry_kind(entry: &FileEntry, pt_br: bool) -> String {
+    match entry.kind {
+        fm_core::EntryKind::Directory => {
+            if pt_br {
+                "Pasta de Arquivos".to_owned()
+            } else {
+                "File Folder".to_owned()
+            }
+        }
+        fm_core::EntryKind::Symlink { target_is_dir } => match (pt_br, target_is_dir) {
+            (true, true) => "Link simbólico (Pasta)".to_owned(),
+            (true, false) => "Link simbólico (Arquivo)".to_owned(),
+            (false, true) => "Symbolic link (Folder)".to_owned(),
+            (false, false) => "Symbolic link (File)".to_owned(),
+        },
+        fm_core::EntryKind::Special => {
+            if pt_br {
+                "Item Especial".to_owned()
+            } else {
+                "Special Entry".to_owned()
+            }
+        }
+        fm_core::EntryKind::File => match &entry.extension {
+            Some(ext) => {
+                let low = ext.to_ascii_lowercase();
+                if pt_br {
+                    format!("Arquivo (.{low})")
+                } else {
+                    format!("File (.{low})")
+                }
+            }
+            None => {
+                if pt_br {
+                    "Arquivo".to_owned()
+                } else {
+                    "File".to_owned()
+                }
+            }
+        },
+    }
+}
+
+fn size_bar_ratio(bytes: u64) -> f32 {
+    if bytes == 0 {
+        return 0.04;
+    }
+    let log_val = (bytes as f64).log10();
+    ((log_val / 11.0) as f32).clamp(0.10, 0.96)
 }
 
 pub fn preferences_modal<'a>(

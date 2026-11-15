@@ -18,6 +18,7 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 compact_str = { version = "0.10", features = ["serde"] }
 criterion = "0.8"
 directories = "6.0"

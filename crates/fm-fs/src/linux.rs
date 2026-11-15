@@ -16,7 +16,7 @@ use rustix::fd::{AsFd, BorrowedFd};
 use rustix::fs::{AtFlags, Mode, OFlags, RawDir, StatxFlags};
 use tokio_util::sync::CancellationToken;
 
-use crate::{make_file_entry, map_io_err};
+use crate::{PropertyPatch, make_file_entry, map_io_err};
 
 /// Tenta clone instantâneo Copy-on-Write (`FICLONE`, Btrfs/XFS) no Linux.
 /// Retorna `None` quando o filesystem não suporta reflink para prosseguir com `copy_file_range`.
@@ -279,6 +279,22 @@ pub fn open_properties(path: &Path) -> Result<(), FsError> {
         message: "nenhum serviço org.freedesktop.FileManager1 ativo; use o Inspetor (Alt+I)"
             .to_owned(),
     })
+}
+
+/// Aplica alterações de permissões POSIX / modo somente leitura no Linux.
+pub fn apply_entry_properties(path: &Path, patch: &PropertyPatch) -> Result<(), FsError> {
+    if let Some(mode) = patch.posix_mode {
+        let perms = std::fs::Permissions::from_mode(mode & 0o7777);
+        std::fs::set_permissions(path, perms).map_err(|e| map_io_err(path, e))?;
+        return Ok(());
+    }
+    if let Some(readonly) = patch.readonly {
+        let meta = std::fs::metadata(path).map_err(|e| map_io_err(path, e))?;
+        let mut perms = meta.permissions();
+        perms.set_readonly(readonly);
+        std::fs::set_permissions(path, perms).map_err(|e| map_io_err(path, e))?;
+    }
+    Ok(())
 }
 
 /// Tenta transferência kernel-to-kernel via `copy_file_range(2)` no Linux.
