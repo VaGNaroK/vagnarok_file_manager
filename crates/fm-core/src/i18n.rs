@@ -41,6 +41,12 @@ pub struct Strings {
     pub col_perms: &'static str,
     pub col_modified: &'static str,
     pub free_of: &'static str,
+    pub loading: &'static str,
+    pub empty_dir: &'static str,
+    pub go_back: &'static str,
+    pub retry: &'static str,
+    pub root_fs: &'static str,
+    pub binary_preview_hint: &'static str,
 }
 
 impl Strings {
@@ -91,6 +97,12 @@ impl Strings {
             col_perms: "Permissões",
             col_modified: "Modificado",
             free_of: "livres de",
+            loading: "Carregando diretório...",
+            empty_dir: "Pasta vazia",
+            go_back: "Voltar",
+            retry: "Tentar novamente",
+            root_fs: "Sistema",
+            binary_preview_hint: "Arquivo binário ou muito grande — prévia completa com decodificadores entra na Fase P2.",
         }
     }
 
@@ -134,6 +146,12 @@ impl Strings {
             col_perms: "Permissions",
             col_modified: "Modified",
             free_of: "free of",
+            loading: "Loading directory...",
+            empty_dir: "Empty folder",
+            go_back: "Go back",
+            retry: "Retry",
+            root_fs: "System",
+            binary_preview_hint: "Binary or oversized file — rich decoder previews arrive in Phase P2.",
         }
     }
 }

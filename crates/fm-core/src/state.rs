@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use compact_str::CompactString;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
@@ -119,6 +120,7 @@ pub struct TabState {
     pub filter_query: String,
     pub raw_entries: Vec<FileEntry>,
     pub visible_entries: Vec<FileEntry>,
+    pub fs_type: Option<CompactString>,
     pub selection: SelectionState,
     pub telemetry: DirectoryTelemetry,
     pub selected_telemetry: Option<SelectedFileTelemetry>,
@@ -148,6 +150,7 @@ impl TabState {
             filter_query: String::new(),
             raw_entries: Vec::new(),
             visible_entries: Vec::new(),
+            fs_type: None,
             selection: SelectionState::default(),
             telemetry: DirectoryTelemetry::default(),
             selected_telemetry: None,
@@ -170,7 +173,11 @@ impl TabState {
             .cloned()
             .collect();
 
-        filtered.sort_by(|a, b| self.sort.compare(a, b));
+        if filtered.len() >= 2_000 {
+            filtered.par_sort_by(|a, b| self.sort.compare(a, b));
+        } else {
+            filtered.sort_by(|a, b| self.sort.compare(a, b));
+        }
         self.telemetry.folder_stats = FolderSummary::from_entries(&filtered);
         self.visible_entries = filtered;
 

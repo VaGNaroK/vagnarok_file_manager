@@ -8,7 +8,7 @@ use crate::app::App;
 use crate::app::Message;
 
 pub fn view<'a>(
-    _app: &'a App,
+    app: &'a App,
     tab: Option<&'a TabState>,
     palette: ThemePalette,
     strings: Strings,
@@ -102,6 +102,14 @@ pub fn view<'a>(
     .align_y(Center);
 
     let mut right = row![].spacing(12).align_y(Center);
+    if let Some(notice) = &app.status_notice {
+        right = right.push(
+            text(notice.as_str())
+                .size(11)
+                .font(FONT_MONO)
+                .color(palette.status_error),
+        );
+    }
     if !sha_label.is_empty() {
         right = right.push(
             text(sha_label)

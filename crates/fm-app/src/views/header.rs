@@ -223,8 +223,9 @@ fn unified_breadcrumb<'a>(
     palette: ThemePalette,
 ) -> Element<'a, Message> {
     if app.path_editing {
+        let placeholder = app.places.home.to_string_lossy().into_owned();
         return container(
-            text_input("/home/aether/Documents/Workspace", &app.path_draft)
+            text_input(&placeholder, &app.path_draft)
                 .id(path_input_id())
                 .on_input(Message::PathDraftChanged)
                 .on_submit(Message::CommitPathDraft)
@@ -241,7 +242,7 @@ fn unified_breadcrumb<'a>(
         button(icon_home().size(14).color(palette.accent_primary))
             .padding([3, 5])
             .style(styles::ghost_button(palette, 6.0))
-            .on_press(Message::NavigateTo(PathBuf::from("/home/aether"))),
+            .on_press(Message::NavigateTo(app.places.home.clone())),
     ]
     .spacing(2)
     .align_y(Center);
@@ -254,7 +255,11 @@ fn unified_breadcrumb<'a>(
             .filter_map(|c| match c {
                 std::path::Component::RootDir => {
                     acc.push("/");
-                    None
+                    if acc == std::path::Path::new("/") {
+                        Some(("/".to_owned(), acc.clone()))
+                    } else {
+                        None
+                    }
                 }
                 std::path::Component::Normal(part) => {
                     acc.push(part);
@@ -271,7 +276,9 @@ fn unified_breadcrumb<'a>(
 
         let last_idx = components.len().saturating_sub(1);
         for (idx, (label, target)) in components.into_iter().enumerate() {
-            crumbs = crumbs.push(icon_chevron_right().size(12).color(palette.text_muted));
+            if idx > 0 {
+                crumbs = crumbs.push(icon_chevron_right().size(12).color(palette.text_muted));
+            }
             let is_last = idx == last_idx;
             let txt = text(label)
                 .size(12)

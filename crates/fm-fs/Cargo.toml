@@ -6,5 +6,15 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+compact_str.workspace = true
+directories.workspace = true
 fm-core.workspace = true
+open.workspace = true
+tokio.workspace = true
 tokio-util.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true

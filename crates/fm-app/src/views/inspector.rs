@@ -1,4 +1,4 @@
-use fm_core::{Strings, TabState, format_bytes};
+use fm_core::{Language, Strings, TabState, format_age, format_bytes};
 use fm_theme::{
     FONT_MONO, FONT_MONO_BOLD, FONT_UI_BOLD, FONT_UI_SEMIBOLD, Spacing, ThemePalette, styles,
 };
@@ -19,6 +19,8 @@ pub fn drawer<'a>(
     if !app.config.show_inspector {
         return Space::new().width(0).height(0).into();
     }
+
+    let pt_br = app.config.language == Language::PtBr;
 
     let body: Element<'a, Message> = match tab {
         Some(tab) => {
@@ -46,7 +48,7 @@ pub fn drawer<'a>(
                 let (icon_widget, _) = entry_icon(entry, palette, 46.0);
                 let perms = entry.permissions.format_compact(entry.kind.is_dir_like());
                 let size_str = if entry.kind.is_dir_like() {
-                    format!("{} {}", entry.child_count.unwrap_or(0), strings.items_unit)
+                    "DIR".to_owned()
                 } else {
                     format_bytes(entry.size_bytes).to_string()
                 };
@@ -74,6 +76,14 @@ pub fn drawer<'a>(
                     meta_row(strings.permissions, perms.to_string(), palette),
                 ]
                 .spacing(10);
+
+                if let Some(modified) = entry.modified_at {
+                    info_col = info_col.push(meta_row(
+                        strings.modified,
+                        format_age(modified, pt_br).to_string(),
+                        palette,
+                    ));
+                }
 
                 if let Some(tel) = &tab.selected_telemetry {
                     if let Some(mime) = &tel.mime_type {
@@ -173,7 +183,7 @@ pub fn quicklook_modal<'a>(
                     .font(FONT_MONO)
                     .color(palette.text_primary),
             )
-            .height(Length::Fixed(300.0)),
+            .height(Length::Fixed(320.0)),
         )
         .width(Length::Fill)
         .padding(14)
@@ -191,6 +201,9 @@ pub fn quicklook_modal<'a>(
                 .size(13)
                 .font(FONT_MONO)
                 .color(palette.text_secondary),
+            text(strings.binary_preview_hint)
+                .size(12)
+                .color(palette.text_muted),
         ]
         .spacing(10)
         .align_x(Center)
@@ -220,7 +233,7 @@ pub fn quicklook_modal<'a>(
             body,
         ]
         .spacing(14)
-        .width(Length::Fixed(620.0)),
+        .width(Length::Fixed(640.0)),
     )
     .padding(20)
     .style(styles::modal_card(palette));

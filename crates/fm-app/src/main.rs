@@ -1,5 +1,4 @@
 mod app;
-mod sample;
 mod views;
 
 use mimalloc::MiMalloc;

@@ -1,13 +1,13 @@
 use fm_core::{
-    FileEntry, SelectionModifiers, SortDirection, SortField, Strings, TabState, ViewMode,
-    format_bytes,
+    FileEntry, Language, SelectionModifiers, SortDirection, SortField, Strings, TabState, ViewMode,
+    format_age, format_bytes,
 };
 use fm_theme::{
     FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_BOLD, FONT_UI_SEMIBOLD, ThemePalette, styles,
 };
 use iced::Alignment::Center;
 use iced::widget::{
-    Space, button, column, container, responsive, row, scrollable, space, text,
+    Space, button, column, container, mouse_area, responsive, row, scrollable, space, text,
 };
 use iced::{Color, Element, Length, Padding};
 use lucide_icons::iced::{
@@ -15,8 +15,12 @@ use lucide_icons::iced::{
     icon_terminal,
 };
 
-use crate::app::{App, Message, selected_id_set_contains};
+use crate::app::{App, Message, canvas_scroll_id, selected_id_set_contains};
 use crate::views::entry_icon;
+use crate::views::virtualized::{
+    DETAIL_ROW_HEIGHT, DETAIL_ROW_STEP, GRID_BAND_SPACING, GridBand, build_grid_bands,
+    compute_band_window, compute_fixed_window,
+};
 
 pub fn view<'a>(
     app: &'a App,
@@ -31,26 +35,101 @@ pub fn view<'a>(
             .into();
     };
 
-    let mut content = column![action_bar(app, tab, palette, strings)].spacing(16);
-
+    let mut header_stack = column![action_bar(app, tab, palette, strings)].spacing(14);
     if app.config.show_hero_card {
-        content = content.push(hero_card(tab, palette, strings));
+        header_stack = header_stack.push(hero_card(tab, palette, strings));
     }
 
-    let body: Element<'a, Message> = match tab.view_mode {
-        ViewMode::Grid => grid_view(app, tab, palette, strings),
-        ViewMode::DetailTable => detail_table_view(app, tab, palette, strings),
-        ViewMode::Columns => columns_view(app, tab, palette, strings),
-    };
-
-    content = content.push(body);
-
-    container(scrollable(content).height(Length::Fill))
+    let body: Element<'a, Message> = if tab.is_loading {
+        container(
+            text(strings.loading)
+                .size(13)
+                .font(FONT_MONO)
+                .color(palette.text_secondary),
+        )
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(Padding::from([14, 20]))
-        .style(styles::canvas_container(palette))
+        .align_x(Center)
+        .align_y(Center)
         .into()
+    } else if let Some(err) = &tab.last_error {
+        error_banner(err, tab.can_go_back(), palette, strings)
+    } else if tab.visible_entries.is_empty() {
+        container(
+            text(strings.empty_dir)
+                .size(13)
+                .font(FONT_UI)
+                .color(palette.text_muted),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Center)
+        .align_y(Center)
+        .into()
+    } else {
+        match tab.view_mode {
+            ViewMode::Grid => grid_view(app, tab, palette, strings),
+            ViewMode::DetailTable => detail_table_view(app, tab, palette, strings),
+            ViewMode::Columns => columns_view(app, tab, palette, strings),
+        }
+    };
+
+    container(
+        column![header_stack, body]
+            .spacing(16)
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(Padding::from([14, 20]))
+    .style(styles::canvas_container(palette))
+    .into()
+}
+
+fn error_banner<'a>(
+    err: &'a str,
+    can_go_back: bool,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let mut actions = row![
+        button(text(strings.retry).size(12).font(FONT_UI_SEMIBOLD))
+            .padding([6, 14])
+            .style(styles::pill_primary_button(palette))
+            .on_press(Message::RefreshActiveTab),
+    ]
+    .spacing(8);
+
+    if can_go_back {
+        actions = actions.push(
+            button(text(strings.go_back).size(12))
+                .padding([6, 14])
+                .style(styles::pill_secondary_button(palette))
+                .on_press(Message::NavigateBack),
+        );
+    }
+
+    container(
+        container(
+            column![
+                text(err)
+                    .size(13)
+                    .font(FONT_MONO)
+                    .color(palette.status_error),
+                actions,
+            ]
+            .spacing(12)
+            .align_x(Center),
+        )
+        .padding(20)
+        .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 12.0)),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Center)
+    .align_y(Center)
+    .into()
 }
 
 fn action_bar<'a>(
@@ -110,9 +189,12 @@ fn action_bar<'a>(
     };
 
     let new_btn = button(
-        row![icon_plus().size(14), text(strings.new_item).size(12).font(FONT_UI_SEMIBOLD)]
-            .spacing(4)
-            .align_y(Center),
+        row![
+            icon_plus().size(14),
+            text(strings.new_item).size(12).font(FONT_UI_SEMIBOLD)
+        ]
+        .spacing(4)
+        .align_y(Center),
     )
     .padding([6, 14])
     .style(styles::pill_primary_button(palette))
@@ -179,7 +261,9 @@ fn hero_card<'a>(
         .current_path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
         .unwrap_or_else(|| tab.current_path.to_string_lossy().into_owned());
+    let fs_badge = tab.fs_type.as_deref().unwrap_or(strings.root_fs);
 
     let left = row![
         container(icon_terminal().size(24).color(palette.accent_primary))
@@ -199,7 +283,7 @@ fn hero_card<'a>(
                     .font(FONT_UI_BOLD)
                     .color(palette.text_primary),
                 container(
-                    text("ext4")
+                    text(fs_badge)
                         .size(11)
                         .font(FONT_MONO_BOLD)
                         .color(palette.accent_primary)
@@ -249,7 +333,7 @@ fn hero_card<'a>(
 
     container(row![left, space::horizontal(), metrics].align_y(Center))
         .width(Length::Fill)
-        .padding([16, 20])
+        .padding([14, 20])
         .style(styles::hero_card(palette))
         .into()
 }
@@ -298,33 +382,59 @@ fn grid_view<'a>(
         ctrl: app.current_modifiers.control(),
         shift: app.current_modifiers.shift(),
     };
+    let scroll_y = app.canvas_scroll_y;
+    let viewport_h = app.canvas_viewport_height;
 
     responsive(move |size| {
-        let cols = ((size.width / 150.0).floor() as usize).clamp(2, 8);
-        let mut sections = column![].spacing(22).width(Length::Fill);
+        let cols = ((size.width / 148.0).floor() as usize).clamp(2, 8);
+        let bands = build_grid_bands(&dirs, &files, cols, strings.folders, strings.files);
+        let win = compute_band_window(&bands, scroll_y, viewport_h, 280.0);
 
-        if !dirs.is_empty() {
-            sections = sections.push(section_title_bar(
-                strings.folders,
-                dirs.len(),
-                "drwxr-xr-x",
-                palette,
-            ));
-            sections = sections.push(build_grid_rows(&dirs, cols, tab, modifiers, palette, strings));
+        let mut list = column![].spacing(GRID_BAND_SPACING).width(Length::Fill);
+        if win.top_spacer > 0.0 {
+            list = list.push(Space::new().height(win.top_spacer));
         }
 
-        if !files.is_empty() {
-            sections = sections.push(section_title_bar(
-                strings.files,
-                files.len(),
-                "-rw-r--r--",
-                palette,
-            ));
-            sections =
-                sections.push(build_grid_rows(&files, cols, tab, modifiers, palette, strings));
+        for band in &bands[win.range] {
+            match band {
+                GridBand::SectionHeader {
+                    title,
+                    count,
+                    perms,
+                } => {
+                    list = list.push(section_title_bar(title, *count, perms, palette));
+                }
+                GridBand::Items(chunk) => {
+                    let mut r = row![].spacing(12).width(Length::Fill);
+                    for &(idx, entry) in chunk {
+                        r = r.push(grid_item_card(
+                            idx,
+                            entry,
+                            selected_id_set_contains(tab, entry.id),
+                            modifiers,
+                            palette,
+                        ));
+                    }
+                    for _ in chunk.len()..cols {
+                        r = r.push(Space::new().width(Length::Fill));
+                    }
+                    list = list.push(r);
+                }
+            }
         }
 
-        sections.into()
+        if win.bottom_spacer > 0.0 {
+            list = list.push(Space::new().height(win.bottom_spacer));
+        }
+
+        scrollable(list)
+            .id(canvas_scroll_id())
+            .height(Length::Fill)
+            .on_scroll(|vp| Message::CanvasScrolled {
+                offset_y: vp.absolute_offset().y,
+                viewport_height: vp.bounds().height,
+            })
+            .into()
     })
     .into()
 }
@@ -346,40 +456,9 @@ fn section_title_bar<'a>(
             .font(FONT_MONO)
             .color(palette.text_muted),
     ]
+    .height(24)
     .align_y(Center)
     .into()
-}
-
-fn build_grid_rows<'a>(
-    items: &[(usize, &'a FileEntry)],
-    cols: usize,
-    tab: &'a TabState,
-    modifiers: SelectionModifiers,
-    palette: ThemePalette,
-    strings: Strings,
-) -> Element<'a, Message> {
-    let mut rows_col = column![].spacing(16).width(Length::Fill);
-
-    for chunk in items.chunks(cols) {
-        let mut r = row![].spacing(12).width(Length::Fill);
-        for &(idx, entry) in chunk {
-            r = r.push(grid_item_card(
-                idx,
-                entry,
-                selected_id_set_contains(tab, entry.id),
-                modifiers,
-                palette,
-                strings,
-            ));
-        }
-        // Preenche colunas faltantes para manter alinhamento uniforme da grade.
-        for _ in chunk.len()..cols {
-            r = r.push(Space::new().width(Length::Fill));
-        }
-        rows_col = rows_col.push(r);
-    }
-
-    rows_col.into()
 }
 
 fn grid_item_card<'a>(
@@ -388,9 +467,8 @@ fn grid_item_card<'a>(
     selected: bool,
     modifiers: SelectionModifiers,
     palette: ThemePalette,
-    strings: Strings,
 ) -> Element<'a, Message> {
-    let (icon_widget, _color) = entry_icon(entry, palette, 36.0);
+    let (icon_widget, _color) = entry_icon(entry, palette, 34.0);
 
     let mut icon_box_col = column![icon_widget].align_x(Center);
     if let Some(badge) = &entry.mime_badge {
@@ -405,30 +483,32 @@ fn grid_item_card<'a>(
             palette.text_secondary
         };
         icon_box_col = icon_box_col.push(
-            container(text(badge.as_str()).size(9).font(FONT_MONO_BOLD).color(badge_fg))
-                .padding([1, 5])
-                .style(styles::badge_container(
-                    badge_bg,
-                    badge_fg,
-                    palette.border,
-                    4.0,
-                )),
+            container(
+                text(badge.as_str())
+                    .size(9)
+                    .font(FONT_MONO_BOLD)
+                    .color(badge_fg),
+            )
+            .padding([1, 5])
+            .style(styles::badge_container(
+                badge_bg,
+                badge_fg,
+                palette.border,
+                4.0,
+            )),
         );
     }
 
     let sub_label = if entry.kind.is_dir_like() {
-        format!(
-            "{} {}",
-            entry.child_count.unwrap_or(0),
-            strings.items_unit
-        )
+        "DIR".to_owned()
     } else {
         format_bytes(entry.size_bytes).to_string()
     };
 
-    let name_widget = if selected {
+    let display_name = truncate_label(&entry.name, 18);
+    let name_widget: Element<'a, Message> = if selected {
         container(
-            text(entry.name.as_str())
+            text(display_name)
                 .size(12)
                 .font(FONT_UI_SEMIBOLD)
                 .color(palette.accent_primary),
@@ -442,18 +522,17 @@ fn grid_item_card<'a>(
         ))
         .into()
     } else {
-        Element::from(
-            text(entry.name.as_str())
-                .size(12)
-                .font(FONT_UI_SEMIBOLD)
-                .color(palette.text_primary),
-        )
+        text(display_name)
+            .size(12)
+            .font(FONT_UI_SEMIBOLD)
+            .color(palette.text_primary)
+            .into()
     };
 
     let card_content = column![
         container(icon_box_col)
-            .width(68)
-            .height(68)
+            .width(62)
+            .height(62)
             .align_x(Center)
             .align_y(Center),
         name_widget,
@@ -470,11 +549,15 @@ fn grid_item_card<'a>(
     .align_x(Center)
     .width(Length::Fill);
 
-    button(card_content)
+    let card_btn = button(card_content)
         .width(Length::Fill)
+        .height(136)
         .padding([8, 6])
         .style(styles::entry_card_button(palette, selected, 14.0))
-        .on_press(Message::SelectEntry { index, modifiers })
+        .on_press(Message::SelectEntry { index, modifiers });
+
+    mouse_area(card_btn)
+        .on_double_click(Message::ActivateEntry(index))
         .into()
 }
 
@@ -488,8 +571,9 @@ fn detail_table_view<'a>(
         ctrl: app.current_modifiers.control(),
         shift: app.current_modifiers.shift(),
     };
+    let pt_br = app.config.language == Language::PtBr;
 
-    let header = container(
+    let sticky_header = container(
         row![
             text(strings.col_name)
                 .size(11)
@@ -511,14 +595,31 @@ fn detail_table_view<'a>(
                 .font(FONT_MONO_BOLD)
                 .color(palette.text_muted)
                 .width(Length::FillPortion(2)),
+            text(strings.col_modified)
+                .size(11)
+                .font(FONT_MONO_BOLD)
+                .color(palette.text_muted)
+                .width(Length::FillPortion(1)),
         ]
         .padding([6, 12]),
     )
     .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 8.0));
 
-    let mut list = column![header].spacing(4).width(Length::Fill);
+    let win = compute_fixed_window(
+        tab.visible_entries.len(),
+        DETAIL_ROW_STEP,
+        app.canvas_scroll_y,
+        app.canvas_viewport_height,
+        6,
+    );
 
-    for (idx, entry) in tab.visible_entries.iter().enumerate() {
+    let mut rows = column![].spacing(4).width(Length::Fill);
+    if win.top_spacer > 0.0 {
+        rows = rows.push(Space::new().height(win.top_spacer));
+    }
+
+    for idx in win.range {
+        let entry = &tab.visible_entries[idx];
         let selected = selected_id_set_contains(tab, entry.id);
         let (icon_widget, _) = entry_icon(entry, palette, 16.0);
         let size_txt = if entry.kind.is_dir_like() {
@@ -532,6 +633,10 @@ fn detail_table_view<'a>(
             entry.extension.as_deref().unwrap_or("FILE")
         };
         let perms = entry.permissions.format_compact(entry.kind.is_dir_like());
+        let age_txt = entry
+            .modified_at
+            .map(|m| format_age(m, pt_br).to_string())
+            .unwrap_or_else(|| "—".to_owned());
 
         let row_content = row![
             row![
@@ -559,22 +664,44 @@ fn detail_table_view<'a>(
                 .font(FONT_MONO)
                 .color(palette.text_secondary)
                 .width(Length::FillPortion(2)),
+            text(age_txt)
+                .size(11)
+                .font(FONT_MONO)
+                .color(palette.text_muted)
+                .width(Length::FillPortion(1)),
         ]
         .align_y(Center);
 
-        list = list.push(
-            button(row_content)
-                .width(Length::Fill)
-                .padding([7, 12])
-                .style(styles::entry_card_button(palette, selected, 8.0))
-                .on_press(Message::SelectEntry {
-                    index: idx,
-                    modifiers,
-                }),
-        );
+        let row_btn = button(row_content)
+            .width(Length::Fill)
+            .height(DETAIL_ROW_HEIGHT)
+            .padding([6, 12])
+            .style(styles::entry_card_button(palette, selected, 8.0))
+            .on_press(Message::SelectEntry {
+                index: idx,
+                modifiers,
+            });
+
+        rows = rows.push(mouse_area(row_btn).on_double_click(Message::ActivateEntry(idx)));
     }
 
-    list.into()
+    if win.bottom_spacer > 0.0 {
+        rows = rows.push(Space::new().height(win.bottom_spacer));
+    }
+
+    let scroll = scrollable(rows)
+        .id(canvas_scroll_id())
+        .height(Length::Fill)
+        .on_scroll(|vp| Message::CanvasScrolled {
+            offset_y: vp.absolute_offset().y,
+            viewport_height: vp.bounds().height,
+        });
+
+    column![sticky_header, scroll]
+        .spacing(6)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 fn columns_view<'a>(
@@ -614,9 +741,17 @@ fn columns_view<'a>(
         .spacing(10),
     )
     .width(Length::FillPortion(1))
-    .height(Length::Fixed(380.0))
+    .height(Length::Fill)
     .padding(12)
     .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
+
+    let win = compute_fixed_window(
+        tab.visible_entries.len(),
+        32.0,
+        app.canvas_scroll_y,
+        app.canvas_viewport_height,
+        6,
+    );
 
     let mut active_col = column![
         text(tab.title.as_str())
@@ -626,7 +761,12 @@ fn columns_view<'a>(
     ]
     .spacing(4);
 
-    for (idx, entry) in tab.visible_entries.iter().enumerate() {
+    if win.top_spacer > 0.0 {
+        active_col = active_col.push(Space::new().height(win.top_spacer));
+    }
+
+    for idx in win.range {
+        let entry = &tab.visible_entries[idx];
         let selected = selected_id_set_contains(tab, entry.id);
         let (icon_widget, _) = entry_icon(entry, palette, 15.0);
         let mut r = row![
@@ -639,23 +779,35 @@ fn columns_view<'a>(
         if entry.kind.is_dir_like() {
             r = r.push(icon_chevron_right().size(13).color(palette.text_muted));
         }
-        active_col = active_col.push(
-            button(r)
-                .width(Length::Fill)
-                .padding([5, 8])
-                .style(styles::entry_card_button(palette, selected, 6.0))
-                .on_press(Message::SelectEntry {
-                    index: idx,
-                    modifiers,
-                }),
-        );
+        let item_btn = button(r)
+            .width(Length::Fill)
+            .height(28)
+            .padding([4, 8])
+            .style(styles::entry_card_button(palette, selected, 6.0))
+            .on_press(Message::SelectEntry {
+                index: idx,
+                modifiers,
+            });
+        active_col = active_col.push(mouse_area(item_btn).on_double_click(Message::ActivateEntry(idx)));
     }
 
-    let col2 = container(scrollable(active_col))
-        .width(Length::FillPortion(2))
-        .height(Length::Fixed(380.0))
-        .padding(12)
-        .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
+    if win.bottom_spacer > 0.0 {
+        active_col = active_col.push(Space::new().height(win.bottom_spacer));
+    }
+
+    let col2 = container(
+        scrollable(active_col)
+            .id(canvas_scroll_id())
+            .height(Length::Fill)
+            .on_scroll(|vp| Message::CanvasScrolled {
+                offset_y: vp.absolute_offset().y,
+                viewport_height: vp.bounds().height,
+            }),
+    )
+    .width(Length::FillPortion(2))
+    .height(Length::Fill)
+    .padding(12)
+    .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
 
     let preview_col = if let Some(selected) = tab.selection.single_selected(&tab.visible_entries) {
         let (icon_widget, _) = entry_icon(selected, palette, 42.0);
@@ -692,11 +844,24 @@ fn columns_view<'a>(
 
     let col3 = container(preview_col)
         .width(Length::FillPortion(2))
-        .height(Length::Fixed(380.0))
+        .height(Length::Fill)
         .padding(16)
         .align_x(Center)
         .align_y(Center)
         .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
 
-    row![col1, col2, col3].spacing(12).width(Length::Fill).into()
+    row![col1, col2, col3]
+        .spacing(12)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+fn truncate_label(s: &str, max_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= max_chars {
+        return s.to_owned();
+    }
+    let prefix: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{prefix}…")
 }

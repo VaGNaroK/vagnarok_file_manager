@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use compact_str::CompactString;
@@ -8,6 +8,27 @@ use serde::{Deserialize, Serialize};
 /// Identificador estável de uma entrada no snapshot de diretório.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntryId(pub u64);
+
+/// Calcula um identificador estável (FNV-1a 64-bit) a partir dos bytes reais do caminho.
+pub fn compute_entry_id(path: &Path) -> EntryId {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &byte in path.as_os_str().as_encoded_bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    EntryId(hash)
+}
+
+/// Diretórios padrão do usuário resolvidos de forma nativa (XDG no Linux / Known Folders no Windows).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UserPlaces {
+    pub home: PathBuf,
+    pub desktop: Option<PathBuf>,
+    pub documents: Option<PathBuf>,
+    pub downloads: Option<PathBuf>,
+    pub pictures: Option<PathBuf>,
+    pub trash: Option<PathBuf>,
+}
 
 /// Tipo lógico de entrada no sistema de arquivos.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -284,6 +305,38 @@ pub fn format_bytes(bytes: u64) -> CompactString {
         CompactString::from(format!("{:.1} GB", b / GB))
     } else {
         CompactString::from(format!("{:.1} TB", b / TB))
+    }
+}
+
+/// Formata idade relativa de modificação de forma compacta (`agora`, `14m`, `3h`, `5d`).
+pub fn format_age(modified: SystemTime, pt_br: bool) -> CompactString {
+    let Ok(elapsed) = SystemTime::now().duration_since(modified) else {
+        return CompactString::new(if pt_br { "agora" } else { "now" });
+    };
+    let secs = elapsed.as_secs();
+    if secs < 60 {
+        CompactString::new(if pt_br { "agora" } else { "now" })
+    } else if secs < 3600 {
+        let m = secs / 60;
+        CompactString::from(if pt_br {
+            format!("há {m}m")
+        } else {
+            format!("{m}m ago")
+        })
+    } else if secs < 86_400 {
+        let h = secs / 3600;
+        CompactString::from(if pt_br {
+            format!("há {h}h")
+        } else {
+            format!("{h}h ago")
+        })
+    } else {
+        let d = secs / 86_400;
+        CompactString::from(if pt_br {
+            format!("há {d}d")
+        } else {
+            format!("{d}d ago")
+        })
     }
 }
 
