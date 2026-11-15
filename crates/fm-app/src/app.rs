@@ -75,7 +75,7 @@ pub enum PropertiesTab {
 }
 
 #[derive(Debug, Clone)]
-pub struct PropertiesDialogState {
+pub struct PropertiesWindowState {
     pub entry: FileEntry,
     pub telemetry: Option<SelectedFileTelemetry>,
     pub recursive_size: Option<RecursiveSize>,
@@ -90,9 +90,10 @@ pub struct PropertiesDialogState {
     pub posix_mode_draft: Option<u32>,
     pub initial_posix_mode: Option<u32>,
     pub applying: bool,
+    pub cancel: Option<CancellationToken>,
 }
 
-impl PropertiesDialogState {
+impl PropertiesWindowState {
     pub fn is_archive(&self) -> bool {
         fm_fs::archive::split_archive_path(&self.entry.path).is_some()
     }
@@ -131,7 +132,6 @@ pub enum ActiveDialog {
         dest_dir: PathBuf,
         conflicts: usize,
     },
-    Properties(Box<PropertiesDialogState>),
 }
 
 pub fn canvas_scroll_id() -> Id {
@@ -338,27 +338,40 @@ pub enum Message {
     OpenDefaultFinished(Result<(), FsError>),
     OpenProperties(PathBuf),
     PropertiesFolderSizeReady {
+        window_id: window::Id,
         path: PathBuf,
         size: Option<RecursiveSize>,
     },
     PropertiesExtraInfoReady {
+        window_id: window::Id,
         path: PathBuf,
         extra: EntryExtraInfo,
     },
-    PropertiesSelectTab(PropertiesTab),
-    PropertiesNameChanged(String),
-    PropertiesToggleReadonly,
-    PropertiesToggleHidden,
-    PropertiesTogglePosixBit(u32),
+    PropertiesTelemetryReady {
+        window_id: window::Id,
+        path: PathBuf,
+        mime: Option<CompactString>,
+        sha: Option<(CompactString, CompactString)>,
+        git_status: Option<CompactString>,
+    },
+    PropertiesSelectTab(window::Id, PropertiesTab),
+    PropertiesNameChanged(window::Id, String),
+    PropertiesToggleReadonly(window::Id),
+    PropertiesToggleHidden(window::Id),
+    PropertiesTogglePosixBit(window::Id, u32),
     PropertiesApply {
+        window_id: window::Id,
         close_after: bool,
     },
     PropertiesApplied {
+        window_id: window::Id,
         original_path: PathBuf,
         close_after: bool,
         result: Result<(FileEntry, EntryExtraInfo), FsError>,
     },
     PropertiesOpenDefault(PathBuf),
+    DragPropertiesWindow(window::Id),
+    ClosePropertiesWindow(window::Id),
     OpenNewMenu,
     OpenFilterMenu,
     SetExtensionFilter(Option<CompactString>),
@@ -370,18 +383,29 @@ pub enum Message {
     StartColumnResize(usize),
     StartGridResize,
     StartColumnsPanelResize,
-    EndColumnResize,
+    EndColumnResize(window::Id),
     StepGridCardWidth(f32),
     ResetGridCardWidth,
-    CursorMoved(Point),
-    WindowResized(Size),
-    FileDropped(PathBuf),
+    CursorMoved {
+        window_id: window::Id,
+        position: Point,
+    },
+    WindowResized {
+        window_id: window::Id,
+        size: Size,
+    },
+    WindowClosed(window::Id),
+    FileDropped {
+        window_id: window::Id,
+        path: PathBuf,
+    },
     FlushDroppedFiles(u64),
     WindowMinimize,
     WindowToggleMaximize,
     WindowClose,
     ModifiersChanged(keyboard::Modifiers),
     GlobalKeyPressed {
+        window_id: window::Id,
         key: keyboard::Key,
         modifiers: keyboard::Modifiers,
     },
@@ -453,10 +477,11 @@ pub struct App {
     pub canvas_scroll_y: f32,
     pub canvas_viewport_height: f32,
     pub canvas_viewport_width: Option<f32>,
+    pub main_window_id: window::Id,
+    pub properties_windows: HashMap<window::Id, PropertiesWindowState>,
     pub status_notice: Option<String>,
     pub last_entry_click: Option<(TabId, PathBuf, Instant)>,
     pub last_watcher_reload: Option<(PathBuf, Instant)>,
-    pub properties_cancel: Option<CancellationToken>,
 }
 
 impl App {
@@ -493,6 +518,13 @@ impl App {
         let mut tab_cancels = HashMap::new();
         tab_cancels.insert(TabId(1), cancel1.clone());
         tab_cancels.insert(TabId(2), cancel2.clone());
+
+        let (main_window_id, open_main_task) = window::open(window::Settings {
+            size: Size::new(1320.0, 860.0),
+            position: window::Position::Centered,
+            decorations: config.window_decorations == WindowDecorationsMode::NativeWm,
+            ..window::Settings::default()
+        });
 
         let app = Self {
             vfs: Arc::clone(&vfs),
@@ -555,10 +587,11 @@ impl App {
             canvas_scroll_y: 0.0,
             canvas_viewport_height: 700.0,
             canvas_viewport_width: None,
+            main_window_id,
+            properties_windows: HashMap::new(),
             status_notice: None,
             last_entry_click: None,
             last_watcher_reload: None,
-            properties_cancel: None,
         };
 
         let auto_theme_task = if !app.config.theme_customized {
@@ -594,13 +627,14 @@ impl App {
             },
             Message::MetaCacheReady,
         );
-        let vibrancy_task = apply_window_vibrancy(app.config.theme);
+        let vibrancy_task = apply_window_vibrancy(main_window_id, app.config.theme);
         let load1 = spawn_list_task(Arc::clone(&vfs), TabId(1), tab1_path, 1, cancel1);
         let load2 = spawn_list_task(vfs, TabId(2), tab2_path, 2, cancel2);
 
         (
             app,
             Task::batch([
+                open_main_task.discard(),
                 auto_theme_task,
                 drives_task,
                 disk_cache_task,
@@ -612,7 +646,14 @@ impl App {
         )
     }
 
-    pub fn title(&self) -> String {
+    pub fn title(&self, window_id: window::Id) -> String {
+        if let Some(props) = self.properties_windows.get(&window_id) {
+            return format!(
+                "{}{}",
+                self.strings().properties_header_prefix,
+                views::sanitize_single_line(props.entry.name.as_str())
+            );
+        }
         let tab_title = self
             .current_tab()
             .map(|t| t.title.as_str())
@@ -620,7 +661,7 @@ impl App {
         format!("Vagnarok File Manager — {tab_title}")
     }
 
-    pub fn iced_theme(&self) -> iced::Theme {
+    pub fn iced_theme(&self, _window_id: window::Id) -> iced::Theme {
         self.palette().to_iced_theme()
     }
 
@@ -948,7 +989,7 @@ impl App {
                 self.config.theme_customized = true;
                 self.config.theme = self.config.theme.toggled();
                 let persist = self.persist_config_task();
-                let vibrancy = apply_window_vibrancy(self.config.theme);
+                let vibrancy = apply_window_vibrancy(self.main_window_id, self.config.theme);
                 Task::batch([persist, vibrancy])
             }
             Message::SystemThemeDetected(mode) => {
@@ -959,7 +1000,7 @@ impl App {
                             ThemePreset::ObsidianFlow
                         }
                     };
-                    return apply_window_vibrancy(self.config.theme);
+                    return apply_window_vibrancy(self.main_window_id, self.config.theme);
                 }
                 Task::none()
             }
@@ -1323,16 +1364,15 @@ impl App {
                     persist_entry = Some((selected.clone(), tel.clone()));
                     tab.selected_telemetry = Some(tel);
                 }
-                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
-                    && props.entry.path == path
-                    && mime.is_some()
-                {
-                    let mut tel = props
-                        .telemetry
-                        .take()
-                        .unwrap_or_else(|| basic_file_telemetry(&props.entry));
-                    tel.mime_type = mime;
-                    props.telemetry = Some(tel);
+                for props in self.properties_windows.values_mut() {
+                    if props.entry.path == path && mime.is_some() {
+                        let mut tel = props
+                            .telemetry
+                            .take()
+                            .unwrap_or_else(|| basic_file_telemetry(&props.entry));
+                        tel.mime_type = mime.clone();
+                        props.telemetry = Some(tel);
+                    }
                 }
                 if let Some((entry, tel)) = persist_entry {
                     self.persist_file_telemetry(&entry, &tel);
@@ -1363,17 +1403,18 @@ impl App {
                     persist_entry = Some((selected.clone(), tel.clone()));
                     tab.selected_telemetry = Some(tel);
                 }
-                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
-                    && props.entry.path == path
-                    && let Some((prefix, full)) = sha
-                {
-                    let mut tel = props
-                        .telemetry
-                        .take()
-                        .unwrap_or_else(|| basic_file_telemetry(&props.entry));
-                    tel.sha256_prefix = Some(prefix);
-                    tel.sha256_full = Some(full);
-                    props.telemetry = Some(tel);
+                for props in self.properties_windows.values_mut() {
+                    if props.entry.path == path
+                        && let Some((ref prefix, ref full)) = sha
+                    {
+                        let mut tel = props
+                            .telemetry
+                            .take()
+                            .unwrap_or_else(|| basic_file_telemetry(&props.entry));
+                        tel.sha256_prefix = Some(prefix.clone());
+                        tel.sha256_full = Some(full.clone());
+                        props.telemetry = Some(tel);
+                    }
                 }
                 if let Some((entry, tel)) = persist_entry {
                     self.persist_file_telemetry(&entry, &tel);
@@ -1399,15 +1440,15 @@ impl App {
                     tel.git_status = status.clone();
                     tab.selected_telemetry = Some(tel);
                 }
-                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
-                    && props.entry.path == path
-                {
-                    let mut tel = props
-                        .telemetry
-                        .take()
-                        .unwrap_or_else(|| basic_file_telemetry(&props.entry));
-                    tel.git_status = status;
-                    props.telemetry = Some(tel);
+                for props in self.properties_windows.values_mut() {
+                    if props.entry.path == path {
+                        let mut tel = props
+                            .telemetry
+                            .take()
+                            .unwrap_or_else(|| basic_file_telemetry(&props.entry));
+                        tel.git_status = status.clone();
+                        props.telemetry = Some(tel);
+                    }
                 }
                 Task::none()
             }
@@ -1591,9 +1632,6 @@ impl App {
                 Task::none()
             }
             Message::CloseDialog => {
-                if let Some(cancel) = self.properties_cancel.take() {
-                    cancel.cancel();
-                }
                 self.active_dialog = None;
                 Task::none()
             }
@@ -1781,10 +1819,7 @@ impl App {
                 };
                 let persist = self.persist_config_task();
                 if cfg!(not(target_os = "windows")) {
-                    Task::batch([
-                        persist,
-                        window::latest().and_then(window::toggle_decorations),
-                    ])
+                    Task::batch([persist, window::toggle_decorations(self.main_window_id)])
                 } else {
                     persist
                 }
@@ -1868,8 +1903,12 @@ impl App {
             }
             Message::OpenProperties(path) => {
                 self.context_menu = None;
-                if let Some(cancel) = self.properties_cancel.take() {
-                    cancel.cancel();
+                if let Some((&existing_id, _)) = self
+                    .properties_windows
+                    .iter()
+                    .find(|(_, props)| props.entry.path == path)
+                {
+                    return window::gain_focus(existing_id);
                 }
                 let entry = self.current_tab().and_then(|t| {
                     t.visible_entries
@@ -1898,10 +1937,24 @@ impl App {
                     Some(existing_telemetry.unwrap_or_else(|| basic_file_telemetry(&entry)));
                 let size_loading = entry.kind.is_dir_like() && !is_archive;
 
-                let mut tasks = Vec::new();
+                let offset = (self.properties_windows.len() as f32 % 5.0) * 28.0;
+                let (win_id, open_task) = window::open(window::Settings {
+                    size: Size::new(720.0, 520.0),
+                    min_size: Some(Size::new(640.0, 460.0)),
+                    position: window::Position::Specific(Point::new(
+                        160.0 + offset,
+                        120.0 + offset,
+                    )),
+                    decorations: true,
+                    resizable: true,
+                    ..window::Settings::default()
+                });
+
+                let win_cancel = CancellationToken::new();
+                let mut tasks = vec![open_task.discard()];
+
                 if size_loading {
-                    let cancel = CancellationToken::new();
-                    self.properties_cancel = Some(cancel.clone());
+                    let cancel = win_cancel.clone();
                     let size_dir = entry.path.clone();
                     let meta_cache = self.metadata_cache.clone();
                     tasks.push(Task::perform(
@@ -1914,10 +1967,72 @@ impl App {
                             .await;
                             (size_dir, size)
                         },
-                        |(path, size)| Message::PropertiesFolderSizeReady { path, size },
+                        move |(path, size)| Message::PropertiesFolderSizeReady {
+                            window_id: win_id,
+                            path,
+                            size,
+                        },
                     ));
                 } else if needs_file_telemetry {
-                    tasks.push(self.maybe_load_selection_telemetry(Some(&entry)));
+                    let tel_path = entry.path.clone();
+                    let cancel_mime = win_cancel.clone();
+                    let cancel_sha = win_cancel.clone();
+                    let cancel_git = win_cancel.clone();
+                    let size_bytes = entry.size_bytes;
+                    let modified_nanos = entry_mtime_nanos(entry.modified_at);
+                    let meta_cache = self.metadata_cache.clone();
+                    tasks.push(Task::perform(
+                        async move {
+                            let cached = if let Some(ref cache) = meta_cache {
+                                let p = tel_path.clone();
+                                let c = Arc::clone(cache);
+                                tokio::task::spawn_blocking(move || {
+                                    c.get_file(&p, size_bytes, modified_nanos)
+                                })
+                                .await
+                                .ok()
+                                .flatten()
+                            } else {
+                                None
+                            };
+                            let mime = match cached.as_ref().and_then(|c| c.mime.clone()) {
+                                Some(m) => Some(m),
+                                None => {
+                                    fm_telemetry::detect_mime_type(&tel_path, cancel_mime).await
+                                }
+                            };
+                            let sha = match cached
+                                .as_ref()
+                                .and_then(|c| c.sha_prefix.clone().zip(c.sha_full.clone()))
+                            {
+                                Some(pair) => Some(pair),
+                                None => fm_telemetry::compute_sha256(&tel_path, cancel_sha).await,
+                            };
+                            let git_status =
+                                fm_telemetry::detect_file_git_status(&tel_path, cancel_git).await;
+                            if let Some(cache) = meta_cache
+                                && (mime.is_some() || sha.is_some())
+                            {
+                                let p = tel_path.clone();
+                                let val = CachedFileTelemetry {
+                                    mime: mime.clone(),
+                                    sha_prefix: sha.as_ref().map(|(pre, _)| pre.clone()),
+                                    sha_full: sha.as_ref().map(|(_, full)| full.clone()),
+                                };
+                                drop(tokio::task::spawn_blocking(move || {
+                                    cache.put_file(&p, size_bytes, modified_nanos, &val);
+                                }));
+                            }
+                            (tel_path, mime, sha, git_status)
+                        },
+                        move |(path, mime, sha, git_status)| Message::PropertiesTelemetryReady {
+                            window_id: win_id,
+                            path,
+                            mime,
+                            sha,
+                            git_status,
+                        },
+                    ));
                 }
 
                 if !is_archive {
@@ -1927,7 +2042,11 @@ impl App {
                             let extra = fm_fs::read_entry_extra_info(extra_path.clone()).await;
                             (extra_path, extra)
                         },
-                        |(path, extra)| Message::PropertiesExtraInfoReady { path, extra },
+                        move |(path, extra)| Message::PropertiesExtraInfoReady {
+                            window_id: win_id,
+                            path,
+                            extra,
+                        },
                     ));
                 }
 
@@ -1941,8 +2060,9 @@ impl App {
                 let draft_name = entry.name.to_string();
                 let initial_hidden = entry.is_hidden;
 
-                self.active_dialog =
-                    Some(ActiveDialog::Properties(Box::new(PropertiesDialogState {
+                self.properties_windows.insert(
+                    win_id,
+                    PropertiesWindowState {
                         entry,
                         telemetry,
                         recursive_size: None,
@@ -1957,11 +2077,17 @@ impl App {
                         posix_mode_draft: initial_posix_mode,
                         initial_posix_mode,
                         applying: false,
-                    })));
+                        cancel: Some(win_cancel),
+                    },
+                );
                 Task::batch(tasks)
             }
-            Message::PropertiesFolderSizeReady { path, size } => {
-                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+            Message::PropertiesFolderSizeReady {
+                window_id,
+                path,
+                size,
+            } => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
                     && props.entry.path == path
                 {
                     props.recursive_size = size;
@@ -1969,8 +2095,40 @@ impl App {
                 }
                 Task::none()
             }
-            Message::PropertiesExtraInfoReady { path, extra } => {
-                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+            Message::PropertiesTelemetryReady {
+                window_id,
+                path,
+                mime,
+                sha,
+                git_status,
+            } => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && props.entry.path == path
+                {
+                    let mut tel = props
+                        .telemetry
+                        .take()
+                        .unwrap_or_else(|| basic_file_telemetry(&props.entry));
+                    if mime.is_some() {
+                        tel.mime_type = mime;
+                    }
+                    if let Some((prefix, full)) = sha {
+                        tel.sha256_prefix = Some(prefix);
+                        tel.sha256_full = Some(full);
+                    }
+                    if git_status.is_some() {
+                        tel.git_status = git_status;
+                    }
+                    props.telemetry = Some(tel);
+                }
+                Task::none()
+            }
+            Message::PropertiesExtraInfoReady {
+                window_id,
+                path,
+                extra,
+            } => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
                     && props.entry.path == path
                 {
                     if props.readonly_draft == props.initial_readonly {
@@ -1981,14 +2139,14 @@ impl App {
                 }
                 Task::none()
             }
-            Message::PropertiesSelectTab(tab) => {
-                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog {
+            Message::PropertiesSelectTab(window_id, tab) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id) {
                     props.active_tab = tab;
                 }
                 Task::none()
             }
-            Message::PropertiesNameChanged(val) => {
-                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+            Message::PropertiesNameChanged(window_id, val) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
                     && !props.is_archive()
                     && !props.applying
                 {
@@ -1999,8 +2157,8 @@ impl App {
                 }
                 Task::none()
             }
-            Message::PropertiesToggleReadonly => {
-                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+            Message::PropertiesToggleReadonly(window_id) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
                     && !props.is_archive()
                     && !props.applying
                 {
@@ -2015,8 +2173,8 @@ impl App {
                 }
                 Task::none()
             }
-            Message::PropertiesToggleHidden => {
-                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+            Message::PropertiesToggleHidden(window_id) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
                     && !props.is_archive()
                     && !props.applying
                 {
@@ -2038,8 +2196,8 @@ impl App {
                 }
                 Task::none()
             }
-            Message::PropertiesTogglePosixBit(bit) => {
-                if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
+            Message::PropertiesTogglePosixBit(window_id, bit) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
                     && !props.is_archive()
                     && !props.applying
                     && let Some(mode) = &mut props.posix_mode_draft
@@ -2049,8 +2207,11 @@ impl App {
                 }
                 Task::none()
             }
-            Message::PropertiesApply { close_after } => {
-                let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog else {
+            Message::PropertiesApply {
+                window_id,
+                close_after,
+            } => {
+                let Some(props) = self.properties_windows.get_mut(&window_id) else {
                     return Task::none();
                 };
                 if props.applying {
@@ -2058,7 +2219,7 @@ impl App {
                 }
                 if !props.is_dirty() {
                     if close_after {
-                        return self.update(Message::CloseDialog);
+                        return self.update(Message::ClosePropertiesWindow(window_id));
                     }
                     return Task::none();
                 }
@@ -2122,6 +2283,7 @@ impl App {
                         }
                     },
                     move |(original_path, result)| Message::PropertiesApplied {
+                        window_id,
                         original_path,
                         close_after,
                         result,
@@ -2129,6 +2291,7 @@ impl App {
                 )
             }
             Message::PropertiesApplied {
+                window_id,
                 original_path,
                 close_after,
                 result,
@@ -2136,37 +2299,45 @@ impl App {
                 Ok((updated_entry, updated_extra)) => {
                     let select_path = updated_entry.path.clone();
                     self.status_notice = Some(self.strings().prop_applied_notice.to_owned());
-                    if close_after {
-                        if let Some(cancel) = self.properties_cancel.take() {
+                    let close_task = if close_after {
+                        if let Some(mut props) = self.properties_windows.remove(&window_id)
+                            && let Some(cancel) = props.cancel.take()
+                        {
                             cancel.cancel();
                         }
-                        self.active_dialog = None;
-                    } else if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog
-                        && props.entry.path == original_path
-                    {
-                        let (pm, ro) = match updated_entry.permissions {
-                            PermissionsMeta::PosixMode(mode) => {
-                                let perms = mode & 0o777;
-                                (Some(perms), updated_extra.is_readonly)
-                            }
-                            PermissionsMeta::WinAttributes(_) => (None, updated_extra.is_readonly),
-                        };
-                        props.draft_name = updated_entry.name.to_string();
-                        props.hidden_draft = updated_entry.is_hidden;
-                        props.initial_hidden = updated_entry.is_hidden;
-                        props.readonly_draft = ro;
-                        props.initial_readonly = ro;
-                        props.posix_mode_draft = pm;
-                        props.initial_posix_mode = pm;
-                        props.entry = updated_entry;
-                        props.extra = Some(updated_extra);
-                        props.applying = false;
-                    }
+                        window::close(window_id)
+                    } else {
+                        if let Some(props) = self.properties_windows.get_mut(&window_id)
+                            && props.entry.path == original_path
+                        {
+                            let (pm, ro) = match updated_entry.permissions {
+                                PermissionsMeta::PosixMode(mode) => {
+                                    let perms = mode & 0o777;
+                                    (Some(perms), updated_extra.is_readonly)
+                                }
+                                PermissionsMeta::WinAttributes(_) => {
+                                    (None, updated_extra.is_readonly)
+                                }
+                            };
+                            props.draft_name = updated_entry.name.to_string();
+                            props.hidden_draft = updated_entry.is_hidden;
+                            props.initial_hidden = updated_entry.is_hidden;
+                            props.readonly_draft = ro;
+                            props.initial_readonly = ro;
+                            props.posix_mode_draft = pm;
+                            props.initial_posix_mode = pm;
+                            props.entry = updated_entry;
+                            props.extra = Some(updated_extra);
+                            props.applying = false;
+                        }
+                        Task::none()
+                    };
                     self.pending_select_path = Some(select_path);
-                    self.update(Message::RefreshActiveTab)
+                    let refresh_task = self.update(Message::RefreshActiveTab);
+                    Task::batch([close_task, refresh_task])
                 }
                 Err(err) => {
-                    if let Some(ActiveDialog::Properties(props)) = &mut self.active_dialog {
+                    if let Some(props) = self.properties_windows.get_mut(&window_id) {
                         props.applying = false;
                     }
                     self.status_notice = Some(err.to_string());
@@ -2179,6 +2350,15 @@ impl App {
                     async move { vfs.open_default(&path).await },
                     Message::OpenDefaultFinished,
                 )
+            }
+            Message::DragPropertiesWindow(window_id) => window::drag(window_id),
+            Message::ClosePropertiesWindow(window_id) => {
+                if let Some(mut props) = self.properties_windows.remove(&window_id)
+                    && let Some(cancel) = props.cancel.take()
+                {
+                    cancel.cancel();
+                }
+                window::close(window_id)
             }
             Message::OpenFilterMenu => {
                 self.breadcrumb_menu = None;
@@ -2223,7 +2403,10 @@ impl App {
                     Some((self.cursor_position.x, self.columns_panel_width));
                 Task::none()
             }
-            Message::EndColumnResize => {
+            Message::EndColumnResize(window_id) => {
+                if window_id != self.main_window_id {
+                    return Task::none();
+                }
                 self.resizing_col = None;
                 self.resizing_columns_panel = None;
                 if self.resizing_grid.take().is_some() {
@@ -2241,7 +2424,13 @@ impl App {
                 self.config.grid_card_width = views::virtualized::GRID_CARD_WIDTH_DEFAULT;
                 self.persist_config_task()
             }
-            Message::CursorMoved(pos) => {
+            Message::CursorMoved {
+                window_id,
+                position: pos,
+            } => {
+                if window_id != self.main_window_id {
+                    return Task::none();
+                }
                 self.cursor_position = pos;
                 if let Some((idx, start_x, initial_weights)) = self.resizing_col
                     && idx < 4
@@ -2277,12 +2466,33 @@ impl App {
                 }
                 Task::none()
             }
-            Message::WindowResized(size) => {
-                self.window_size = size;
-                self.canvas_viewport_width = None;
+            Message::WindowResized { window_id, size } => {
+                if window_id == self.main_window_id {
+                    self.window_size = size;
+                    self.canvas_viewport_width = None;
+                }
                 Task::none()
             }
-            Message::FileDropped(path) => {
+            Message::WindowClosed(window_id) => {
+                if window_id == self.main_window_id {
+                    for (_, mut props) in self.properties_windows.drain() {
+                        if let Some(cancel) = props.cancel.take() {
+                            cancel.cancel();
+                        }
+                    }
+                    return iced::exit();
+                }
+                if let Some(mut props) = self.properties_windows.remove(&window_id)
+                    && let Some(cancel) = props.cancel.take()
+                {
+                    cancel.cancel();
+                }
+                Task::none()
+            }
+            Message::FileDropped { window_id, path } => {
+                if window_id != self.main_window_id {
+                    return Task::none();
+                }
                 if !self.pending_dropped_paths.contains(&path) {
                     self.pending_dropped_paths.push(path);
                 }
@@ -2302,19 +2512,23 @@ impl App {
                 }
                 Task::none()
             }
-            Message::WindowMinimize => window::latest().and_then(|id| window::minimize(id, true)),
-            Message::WindowToggleMaximize => window::latest().and_then(window::toggle_maximize),
-            Message::WindowClose => window::latest().and_then(window::close),
+            Message::WindowMinimize => window::minimize(self.main_window_id, true),
+            Message::WindowToggleMaximize => window::toggle_maximize(self.main_window_id),
+            Message::WindowClose => window::close(self.main_window_id),
             Message::ModifiersChanged(modifiers) => {
                 self.current_modifiers = modifiers;
                 Task::none()
             }
-            Message::GlobalKeyPressed { key, modifiers } => self.handle_global_key(key, modifiers),
+            Message::GlobalKeyPressed {
+                window_id,
+                key,
+                modifiers,
+            } => self.handle_global_key(window_id, key, modifiers),
         }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let events_sub = event::listen_with(|event, status, _window| match event {
+        let events_sub = event::listen_with(|event, status, window_id| match event {
             Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
                 Some(Message::ModifiersChanged(modifiers))
             }
@@ -2326,23 +2540,35 @@ impl App {
                         keyboard::Key::Named(Named::Escape | Named::F5 | Named::Tab)
                     );
                 if status == event::Status::Ignored || is_shortcut {
-                    Some(Message::GlobalKeyPressed { key, modifiers })
+                    Some(Message::GlobalKeyPressed {
+                        window_id,
+                        key,
+                        modifiers,
+                    })
                 } else {
                     None
                 }
             }
-            Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                Some(Message::CursorMoved(position))
-            }
+            Event::Mouse(mouse::Event::CursorMoved { position }) => Some(Message::CursorMoved {
+                window_id,
+                position,
+            }),
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                Some(Message::EndColumnResize)
+                Some(Message::EndColumnResize(window_id))
             }
-            Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized(size)),
-            Event::Window(window::Event::FileDropped(path)) => Some(Message::FileDropped(path)),
+            Event::Window(window::Event::Resized(size)) => {
+                Some(Message::WindowResized { window_id, size })
+            }
+            Event::Window(window::Event::FileDropped(path)) => {
+                Some(Message::FileDropped { window_id, path })
+            }
             _ => None,
         });
 
-        let mut subs = vec![events_sub];
+        let mut subs = vec![
+            events_sub,
+            window::close_events().map(Message::WindowClosed),
+        ];
         if !self.config.theme_customized {
             subs.push(system::theme_changes().map(Message::SystemThemeDetected));
         }
@@ -2352,9 +2578,12 @@ impl App {
         Subscription::batch(subs)
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view(&self, window_id: window::Id) -> Element<'_, Message> {
         let palette = self.palette();
         let strings = self.strings();
+        if let Some(props) = self.properties_windows.get(&window_id) {
+            return views::modals::properties_window_view(window_id, props, palette, strings);
+        }
         let tab = self.current_tab();
 
         let body_row = row![
@@ -2587,7 +2816,7 @@ impl App {
                     }
                 })
             }
-            ActiveDialog::Conflict { .. } | ActiveDialog::Properties(_) => Task::none(),
+            ActiveDialog::Conflict { .. } => Task::none(),
         }
     }
 
@@ -3136,9 +3365,16 @@ impl App {
 
     fn handle_global_key(
         &mut self,
+        window_id: window::Id,
         key: keyboard::Key,
         modifiers: keyboard::Modifiers,
     ) -> Task<Message> {
+        if self.properties_windows.contains_key(&window_id) {
+            if matches!(key.as_ref(), keyboard::Key::Named(Named::Escape)) {
+                return self.update(Message::ClosePropertiesWindow(window_id));
+            }
+            return Task::none();
+        }
         let text_input_modal_active = self.active_dialog.is_some()
             || self.deep_search_open
             || self.path_editing
@@ -3661,18 +3897,16 @@ fn longest_common_prefix<'a>(items: &[&'a str]) -> &'a str {
 }
 
 #[cfg(target_os = "windows")]
-fn apply_window_vibrancy(theme: ThemePreset) -> Task<Message> {
+fn apply_window_vibrancy(id: window::Id, theme: ThemePreset) -> Task<Message> {
     let is_dark = theme == ThemePreset::ObsidianFlow;
-    window::latest().and_then(move |id| {
-        window::run(id, move |win| {
-            let _ = window_vibrancy::apply_mica(win, Some(is_dark))
-                .or_else(|_| window_vibrancy::apply_acrylic(win, None));
-        })
-        .discard()
+    window::run(id, move |win| {
+        let _ = window_vibrancy::apply_mica(win, Some(is_dark))
+            .or_else(|_| window_vibrancy::apply_acrylic(win, None));
     })
+    .discard()
 }
 
 #[cfg(not(target_os = "windows"))]
-fn apply_window_vibrancy(_theme: ThemePreset) -> Task<Message> {
+fn apply_window_vibrancy(_id: window::Id, _theme: ThemePreset) -> Task<Message> {
     Task::none()
 }

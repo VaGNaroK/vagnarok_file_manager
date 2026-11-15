@@ -10,7 +10,7 @@ use iced::Alignment::Center;
 use iced::widget::{
     Space, button, column, container, mouse_area, row, scrollable, space, text, text_input,
 };
-use iced::{Background, Border, Color, Element, Length, Padding, border::Radius};
+use iced::{Background, Border, Color, Element, Length, Padding, border::Radius, window};
 use lucide_icons::iced::{
     icon_check, icon_check_square, icon_clipboard_copy, icon_clipboard_paste, icon_copy,
     icon_external_link, icon_eye, icon_file_plus, icon_file_text, icon_filter, icon_folder,
@@ -20,8 +20,8 @@ use lucide_icons::iced::{
 };
 
 use crate::app::{
-    ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, PropertiesDialogState,
-    PropertiesTab, dialog_input_id,
+    ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, PropertiesTab,
+    PropertiesWindowState, dialog_input_id,
 };
 use crate::views::{entry_icon, sanitize_single_line};
 
@@ -275,7 +275,6 @@ pub fn dialog_modal<'a>(
             .spacing(12)
             .into()
         }
-        ActiveDialog::Properties(props) => properties_dialog_view(props, palette, strings),
         ActiveDialog::Conflict {
             mode: _,
             sources,
@@ -371,12 +370,7 @@ pub fn dialog_modal<'a>(
         }
     };
 
-    let modal_width = if matches!(dialog, ActiveDialog::Properties(_)) {
-        700.0
-    } else {
-        460.0
-    };
-    let card = container(column![body].width(Length::Fixed(modal_width)))
+    let card = container(column![body].width(Length::Fixed(460.0)))
         .padding(20)
         .style(styles::modal_card(palette));
 
@@ -389,8 +383,9 @@ pub fn dialog_modal<'a>(
         .into()
 }
 
-fn properties_dialog_view<'a>(
-    props: &'a PropertiesDialogState,
+pub fn properties_window_view<'a>(
+    win_id: window::Id,
+    props: &'a PropertiesWindowState,
     palette: ThemePalette,
     strings: Strings,
 ) -> Element<'a, Message> {
@@ -400,35 +395,44 @@ fn properties_dialog_view<'a>(
     let is_archive = props.is_archive();
     let dirty = props.is_dirty();
 
-    // 1. Cabeçalho
+    // 1. Cabeçalho arrastável da janela flutuante
     let header_title = format!(
         "{}{}",
         strings.properties_header_prefix,
         sanitize_single_line(entry.name.as_str())
     );
+    let drag_header = mouse_area(
+        row![
+            container(icon_info().size(15).color(palette.accent_primary))
+                .padding(6)
+                .style(move |_| styles::panel_surface(
+                    palette.accent_surface,
+                    palette.accent_border,
+                    8.0
+                )),
+            container(
+                text(header_title)
+                    .size(15)
+                    .font(FONT_UI_SEMIBOLD)
+                    .color(palette.text_primary)
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(Length::Fill)
+            .clip(true),
+        ]
+        .spacing(10)
+        .align_y(Center),
+    )
+    .on_press(Message::DragPropertiesWindow(win_id));
+
     let header = row![
-        container(icon_info().size(15).color(palette.accent_primary))
-            .padding(6)
-            .style(move |_| styles::panel_surface(
-                palette.accent_surface,
-                palette.accent_border,
-                8.0
-            )),
-        container(
-            text(header_title)
-                .size(15)
-                .font(FONT_UI_SEMIBOLD)
-                .color(palette.text_primary)
-                .wrapping(text::Wrapping::None),
-        )
-        .width(Length::Fill)
-        .clip(true),
+        container(drag_header).width(Length::Fill),
         button(icon_x().size(14))
             .padding([5, 7])
             .style(styles::ghost_button(palette, 6.0))
-            .on_press(Message::CloseDialog),
+            .on_press(Message::ClosePropertiesWindow(win_id)),
     ]
-    .spacing(10)
+    .spacing(8)
     .align_y(Center);
 
     // 2. Barra de abas (Geral | Segurança | Histórico | Metadados | Permissões)
@@ -481,7 +485,7 @@ fn properties_dialog_view<'a>(
                 ..Default::default()
             }
         })
-        .on_press(Message::PropertiesSelectTab(tab))
+        .on_press(Message::PropertiesSelectTab(win_id, tab))
     };
 
     let tab_bar = column![
@@ -499,11 +503,15 @@ fn properties_dialog_view<'a>(
 
     // 3. Conteúdo da aba ativa
     let tab_body: Element<'a, Message> = match props.active_tab {
-        PropertiesTab::General => properties_general_tab(props, palette, strings, pt_br, is_dir),
+        PropertiesTab::General => {
+            properties_general_tab(win_id, props, palette, strings, pt_br, is_dir)
+        }
         PropertiesTab::Security => properties_security_tab(props, palette, strings, pt_br, is_dir),
         PropertiesTab::History => properties_history_tab(props, palette, strings, pt_br),
         PropertiesTab::Metadata => properties_metadata_tab(props, palette, strings, pt_br, is_dir),
-        PropertiesTab::Permissions => properties_permissions_tab(props, palette, strings, pt_br),
+        PropertiesTab::Permissions => {
+            properties_permissions_tab(win_id, props, palette, strings, pt_br)
+        }
     };
 
     // 4. Rodapé (Confirmar | Cancelar | Aplicar)
@@ -530,14 +538,15 @@ fn properties_dialog_view<'a>(
     let confirm_btn = button(text(strings.prop_confirm).size(12).font(FONT_UI_SEMIBOLD))
         .padding([7, 16])
         .style(styles::pill_primary_button(palette))
-        .on_press_maybe(
-            (!props.applying).then_some(Message::PropertiesApply { close_after: true }),
-        );
+        .on_press_maybe((!props.applying).then_some(Message::PropertiesApply {
+            window_id: win_id,
+            close_after: true,
+        }));
 
     let cancel_btn = button(text(strings.cancel).size(12).font(FONT_UI))
         .padding([7, 16])
         .style(styles::pill_secondary_button(palette))
-        .on_press(Message::CloseDialog);
+        .on_press(Message::ClosePropertiesWindow(win_id));
 
     let apply_active = dirty && !props.applying;
     let apply_btn = button(text(strings.prop_apply).size(12).font(if apply_active {
@@ -562,7 +571,10 @@ fn properties_dialog_view<'a>(
             }
         }
     })
-    .on_press_maybe(apply_active.then_some(Message::PropertiesApply { close_after: false }));
+    .on_press_maybe(apply_active.then_some(Message::PropertiesApply {
+        window_id: win_id,
+        close_after: false,
+    }));
 
     let footer = row![
         status_hint,
@@ -571,13 +583,31 @@ fn properties_dialog_view<'a>(
     ]
     .align_y(Center);
 
-    column![header, tab_bar, tab_body, footer]
+    container(
+        column![
+            header,
+            tab_bar,
+            container(scrollable(tab_body).height(Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill),
+            container(Space::new().width(Length::Fill).height(1))
+                .style(styles::divider_line(palette)),
+            footer,
+        ]
         .spacing(12)
-        .into()
+        .width(Length::Fill)
+        .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(18)
+    .style(styles::canvas_container(palette))
+    .into()
 }
 
 fn properties_general_tab<'a>(
-    props: &'a PropertiesDialogState,
+    win_id: window::Id,
+    props: &'a PropertiesWindowState,
     palette: ThemePalette,
     strings: Strings,
     pt_br: bool,
@@ -625,8 +655,11 @@ fn properties_general_tab<'a>(
                     selection: palette.accent_surface,
                 }
             })
-            .on_input(Message::PropertiesNameChanged)
-            .on_submit(Message::PropertiesApply { close_after: true })
+            .on_input(move |val| Message::PropertiesNameChanged(win_id, val))
+            .on_submit(Message::PropertiesApply {
+                window_id: win_id,
+                close_after: true,
+            })
             .into()
     };
 
@@ -943,14 +976,14 @@ fn properties_general_tab<'a>(
             props.readonly_draft,
             !is_archive && !props.applying,
             palette,
-            Message::PropertiesToggleReadonly,
+            Message::PropertiesToggleReadonly(win_id),
         ),
         quick_toggle_pill(
             strings.prop_hidden,
             props.hidden_draft,
             !is_archive && !props.applying,
             palette,
-            Message::PropertiesToggleHidden,
+            Message::PropertiesToggleHidden(win_id),
         ),
         space::horizontal(),
         button(
@@ -963,7 +996,10 @@ fn properties_general_tab<'a>(
         )
         .padding([6, 12])
         .style(styles::pill_secondary_button(palette))
-        .on_press(Message::PropertiesSelectTab(PropertiesTab::Permissions)),
+        .on_press(Message::PropertiesSelectTab(
+            win_id,
+            PropertiesTab::Permissions
+        )),
     ]
     .spacing(10)
     .align_y(Center);
@@ -1076,7 +1112,7 @@ fn quick_toggle_pill<'a>(
 }
 
 fn properties_security_tab<'a>(
-    props: &'a PropertiesDialogState,
+    props: &'a PropertiesWindowState,
     palette: ThemePalette,
     strings: Strings,
     pt_br: bool,
@@ -1198,7 +1234,7 @@ fn properties_security_tab<'a>(
 }
 
 fn properties_history_tab<'a>(
-    props: &'a PropertiesDialogState,
+    props: &'a PropertiesWindowState,
     palette: ThemePalette,
     strings: Strings,
     pt_br: bool,
@@ -1247,7 +1283,7 @@ fn properties_history_tab<'a>(
 }
 
 fn properties_metadata_tab<'a>(
-    props: &'a PropertiesDialogState,
+    props: &'a PropertiesWindowState,
     palette: ThemePalette,
     strings: Strings,
     pt_br: bool,
@@ -1326,7 +1362,8 @@ fn properties_metadata_tab<'a>(
 }
 
 fn properties_permissions_tab<'a>(
-    props: &'a PropertiesDialogState,
+    win_id: window::Id,
+    props: &'a PropertiesWindowState,
     palette: ThemePalette,
     strings: Strings,
     pt_br: bool,
@@ -1381,7 +1418,7 @@ fn properties_permissions_tab<'a>(
             )
             .padding([5, 10])
             .style(styles::ghost_button(palette, 6.0))
-            .on_press_maybe(editable.then_some(Message::PropertiesTogglePosixBit(bit)))
+            .on_press_maybe(editable.then_some(Message::PropertiesTogglePosixBit(win_id, bit)))
         };
 
         let r_lbl = if pt_br { "Leitura" } else { "Read" };
@@ -1471,14 +1508,14 @@ fn properties_permissions_tab<'a>(
                     props.readonly_draft,
                     editable,
                     palette,
-                    Message::PropertiesToggleReadonly,
+                    Message::PropertiesToggleReadonly(win_id),
                 ),
                 quick_toggle_pill(
                     strings.prop_hidden,
                     props.hidden_draft,
                     editable,
                     palette,
-                    Message::PropertiesToggleHidden,
+                    Message::PropertiesToggleHidden(win_id),
                 ),
             ]
             .spacing(10),

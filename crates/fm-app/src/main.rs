@@ -14,13 +14,11 @@ fn main() -> iced::Result {
         )
         .init();
 
-    let mut app_builder = iced::application(app::App::boot, app::App::update, app::App::view)
+    let mut app_builder = iced::daemon(app::App::boot, app::App::update, app::App::view)
         .title(app::App::title)
         .theme(app::App::iced_theme)
         .subscription(app::App::subscription)
         .default_font(fm_theme::FONT_UI)
-        .window_size((1320.0, 860.0))
-        .centered()
         .font(lucide_icons::LUCIDE_FONT_BYTES);
 
     for font_bytes in fm_theme::embedded_fonts() {
