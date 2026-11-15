@@ -112,6 +112,13 @@ pub fn drawer<'a>(
                             palette,
                         ));
                     }
+                    if let Some(git_st) = &tel.git_status {
+                        info_col = info_col.push(meta_row(
+                            strings.git_status_label,
+                            git_st.to_string(),
+                            palette,
+                        ));
+                    }
                     if let Some(hash) = &tel.sha256_prefix {
                         info_col = info_col.push(meta_row(
                             strings.checksum,

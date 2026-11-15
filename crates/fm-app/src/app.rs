@@ -12,7 +12,7 @@ use fm_core::{
 };
 use fm_fs::LocalFs;
 use fm_index::SearchHit;
-use fm_preview::{ThumbnailCache, ThumbnailKey, ThumbnailRgba};
+use fm_preview::{DiskThumbnailCache, ThumbnailCache, ThumbnailKey, ThumbnailRgba};
 use fm_theme::ThemePalette;
 use iced::futures::SinkExt;
 use iced::keyboard;
@@ -45,6 +45,12 @@ pub enum ActiveDialog {
     CreateItem { is_dir: bool, name: String },
     Rename { src: PathBuf, name: String },
     ConfirmDelete { paths: Vec<PathBuf>, permanent: bool },
+    Conflict {
+        mode: CopyMode,
+        sources: Vec<PathBuf>,
+        dest_dir: PathBuf,
+        conflicts: usize,
+    },
 }
 
 pub fn canvas_scroll_id() -> Id {
@@ -164,6 +170,21 @@ pub enum Message {
         path: PathBuf,
         sha: Option<(CompactString, CompactString)>,
     },
+    GitStatusDetected {
+        request_id: u64,
+        path: PathBuf,
+        status: Option<CompactString>,
+    },
+    DiskCacheReady(Option<Arc<DiskThumbnailCache>>),
+    OpenTerminal,
+    TerminalOpened(Result<(), FsError>),
+    ToggleBreadcrumbMenu(PathBuf),
+    CloseBreadcrumbMenu,
+    BreadcrumbMenuLoaded {
+        path: PathBuf,
+        folders: Vec<FileEntry>,
+    },
+    ResolveConflict(ConflictPolicy),
     OpenDeepSearch,
     CloseDeepSearch,
     DeepSearchQueryChanged(String),
@@ -243,9 +264,12 @@ pub struct App {
     pub active_transfer: Option<JobProgress>,
     pub transfer_cancel: Option<CancellationToken>,
     pub pending_select_path: Option<PathBuf>,
+    pub disk_thumbnail_cache: Option<Arc<DiskThumbnailCache>>,
     pub thumbnail_cache: ThumbnailCache,
     pub gpu_thumbnails: HashMap<ThumbnailKey, image::Handle>,
     pub in_flight_thumbs: HashSet<PathBuf>,
+    pub breadcrumb_menu: Option<(PathBuf, Vec<FileEntry>)>,
+    pub breadcrumb_menu_cancel: Option<CancellationToken>,
     pub quicklook_editor: text_editor::Content,
     pub quicklook_extension: String,
     pub quicklook_image: Option<(PathBuf, image::Handle)>,
@@ -322,9 +346,12 @@ impl App {
             active_transfer: None,
             transfer_cancel: None,
             pending_select_path: None,
+            disk_thumbnail_cache: None,
             thumbnail_cache: ThumbnailCache::default(),
             gpu_thumbnails: HashMap::new(),
             in_flight_thumbs: HashSet::new(),
+            breadcrumb_menu: None,
+            breadcrumb_menu_cancel: None,
             quicklook_editor: text_editor::Content::new(),
             quicklook_extension: String::new(),
             quicklook_image: None,
@@ -343,10 +370,20 @@ impl App {
             let vfs = Arc::clone(&vfs);
             Task::perform(async move { vfs.list_drives().await }, Message::DrivesLoaded)
         };
+        let disk_cache_task = Task::perform(
+            async {
+                tokio::task::spawn_blocking(DiskThumbnailCache::open_default)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(Arc::new)
+            },
+            Message::DiskCacheReady,
+        );
         let load1 = spawn_list_task(Arc::clone(&vfs), TabId(1), tab1_path, 1, cancel1);
         let load2 = spawn_list_task(vfs, TabId(2), tab2_path, 2, cancel2);
 
-        (app, Task::batch([drives_task, load1, load2]))
+        (app, Task::batch([drives_task, disk_cache_task, load1, load2]))
     }
 
     pub fn title(&self) -> String {
@@ -939,6 +976,113 @@ impl App {
                 }
                 Task::none()
             }
+            Message::GitStatusDetected {
+                request_id,
+                path,
+                status,
+            } => {
+                if request_id != self.selection_telemetry_request_id {
+                    return Task::none();
+                }
+                if let Some(tab) = self.current_tab_mut()
+                    && let Some(selected) = tab.selection.single_selected(&tab.visible_entries)
+                    && selected.path == path
+                {
+                    let mut tel = tab
+                        .selected_telemetry
+                        .clone()
+                        .unwrap_or_else(|| basic_file_telemetry(selected));
+                    tel.git_status = status;
+                    tab.selected_telemetry = Some(tel);
+                }
+                Task::none()
+            }
+            Message::DiskCacheReady(cache) => {
+                self.disk_thumbnail_cache = cache;
+                self.queue_visible_thumbnails()
+            }
+            Message::OpenTerminal => {
+                let Some(path) = self.current_tab().map(|t| t.current_path.clone()) else {
+                    return Task::none();
+                };
+                let vfs = Arc::clone(&self.vfs);
+                Task::perform(
+                    async move { vfs.open_terminal(&path).await },
+                    Message::TerminalOpened,
+                )
+            }
+            Message::TerminalOpened(res) => {
+                if let Err(err) = res {
+                    self.status_notice = Some(err.to_string());
+                }
+                Task::none()
+            }
+            Message::ToggleBreadcrumbMenu(path) => {
+                if let Some(cancel) = self.breadcrumb_menu_cancel.take() {
+                    cancel.cancel();
+                }
+                if self
+                    .breadcrumb_menu
+                    .as_ref()
+                    .is_some_and(|(cur, _)| cur == &path)
+                {
+                    self.breadcrumb_menu = None;
+                    return Task::none();
+                }
+                let cancel = CancellationToken::new();
+                self.breadcrumb_menu_cancel = Some(cancel.clone());
+                self.breadcrumb_menu = Some((path.clone(), Vec::new()));
+                let show_hidden = self.current_tab().is_some_and(|t| t.show_hidden);
+                let sort = self.current_tab().map(|t| t.sort).unwrap_or_default();
+                let vfs = Arc::clone(&self.vfs);
+                Task::perform(
+                    async move {
+                        let Ok(snap) = vfs.list_dir(&path, 0, cancel).await else {
+                            return (path, Vec::new());
+                        };
+                        let mut folders: Vec<FileEntry> = snap
+                            .entries
+                            .into_iter()
+                            .filter(|e| e.kind.is_dir_like() && (show_hidden || !e.is_hidden))
+                            .collect();
+                        folders.sort_by(|a, b| sort.compare(a, b));
+                        (path, folders)
+                    },
+                    |(path, folders)| Message::BreadcrumbMenuLoaded { path, folders },
+                )
+            }
+            Message::CloseBreadcrumbMenu => {
+                if let Some(cancel) = self.breadcrumb_menu_cancel.take() {
+                    cancel.cancel();
+                }
+                self.breadcrumb_menu = None;
+                Task::none()
+            }
+            Message::BreadcrumbMenuLoaded { path, folders } => {
+                if self
+                    .breadcrumb_menu
+                    .as_ref()
+                    .is_some_and(|(cur, _)| cur == &path)
+                {
+                    self.breadcrumb_menu = Some((path, folders));
+                }
+                Task::none()
+            }
+            Message::ResolveConflict(policy) => {
+                let Some(ActiveDialog::Conflict {
+                    mode,
+                    sources,
+                    dest_dir,
+                    ..
+                }) = self.active_dialog.take()
+                else {
+                    return Task::none();
+                };
+                if mode == CopyMode::Move {
+                    self.clipboard = None;
+                }
+                self.dispatch_transfer(mode, sources, dest_dir, policy)
+            }
             Message::OpenDeepSearch => {
                 self.deep_search_open = true;
                 if self.deep_search_query.is_empty()
@@ -1274,6 +1418,12 @@ impl App {
                 views::inspector::deep_search_modal(self, palette, strings),
             ]
             .into()
+        } else if let Some((root, folders)) = &self.breadcrumb_menu {
+            stack![
+                main_shell,
+                views::modals::breadcrumb_menu_overlay(root, folders, palette, strings),
+            ]
+            .into()
         } else {
             main_shell.into()
         }
@@ -1315,6 +1465,10 @@ impl App {
         self.quicklook_image = None;
         self.quicklook_editor = text_editor::Content::new();
         self.quicklook_extension.clear();
+        if let Some(cancel) = self.breadcrumb_menu_cancel.take() {
+            cancel.cancel();
+        }
+        self.breadcrumb_menu = None;
         if let Some(cancel) = self.selection_telemetry_cancel.take() {
             cancel.cancel();
         }
@@ -1428,22 +1582,59 @@ impl App {
                     select_after: None,
                 },
             ),
+            ActiveDialog::Conflict { .. } => Task::none(),
         }
     }
 
     fn start_clipboard_paste(&mut self) -> Task<Message> {
-        let Some(dest_dir) = self.current_tab().map(|t| t.current_path.clone()) else {
+        let Some(tab) = self.current_tab() else {
             return Task::none();
         };
+        let dest_dir = tab.current_path.clone();
         let Some(transfer) = self.clipboard.clone() else {
             return Task::none();
         };
         if transfer.paths.is_empty() {
             return Task::none();
         }
+
+        let conflicts = transfer
+            .paths
+            .iter()
+            .filter(|src| {
+                src.parent() != Some(&dest_dir)
+                    && src.file_name().is_some_and(|n| {
+                        let target_name = n.to_string_lossy();
+                        tab.raw_entries
+                            .iter()
+                            .any(|e| e.name.as_str() == target_name.as_ref())
+                    })
+            })
+            .count();
+
+        if conflicts > 0 {
+            self.active_dialog = Some(ActiveDialog::Conflict {
+                mode: transfer.mode,
+                sources: transfer.paths,
+                dest_dir,
+                conflicts,
+            });
+            return Task::none();
+        }
+
         if transfer.mode == CopyMode::Move {
             self.clipboard = None;
         }
+        self.dispatch_transfer(transfer.mode, transfer.paths, dest_dir, ConflictPolicy::RenameAuto)
+    }
+
+    fn dispatch_transfer(
+        &mut self,
+        mode: CopyMode,
+        sources: Vec<PathBuf>,
+        dest_dir: PathBuf,
+        policy: ConflictPolicy,
+    ) -> Task<Message> {
         if let Some(prev) = self.transfer_cancel.take() {
             prev.cancel();
         }
@@ -1451,8 +1642,6 @@ impl App {
         self.next_job_id += 1;
         let cancel = CancellationToken::new();
         self.transfer_cancel = Some(cancel.clone());
-        let mode = transfer.mode;
-        let sources = transfer.paths;
 
         self.active_transfer = Some(JobProgress {
             job_id,
@@ -1473,7 +1662,7 @@ impl App {
                     mode,
                     sources,
                     dest_dir,
-                    ConflictPolicy::RenameAuto,
+                    policy,
                     cancel,
                     tx,
                 )
@@ -1560,7 +1749,9 @@ impl App {
 
         let path_mime = entry.path.clone();
         let path_sha = entry.path.clone();
+        let path_git = entry.path.clone();
         let cancel_mime = cancel.clone();
+        let cancel_git = cancel.clone();
 
         let mime_task = Task::perform(
             async move {
@@ -1571,6 +1762,18 @@ impl App {
                 request_id,
                 path,
                 mime,
+            },
+        );
+
+        let git_task = Task::perform(
+            async move {
+                let status = fm_telemetry::detect_file_git_status(&path_git, cancel_git).await;
+                (req_id, path_git, status)
+            },
+            |(request_id, path, status)| Message::GitStatusDetected {
+                request_id,
+                path,
+                status,
             },
         );
 
@@ -1586,7 +1789,7 @@ impl App {
             },
         );
 
-        Task::batch([mime_task, sha_task])
+        Task::batch([mime_task, git_task, sha_task])
     }
 
     fn maybe_load_preview(&mut self, entry: Option<&FileEntry>) -> Task<Message> {
@@ -1742,9 +1945,18 @@ impl App {
             }
             self.in_flight_thumbs.insert(path.clone());
             let cancel = cancel.clone();
+            let disk_cache = self.disk_thumbnail_cache.clone();
             tasks.push(Task::perform(
                 async move {
-                    let rgba = fm_preview::generate_thumbnail(&path, 160, cancel).await;
+                    let key_for_disk = key.clone();
+                    let rgba = fm_preview::generate_or_load_thumbnail(
+                        &path,
+                        Some(key_for_disk),
+                        160,
+                        disk_cache,
+                        cancel,
+                    )
+                    .await;
                     (key, rgba)
                 },
                 |(key, rgba)| Message::ThumbnailReady { key, rgba },
@@ -1780,6 +1992,9 @@ impl App {
         }
 
         match key.as_ref() {
+            keyboard::Key::Character("t") if modifiers.control() && modifiers.shift() => {
+                self.update(Message::OpenTerminal)
+            }
             keyboard::Key::Character("t") if modifiers.control() => self.update(Message::TabNew),
             keyboard::Key::Character("w") if modifiers.control() => {
                 let id = self.active_tab;
@@ -1827,7 +2042,9 @@ impl App {
                 self.update(Message::ToggleQuickLook)
             }
             keyboard::Key::Named(Named::Escape) => {
-                if self.quicklook_open {
+                if self.breadcrumb_menu.is_some() {
+                    self.update(Message::CloseBreadcrumbMenu)
+                } else if self.quicklook_open {
                     self.update(Message::CloseQuickLook)
                 } else {
                     self.update(Message::FilterChanged(String::new()))
@@ -1962,6 +2179,7 @@ fn basic_file_telemetry(entry: &fm_core::FileEntry) -> SelectedFileTelemetry {
         sha256_prefix: None,
         sha256_full: None,
         mime_type: mime,
+        git_status: None,
         preview_snippet: None,
     }
 }

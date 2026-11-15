@@ -1,6 +1,6 @@
 //! Geração SIMD de miniaturas de imagem e cache LRU em memória.
 
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -9,9 +9,13 @@ use fast_image_resize::images::{Image, ImageRef};
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use image::ImageReader;
 use lru::LruCache;
+use resvg::tiny_skia::{Pixmap, Transform};
+use resvg::usvg;
 use tokio_util::sync::CancellationToken;
 
-use crate::{ThumbnailKey, open_shared_read};
+use crate::{DiskThumbnailCache, ThumbnailKey, open_shared_read};
+
+const MAX_SVG_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Capacidade padrão do cache LRU de miniaturas em RAM.
 pub const DEFAULT_THUMBNAIL_CACHE_CAPACITY: usize = 512;
@@ -67,7 +71,7 @@ impl ThumbnailCache {
     }
 }
 
-/// Retorna `true` se a extensão corresponde a um formato de imagem suportado para miniatura/QuickLook.
+/// Retorna `true` se a extensão corresponde a um formato de imagem (raster ou SVG) suportado.
 #[must_use]
 pub fn is_image_extension(ext: Option<&str>) -> bool {
     let Some(ext) = ext else {
@@ -75,11 +79,22 @@ pub fn is_image_extension(ext: Option<&str>) -> bool {
     };
     matches!(
         ext.to_ascii_lowercase().as_str(),
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "ico" | "tiff" | "tif" | "tga" | "pnm"
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "webp"
+            | "gif"
+            | "bmp"
+            | "ico"
+            | "tiff"
+            | "tif"
+            | "tga"
+            | "pnm"
+            | "svg"
     )
 }
 
-/// Decodifica uma imagem e redimensiona via SIMD preservando a proporção até caber em `max_side_px`.
+/// Decodifica uma imagem (raster ou SVG) e redimensiona preservando a proporção até caber em `max_side_px`.
 ///
 /// Usa compartilhamento permissivo no Windows e aborta imediatamente quando `cancel` é acionado.
 pub async fn generate_thumbnail(
@@ -87,15 +102,43 @@ pub async fn generate_thumbnail(
     max_side_px: u32,
     cancel: CancellationToken,
 ) -> Option<Arc<ThumbnailRgba>> {
+    generate_or_load_thumbnail(path, None, max_side_px, None, cancel).await
+}
+
+/// Consulta cache em disco (`redb`) quando disponível, ou gera a miniatura e a persiste em background.
+pub async fn generate_or_load_thumbnail(
+    path: &Path,
+    key: Option<ThumbnailKey>,
+    max_side_px: u32,
+    disk_cache: Option<Arc<DiskThumbnailCache>>,
+    cancel: CancellationToken,
+) -> Option<Arc<ThumbnailRgba>> {
     if cancel.is_cancelled() || max_side_px == 0 {
         return None;
     }
 
     let target = path.to_path_buf();
-    tokio::task::spawn_blocking(move || generate_thumbnail_sync(&target, max_side_px, &cancel))
-        .await
-        .ok()
-        .flatten()
+    tokio::task::spawn_blocking(move || {
+        if cancel.is_cancelled() {
+            return None;
+        }
+        if let (Some(disk), Some(thumb_key)) = (&disk_cache, &key)
+            && let Some(cached) = disk.get(thumb_key, max_side_px)
+        {
+            return Some(cached);
+        }
+
+        let generated = generate_thumbnail_sync(&target, max_side_px, &cancel)?;
+        if !cancel.is_cancelled()
+            && let (Some(disk), Some(thumb_key)) = (&disk_cache, &key)
+        {
+            disk.put(thumb_key, max_side_px, &generated);
+        }
+        Some(generated)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 fn generate_thumbnail_sync(
@@ -105,6 +148,14 @@ fn generate_thumbnail_sync(
 ) -> Option<Arc<ThumbnailRgba>> {
     if cancel.is_cancelled() {
         return None;
+    }
+
+    if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+    {
+        return render_svg_thumbnail(path, max_side_px, cancel);
     }
 
     let file = open_shared_read(path)?;
@@ -169,6 +220,47 @@ fn fit_dimensions(src_w: u32, src_h: u32, max_side_px: u32) -> (u32, u32) {
     let dst_w = ((f64::from(src_w) * scale).round() as u32).max(1);
     let dst_h = ((f64::from(src_h) * scale).round() as u32).max(1);
     (dst_w, dst_h)
+}
+
+fn render_svg_thumbnail(
+    path: &Path,
+    max_side_px: u32,
+    cancel: &CancellationToken,
+) -> Option<Arc<ThumbnailRgba>> {
+    let file = open_shared_read(path)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_SVG_BYTES).read_to_end(&mut bytes).ok()?;
+    if cancel.is_cancelled() {
+        return None;
+    }
+
+    let tree = usvg::Tree::from_data(&bytes, &usvg::Options::default()).ok()?;
+    let svg_size = tree.size();
+    let svg_w = svg_size.width().max(1.0);
+    let svg_h = svg_size.height().max(1.0);
+    let scale = (max_side_px as f32) / svg_w.max(svg_h);
+    let dst_w = (svg_w * scale).round().max(1.0) as u32;
+    let dst_h = (svg_h * scale).round().max(1.0) as u32;
+
+    if cancel.is_cancelled() {
+        return None;
+    }
+
+    let mut pixmap = Pixmap::new(dst_w, dst_h)?;
+    let transform = Transform::from_scale(dst_w as f32 / svg_w, dst_h as f32 / svg_h);
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+
+    let mut straight_rgba = Vec::with_capacity((dst_w as usize) * (dst_h as usize) * 4);
+    for px in pixmap.pixels() {
+        let c = px.demultiply();
+        straight_rgba.extend_from_slice(&[c.red(), c.green(), c.blue(), c.alpha()]);
+    }
+
+    Some(Arc::new(ThumbnailRgba {
+        width: dst_w,
+        height: dst_h,
+        pixels: straight_rgba,
+    }))
 }
 
 #[cfg(test)]
@@ -244,7 +336,35 @@ mod tests {
             .is_none());
         assert!(is_image_extension(Some("PNG")));
         assert!(is_image_extension(Some("webp")));
+        assert!(is_image_extension(Some("svg")));
         assert!(!is_image_extension(Some("rs")));
         assert!(!is_image_extension(None));
+    }
+
+    #[test]
+    fn renders_svg_vector_to_rgba_thumbnail() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!("vagnarok_preview_{nanos}.svg"));
+        std::fs::write(
+            &path,
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="60"><rect width="120" height="60" fill="#2563EB"/></svg>"##,
+        )
+        .expect("salvar svg");
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let thumb = rt
+            .block_on(generate_thumbnail(&path, 64, CancellationToken::new()))
+            .expect("svg renderizado");
+
+        let _ = std::fs::remove_file(&path);
+        assert_eq!((thumb.width, thumb.height), (64, 32));
+        assert_eq!(thumb.pixels.len(), (64 * 32 * 4) as usize);
+        assert_eq!(&thumb.pixels[0..4], &[0x25, 0x63, 0xEB, 0xFF]);
     }
 }

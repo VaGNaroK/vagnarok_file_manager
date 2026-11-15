@@ -1,19 +1,176 @@
+use std::ffi::OsString;
 use std::fs::Metadata;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::fs::MetadataExt;
-use std::os::windows::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use compact_str::CompactString;
-use fm_core::{DriveInfo, DriveKind, PermissionsMeta, VolumeSpace};
+use fm_core::{
+    DirectorySnapshot, DriveInfo, DriveKind, EntryKind, FsError, PermissionsMeta, VolumeSpace,
+};
+use tokio_util::sync::CancellationToken;
+use windows::Win32::Foundation::{ERROR_NO_MORE_FILES, HANDLE};
 use windows::Win32::Storage::FileSystem::{
-    GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDriveStringsW, GetVolumeInformationW,
+    FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
+    FIND_FIRST_EX_LARGE_FETCH, GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDriveStringsW,
+    GetVolumeInformationW, WIN32_FIND_DATAW,
 };
 use windows::core::PCWSTR;
+
+use crate::{make_file_entry, map_io_err};
 
 const DRIVE_REMOVABLE: u32 = 2;
 const DRIVE_FIXED: u32 = 3;
 const DRIVE_REMOTE: u32 = 4;
 const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+
+struct FindHandle(HANDLE);
+
+impl Drop for FindHandle {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` é um handle válido retornado por `FindFirstFileExW`.
+        let _ = unsafe { FindClose(self.0) };
+    }
+}
+
+/// Lista diretório no Windows em lote via `FindFirstFileExW` (`FindExInfoBasic` + `FIND_FIRST_EX_LARGE_FETCH`).
+pub fn scan_directory_native(
+    path: &Path,
+    request_id: u64,
+    cancel: &CancellationToken,
+) -> Result<DirectorySnapshot, FsError> {
+    if cancel.is_cancelled() {
+        return Err(FsError::Cancelled);
+    }
+
+    let pattern = path.join("*");
+    let wide = to_wide(&pattern);
+    let mut find_data = WIN32_FIND_DATAW::default();
+
+    // SAFETY: `wide` é null-terminated válido e `find_data` é um buffer válido na stack.
+    let raw_handle = match unsafe {
+        FindFirstFileExW(
+            PCWSTR(wide.as_ptr()),
+            FindExInfoBasic,
+            (&raw mut find_data).cast(),
+            FindExSearchNameMatch,
+            None,
+            FIND_FIRST_EX_LARGE_FETCH,
+        )
+    } {
+        Ok(h) => h,
+        Err(err) => {
+            if err.code() == ERROR_NO_MORE_FILES.into() {
+                return Ok(DirectorySnapshot {
+                    request_id,
+                    path: path.to_path_buf(),
+                    entries: Vec::new(),
+                    fs_type: fs_type_for_path(path),
+                });
+            }
+            return Err(map_io_err(path, std::io::Error::from(err)));
+        }
+    };
+
+    let handle = FindHandle(raw_handle);
+    let mut entries = Vec::new();
+    let mut processed = 0usize;
+
+    loop {
+        if processed.is_multiple_of(256) && cancel.is_cancelled() {
+            return Err(FsError::Cancelled);
+        }
+        processed += 1;
+
+        let end = find_data
+            .cFileName
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(find_data.cFileName.len());
+        let name_slice = &find_data.cFileName[..end];
+
+        // Ignora entradas `.` e `..`.
+        let is_dot = name_slice == [b'.' as u16] || name_slice == [b'.' as u16, b'.' as u16];
+        if !is_dot && !name_slice.is_empty() {
+            let name_os = OsString::from_wide(name_slice);
+            let name = CompactString::from(name_os.to_string_lossy().as_ref());
+            let entry_path = path.join(&name_os);
+
+            let attrs = find_data.dwFileAttributes;
+            let is_hidden = (attrs & FILE_ATTRIBUTE_HIDDEN) != 0;
+            let is_reparse = (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+            let is_dir = (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+
+            let kind = if is_reparse {
+                let target_is_dir = std::fs::metadata(&entry_path)
+                    .map(|m| m.is_dir())
+                    .unwrap_or(is_dir);
+                EntryKind::Symlink { target_is_dir }
+            } else if is_dir {
+                EntryKind::Directory
+            } else {
+                EntryKind::File
+            };
+
+            let size_bytes = (u64::from(find_data.nFileSizeHigh) << 32) | u64::from(find_data.nFileSizeLow);
+            let modified_at = filetime_to_system_time(
+                find_data.ftLastWriteTime.dwHighDateTime,
+                find_data.ftLastWriteTime.dwLowDateTime,
+            );
+
+            entries.push(make_file_entry(
+                name,
+                entry_path,
+                kind,
+                size_bytes,
+                modified_at,
+                PermissionsMeta::WinAttributes(attrs),
+                is_hidden,
+            ));
+        }
+
+        // SAFETY: `handle.0` é válido e `find_data` pertence ao frame atual.
+        match unsafe { FindNextFileW(handle.0, &raw mut find_data) } {
+            Ok(()) => {}
+            Err(err) if err.code() == ERROR_NO_MORE_FILES.into() => break,
+            Err(err) => return Err(map_io_err(path, std::io::Error::from(err))),
+        }
+    }
+
+    Ok(DirectorySnapshot {
+        request_id,
+        path: path.to_path_buf(),
+        entries,
+        fs_type: fs_type_for_path(path),
+    })
+}
+
+fn filetime_to_system_time(high: u32, low: u32) -> Option<SystemTime> {
+    const WINDOWS_TICK: u64 = 10_000_000;
+    const SEC_TO_UNIX_EPOCH: u64 = 11_644_473_600;
+    let ticks = (u64::from(high) << 32) | u64::from(low);
+    let unix_ticks = ticks.checked_sub(SEC_TO_UNIX_EPOCH * WINDOWS_TICK)?;
+    let secs = unix_ticks / WINDOWS_TICK;
+    let rem_nanos = ((unix_ticks % WINDOWS_TICK) * 100) as u32;
+    UNIX_EPOCH.checked_add(Duration::new(secs, rem_nanos))
+}
+
+/// Abre Windows Terminal (`wt.exe`) ou fallback `cmd.exe` no diretório especificado.
+pub fn open_terminal_at(path: &Path) -> Result<(), FsError> {
+    if Command::new("wt.exe").arg("-d").arg(path).spawn().is_ok() {
+        return Ok(());
+    }
+    Command::new("cmd.exe")
+        .args(["/C", "start", "cmd.exe"])
+        .current_dir(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| map_io_err(path, e))
+}
 
 pub fn extract_permissions_and_hidden(_name: &str, meta: &Metadata) -> (PermissionsMeta, bool) {
     let attrs = meta.file_attributes();

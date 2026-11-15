@@ -8,7 +8,7 @@ pub mod stats;
 
 use compact_str::CompactString;
 
-pub use git::detect_git_branch;
+pub use git::{detect_file_git_status, detect_git_branch};
 pub use hash::compute_sha256;
 pub use mime::detect_mime_type;
 pub use stats::count_direct_children;

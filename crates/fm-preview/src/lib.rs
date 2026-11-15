@@ -1,10 +1,12 @@
-//! Pipeline de geração de thumbnails SIMD, cache LRU/persistente e QuickLook.
+//! Pipeline de geração de thumbnails SIMD, SVG (`resvg`), cache LRU + persistente (`redb`) e QuickLook.
 
+pub mod disk_cache;
 pub mod thumbs;
 
+pub use disk_cache::DiskThumbnailCache;
 pub use thumbs::{
-    DEFAULT_THUMBNAIL_CACHE_CAPACITY, ThumbnailCache, ThumbnailRgba, generate_thumbnail,
-    is_image_extension,
+    DEFAULT_THUMBNAIL_CACHE_CAPACITY, ThumbnailCache, ThumbnailRgba, generate_or_load_thumbnail,
+    generate_thumbnail, is_image_extension,
 };
 
 use std::fs::File;

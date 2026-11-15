@@ -78,6 +78,13 @@ pub struct Strings {
     pub pin_favorite: &'static str,
     pub unpin_favorite: &'static str,
     pub empty_subdir: &'static str,
+    pub open_terminal: &'static str,
+    pub git_status_label: &'static str,
+    pub conflict_title: &'static str,
+    pub conflict_msg: &'static str,
+    pub conflict_rename: &'static str,
+    pub conflict_overwrite: &'static str,
+    pub conflict_skip: &'static str,
 }
 
 impl Strings {
@@ -165,6 +172,13 @@ impl Strings {
             pin_favorite: "Fixar",
             unpin_favorite: "Desafixar",
             empty_subdir: "Subpasta vazia",
+            open_terminal: "Terminal",
+            git_status_label: "Status Git",
+            conflict_title: "Conflito no Destino",
+            conflict_msg: "Alguns itens já existem no destino. Como deseja continuar?",
+            conflict_rename: "Manter ambos (Renomear)",
+            conflict_overwrite: "Sobrescrever",
+            conflict_skip: "Pular existentes",
         }
     }
 
@@ -245,6 +259,13 @@ impl Strings {
             pin_favorite: "Pin",
             unpin_favorite: "Unpin",
             empty_subdir: "Empty subfolder",
+            open_terminal: "Terminal",
+            git_status_label: "Git Status",
+            conflict_title: "Destination Conflict",
+            conflict_msg: "Some items already exist at the destination. How would you like to proceed?",
+            conflict_rename: "Keep both (Rename)",
+            conflict_overwrite: "Overwrite",
+            conflict_skip: "Skip existing",
         }
     }
 }

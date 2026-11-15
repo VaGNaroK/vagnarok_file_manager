@@ -288,9 +288,6 @@ fn unified_breadcrumb<'a>(
 
         let last_idx = components.len().saturating_sub(1);
         for (idx, (label, target)) in components.into_iter().enumerate() {
-            if idx > 0 {
-                crumbs = crumbs.push(icon_chevron_right().size(12).color(palette.text_muted));
-            }
             let is_last = idx == last_idx;
             let txt = text(label)
                 .size(12)
@@ -300,11 +297,25 @@ fn unified_breadcrumb<'a>(
                 } else {
                     palette.text_secondary
                 });
+            let is_menu_open = app
+                .breadcrumb_menu
+                .as_ref()
+                .is_some_and(|(open_path, _)| open_path == &target);
             crumbs = crumbs.push(
                 button(txt)
                     .padding([3, 6])
                     .style(styles::ghost_button(palette, 6.0))
-                    .on_press(Message::NavigateTo(target)),
+                    .on_press(Message::NavigateTo(target.clone())),
+            );
+            crumbs = crumbs.push(
+                button(icon_chevron_right().size(12).color(if is_menu_open {
+                    palette.accent_primary
+                } else {
+                    palette.text_muted
+                }))
+                .padding([3, 3])
+                .style(styles::ghost_button(palette, 4.0))
+                .on_press(Message::ToggleBreadcrumbMenu(target)),
             );
         }
     }

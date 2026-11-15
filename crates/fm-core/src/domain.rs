@@ -171,6 +171,7 @@ pub struct SelectedFileTelemetry {
     pub sha256_prefix: Option<CompactString>,
     pub sha256_full: Option<CompactString>,
     pub mime_type: Option<CompactString>,
+    pub git_status: Option<CompactString>,
     pub preview_snippet: Option<String>,
 }
 

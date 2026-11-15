@@ -10,7 +10,9 @@ use fm_core::{ConflictPolicy, CopyMode, FsError, JobProgress, JobState};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
-use crate::{map_io_err, platform};
+use crate::map_io_err;
+#[cfg(target_os = "linux")]
+use crate::platform;
 
 const COPY_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 const STREAM_BUF_BYTES: usize = 256 * 1024;
@@ -241,9 +243,24 @@ fn copy_single_file(
         .map_err(|e| map_io_err(dst, e))?;
 
     #[cfg(target_os = "linux")]
+    if let Some(res) = platform::try_ficlone(&in_file, &out_file) {
+        match res {
+            Ok(()) => {
+                let len = in_file.metadata().map(|m| m.len()).unwrap_or(0);
+                ctx.bytes_done = ctx.bytes_done.saturating_add(len);
+                ctx.emit(src, JobState::Running);
+                return Ok(());
+            }
+            Err(err) => {
+                drop(out_file);
+                let _ = std::fs::remove_file(dst);
+                return Err(map_io_err(dst, err));
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
     let mut use_zero_copy = true;
-    #[cfg(not(target_os = "linux"))]
-    let use_zero_copy = false;
 
     let mut scratch = Vec::new();
     let mut total_written = 0u64;

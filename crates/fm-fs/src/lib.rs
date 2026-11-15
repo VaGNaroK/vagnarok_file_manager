@@ -94,7 +94,7 @@ impl VfsProvider for LocalFs {
         cancel: CancellationToken,
     ) -> Result<DirectorySnapshot, FsError> {
         let target = path.to_path_buf();
-        tokio::task::spawn_blocking(move || scan_directory_blocking(&target, request_id, &cancel))
+        tokio::task::spawn_blocking(move || platform::scan_directory_native(&target, request_id, &cancel))
             .await
             .map_err(|err| FsError::Io {
                 path: path.to_path_buf(),
@@ -210,9 +210,55 @@ impl VfsProvider for LocalFs {
             message: err.to_string(),
         })?
     }
+
+    async fn open_terminal(&self, path: &Path) -> Result<(), FsError> {
+        let target = path.to_path_buf();
+        tokio::task::spawn_blocking(move || platform::open_terminal_at(&target))
+            .await
+            .map_err(|err| FsError::Io {
+                path: path.to_path_buf(),
+                message: err.to_string(),
+            })?
+    }
 }
 
-fn scan_directory_blocking(
+pub(crate) fn make_file_entry(
+    name: CompactString,
+    entry_path: PathBuf,
+    kind: EntryKind,
+    size_bytes: u64,
+    modified_at: Option<std::time::SystemTime>,
+    permissions: PermissionsMeta,
+    is_hidden: bool,
+) -> FileEntry {
+    let extension = if kind.is_dir_like() {
+        None
+    } else {
+        entry_path
+            .extension()
+            .map(|ext| CompactString::from(ext.to_string_lossy().as_ref()))
+            .filter(|s| !s.is_empty())
+    };
+
+    let mime_badge = extension.as_ref().map(|ext| ext.to_ascii_uppercase());
+
+    FileEntry {
+        id: compute_entry_id(&entry_path),
+        name,
+        path: entry_path,
+        extension,
+        kind,
+        size_bytes: if kind.is_dir_like() { 0 } else { size_bytes },
+        modified_at,
+        is_hidden,
+        permissions,
+        child_count: None,
+        mime_badge,
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn scan_directory_blocking(
     path: &Path,
     request_id: u64,
     cancel: &CancellationToken,
@@ -266,41 +312,20 @@ fn scan_directory_blocking(
             (EntryKind::Special, link_meta)
         };
 
-        let extension = if kind.is_dir_like() {
-            None
-        } else {
-            entry_path
-                .extension()
-                .map(|ext| CompactString::from(ext.to_string_lossy().as_ref()))
-                .filter(|s| !s.is_empty())
-        };
-
-        let mime_badge = extension
-            .as_ref()
-            .map(|ext| ext.to_ascii_uppercase());
-
-        let size_bytes = if kind.is_dir_like() {
-            0
-        } else {
-            effective_meta.len()
-        };
+        let size_bytes = effective_meta.len();
         let modified_at = effective_meta.modified().ok();
         let (permissions, is_hidden): (PermissionsMeta, bool) =
             platform::extract_permissions_and_hidden(&name, &effective_meta);
 
-        entries.push(FileEntry {
-            id: compute_entry_id(&entry_path),
+        entries.push(make_file_entry(
             name,
-            path: entry_path,
-            extension,
+            entry_path,
             kind,
             size_bytes,
             modified_at,
-            is_hidden,
             permissions,
-            child_count: None,
-            mime_badge,
-        });
+            is_hidden,
+        ));
     }
 
     let fs_type = platform::fs_type_for_path(path);

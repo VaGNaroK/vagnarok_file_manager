@@ -1,9 +1,18 @@
-use fm_core::{Language, Strings, ThemePreset, ViewMode, WindowDecorationsMode, format_bytes};
+use std::path::Path;
+
+use fm_core::{
+    ConflictPolicy, FileEntry, Language, Strings, ThemePreset, ViewMode, WindowDecorationsMode,
+    format_bytes,
+};
 use fm_theme::{FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_SEMIBOLD, ThemePalette, styles};
 use iced::Alignment::Center;
-use iced::widget::{Space, button, column, container, row, space, text, text_input};
-use iced::{Element, Length};
-use lucide_icons::iced::{icon_file_plus, icon_folder_plus, icon_pencil, icon_trash_2, icon_x};
+use iced::widget::{
+    Space, button, column, container, mouse_area, row, scrollable, space, text, text_input,
+};
+use iced::{Element, Length, Padding};
+use lucide_icons::iced::{
+    icon_file_plus, icon_folder, icon_folder_plus, icon_pencil, icon_trash_2, icon_x,
+};
 
 use crate::app::{ActiveDialog, App, Message, dialog_input_id};
 
@@ -218,6 +227,99 @@ pub fn dialog_modal<'a>(
             .spacing(12)
             .into()
         }
+        ActiveDialog::Conflict {
+            mode: _,
+            sources,
+            dest_dir: _,
+            conflicts,
+        } => {
+            let mut list_preview = column![].spacing(4);
+            for p in sources.iter().take(5) {
+                let label = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| p.to_string_lossy().into_owned());
+                list_preview = list_preview.push(
+                    text(format!("• {label}"))
+                        .size(12)
+                        .font(FONT_MONO)
+                        .color(palette.text_secondary),
+                );
+            }
+            if sources.len() > 5 {
+                list_preview = list_preview.push(
+                    text(format!("+ {} ...", sources.len() - 5))
+                        .size(11)
+                        .font(FONT_MONO)
+                        .color(palette.text_muted),
+                );
+            }
+
+            let actions = column![
+                row![
+                    button(
+                        text(strings.conflict_rename)
+                            .size(12)
+                            .font(FONT_UI_SEMIBOLD),
+                    )
+                    .width(Length::Fill)
+                    .padding([8, 12])
+                    .style(styles::pill_primary_button(palette))
+                    .on_press(Message::ResolveConflict(ConflictPolicy::RenameAuto)),
+                ],
+                row![
+                    button(text(strings.conflict_overwrite).size(12))
+                        .width(Length::Fill)
+                        .padding([7, 12])
+                        .style(styles::pill_secondary_button(palette))
+                        .on_press(Message::ResolveConflict(ConflictPolicy::Overwrite)),
+                    button(text(strings.conflict_skip).size(12))
+                        .width(Length::Fill)
+                        .padding([7, 12])
+                        .style(styles::pill_secondary_button(palette))
+                        .on_press(Message::ResolveConflict(ConflictPolicy::Skip)),
+                ]
+                .spacing(8),
+                row![
+                    space::horizontal(),
+                    button(text(strings.cancel).size(12))
+                        .padding([6, 14])
+                        .style(styles::ghost_button(palette, 8.0))
+                        .on_press(Message::CloseDialog),
+                ],
+            ]
+            .spacing(8);
+
+            column![
+                row![
+                    text(format!("{} ({conflicts})", strings.conflict_title))
+                        .size(15)
+                        .font(FONT_UI_SEMIBOLD)
+                        .color(palette.text_primary),
+                    space::horizontal(),
+                    button(icon_x().size(14))
+                        .padding([4, 6])
+                        .style(styles::ghost_button(palette, 6.0))
+                        .on_press(Message::CloseDialog),
+                ]
+                .align_y(Center),
+                text(strings.conflict_msg)
+                    .size(13)
+                    .font(FONT_UI)
+                    .color(palette.text_secondary),
+                container(list_preview)
+                    .width(Length::Fill)
+                    .padding(10)
+                    .style(move |_| styles::panel_surface(
+                        palette.surface_low,
+                        palette.border,
+                        8.0
+                    )),
+                actions,
+            ]
+            .spacing(12)
+            .into()
+        }
     };
 
     let card = container(column![body].width(Length::Fixed(460.0)))
@@ -382,4 +484,88 @@ pub fn format_transfer_summary(done: u64, total: u64) -> String {
             format_bytes(total)
         )
     }
+}
+
+pub fn breadcrumb_menu_overlay<'a>(
+    root: &'a Path,
+    folders: &'a [FileEntry],
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let mut items_col = column![].spacing(2).width(Length::Fill);
+
+    if folders.is_empty() {
+        items_col = items_col.push(
+            container(
+                text(strings.empty_subdir)
+                    .size(12)
+                    .font(FONT_UI)
+                    .color(palette.text_muted),
+            )
+            .padding([6, 8]),
+        );
+    } else {
+        for entry in folders.iter().take(40) {
+            let p = entry.path.clone();
+            items_col = items_col.push(
+                button(
+                    row![
+                        icon_folder().size(14).color(palette.accent_primary),
+                        text(entry.name.as_str())
+                            .size(12)
+                            .font(FONT_UI)
+                            .color(palette.text_primary),
+                    ]
+                    .spacing(8)
+                    .align_y(Center),
+                )
+                .width(Length::Fill)
+                .padding([5, 8])
+                .style(styles::ghost_button(palette, 6.0))
+                .on_press(Message::NavigateTo(p)),
+            );
+        }
+    }
+
+    let menu_card = container(
+        column![
+            row![
+                text(
+                    root.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| root.to_string_lossy().into_owned()),
+                )
+                .size(11)
+                .font(FONT_MONO_BOLD)
+                .color(palette.text_muted),
+                space::horizontal(),
+                button(icon_x().size(12))
+                    .padding([2, 4])
+                    .style(styles::ghost_button(palette, 4.0))
+                    .on_press(Message::CloseBreadcrumbMenu),
+            ]
+            .align_y(Center),
+            scrollable(items_col).height(Length::Shrink),
+        ]
+        .spacing(6)
+        .width(Length::Fixed(240.0)),
+    )
+    .max_height(320.0)
+    .padding(10)
+    .style(styles::modal_card(palette));
+
+    mouse_area(
+        container(menu_card)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(Padding {
+                top: 82.0,
+                right: 16.0,
+                bottom: 16.0,
+                left: 160.0,
+            }),
+    )
+    .on_press(Message::CloseBreadcrumbMenu)
+    .into()
 }

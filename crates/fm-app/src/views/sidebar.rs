@@ -1,7 +1,7 @@
 use fm_core::{DriveKind, Strings, format_bytes};
 use fm_theme::{FONT_MONO, FONT_UI, FONT_UI_SEMIBOLD, Spacing, ThemePalette, styles};
 use iced::Alignment::Center;
-use iced::widget::{button, column, container, row, scrollable, space, text};
+use iced::widget::{Space, button, column, container, row, scrollable, space, text};
 use iced::{Element, Length, Padding};
 use lucide_icons::iced::{
     icon_database, icon_download, icon_folder, icon_hard_drive, icon_home, icon_image,
@@ -60,7 +60,7 @@ pub fn view<'a>(
             sections = sections.push(section_header(strings.drives, palette));
         }
 
-        let mut drives_col = column![].spacing(2);
+        let mut drives_col = column![].spacing(4);
         for drive in &app.drives {
             let icon = match drive.kind {
                 DriveKind::InternalSsd => icon_hard_drive().size(16),
@@ -76,14 +76,55 @@ pub fn view<'a>(
             let active = app
                 .current_tab()
                 .is_some_and(|t| t.current_path == drive.mount_path);
-            drives_col = drives_col.push(sidebar_btn_owned(
+            let btn = sidebar_btn_owned(
                 icon,
                 label,
                 collapsed,
                 active,
                 palette,
                 Message::SelectDrive(drive.mount_path.clone()),
-            ));
+            );
+
+            if !collapsed
+                && let Some(space_info) = &drive.space
+                && space_info.total_bytes > 0
+            {
+                let used = space_info.total_bytes.saturating_sub(space_info.free_bytes);
+                let ratio = ((used as f64) / (space_info.total_bytes as f64)).clamp(0.0, 1.0);
+                let filled = ((ratio * 1000.0).round() as u16).clamp(1, 1000);
+                let remaining = 1000u16.saturating_sub(filled);
+                let fill_color = if ratio > 0.9 {
+                    palette.status_error
+                } else if ratio > 0.75 {
+                    palette.status_warning
+                } else {
+                    palette.accent_primary
+                };
+                let bar = container(
+                    row![
+                        container(Space::new().width(Length::Fill).height(3))
+                            .width(Length::FillPortion(filled))
+                            .style(move |_| styles::panel_surface(
+                                fill_color,
+                                fill_color,
+                                9999.0
+                            )),
+                        container(Space::new().width(Length::Fill).height(3))
+                            .width(Length::FillPortion(remaining.max(1)))
+                            .style(move |_| styles::panel_surface(
+                                palette.surface_high,
+                                palette.surface_high,
+                                9999.0
+                            )),
+                    ]
+                    .width(Length::Fill),
+                )
+                .padding(Padding::from([0, 10]));
+
+                drives_col = drives_col.push(column![btn, bar].spacing(2));
+            } else {
+                drives_col = drives_col.push(btn);
+            }
         }
         sections = sections.push(drives_col);
     }

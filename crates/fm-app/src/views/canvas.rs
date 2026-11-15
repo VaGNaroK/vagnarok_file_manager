@@ -301,6 +301,18 @@ fn action_bar<'a>(
     .style(styles::pill_secondary_button(palette))
     .on_press(Message::ToggleHidden);
 
+    let terminal_btn = button(
+        row![
+            icon_terminal().size(13),
+            text(strings.open_terminal).size(12),
+        ]
+        .spacing(5)
+        .align_y(Center),
+    )
+    .padding([6, 10])
+    .style(styles::pill_secondary_button(palette))
+    .on_press(Message::OpenTerminal);
+
     let info_btn = button(icon_info().size(16).color(if app.config.show_inspector {
         palette.accent_primary
     } else {
@@ -319,6 +331,7 @@ fn action_bar<'a>(
             sort_btn,
             sort_dir_btn,
             hidden_btn,
+            terminal_btn,
             fav_btn,
             info_btn
         ]

@@ -1,10 +1,182 @@
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs::{File, Metadata};
+use std::mem::MaybeUninit;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use compact_str::CompactString;
-use fm_core::{DriveInfo, DriveKind, PermissionsMeta, VolumeSpace};
+use fm_core::{
+    DirectorySnapshot, DriveInfo, DriveKind, EntryKind, FsError, PermissionsMeta, VolumeSpace,
+};
+use rustix::fs::{AtFlags, Mode, OFlags, RawDir};
+use tokio_util::sync::CancellationToken;
+
+use crate::{make_file_entry, map_io_err};
+
+/// Tenta clone instantâneo Copy-on-Write (`FICLONE`, Btrfs/XFS) no Linux.
+/// Retorna `None` quando o filesystem não suporta reflink para prosseguir com `copy_file_range`.
+pub fn try_ficlone(in_file: &File, out_file: &File) -> Option<std::io::Result<()>> {
+    match rustix::fs::ioctl_ficlone(out_file, in_file) {
+        Ok(()) => Some(Ok(())),
+        Err(errno)
+            if errno == rustix::io::Errno::XDEV
+                || errno == rustix::io::Errno::OPNOTSUPP
+                || errno == rustix::io::Errno::INVAL
+                || errno == rustix::io::Errno::NOSYS
+                || errno == rustix::io::Errno::NOTTY
+                || errno == rustix::io::Errno::ISDIR =>
+        {
+            None
+        }
+        Err(errno) => Some(Err(std::io::Error::from_raw_os_error(errno.raw_os_error()))),
+    }
+}
+
+/// Lista diretório no Linux via `open(O_DIRECTORY)` + `RawDir` (`getdents64`) + `statat`,
+/// evitando construir `PathBuf`s para cada `lstat` e abortando em cancelamento.
+pub fn scan_directory_native(
+    path: &Path,
+    request_id: u64,
+    cancel: &CancellationToken,
+) -> Result<DirectorySnapshot, FsError> {
+    if cancel.is_cancelled() {
+        return Err(FsError::Cancelled);
+    }
+
+    let dir_fd = rustix::fs::open(
+        path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|errno| map_io_err(path, std::io::Error::from_raw_os_error(errno.raw_os_error())))?;
+
+    let mut buf = vec![MaybeUninit::<u8>::uninit(); 32 * 1024];
+    let mut entries = Vec::new();
+    let mut iter = RawDir::new(&dir_fd, &mut buf);
+    let mut processed = 0usize;
+
+    while let Some(item_res) = iter.next() {
+        if processed.is_multiple_of(256) && cancel.is_cancelled() {
+            return Err(FsError::Cancelled);
+        }
+        processed += 1;
+
+        let Ok(raw_entry) = item_res else {
+            continue;
+        };
+
+        let raw_name = raw_entry.file_name();
+        let name_bytes = raw_name.to_bytes();
+        if name_bytes == b"." || name_bytes == b".." {
+            continue;
+        }
+
+        let Ok(link_stat) = rustix::fs::statat(&dir_fd, raw_name, AtFlags::SYMLINK_NOFOLLOW) else {
+            continue;
+        };
+
+        let link_fmt = link_stat.st_mode & 0o170_000;
+        let (kind, effective_stat) = if link_fmt == 0o120_000 {
+            match rustix::fs::statat(&dir_fd, raw_name, AtFlags::empty()) {
+                Ok(target_stat) => {
+                    let target_is_dir = (target_stat.st_mode & 0o170_000) == 0o040_000;
+                    (EntryKind::Symlink { target_is_dir }, target_stat)
+                }
+                Err(_) => (
+                    EntryKind::Symlink {
+                        target_is_dir: false,
+                    },
+                    link_stat,
+                ),
+            }
+        } else if link_fmt == 0o040_000 {
+            (EntryKind::Directory, link_stat)
+        } else if link_fmt == 0o100_000 {
+            (EntryKind::File, link_stat)
+        } else {
+            (EntryKind::Special, link_stat)
+        };
+
+        let name_os = OsStr::from_bytes(name_bytes);
+        let name = CompactString::from(name_os.to_string_lossy().as_ref());
+        let entry_path = path.join(name_os);
+        let is_hidden = name_bytes.starts_with(b".");
+        let permissions = PermissionsMeta::PosixMode(effective_stat.st_mode);
+        let size_bytes = u64::try_from(effective_stat.st_size).unwrap_or(0);
+        let modified_at = unix_timespec_to_system_time(
+            effective_stat.st_mtime,
+            effective_stat.st_mtime_nsec as u32,
+        );
+
+        entries.push(make_file_entry(
+            name,
+            entry_path,
+            kind,
+            size_bytes,
+            modified_at,
+            permissions,
+            is_hidden,
+        ));
+    }
+
+    let fs_type = fs_type_for_path(path);
+
+    Ok(DirectorySnapshot {
+        request_id,
+        path: path.to_path_buf(),
+        entries,
+        fs_type,
+    })
+}
+
+fn unix_timespec_to_system_time(secs: i64, nsec: u32) -> Option<SystemTime> {
+    let nanos = nsec.min(999_999_999);
+    if secs >= 0 {
+        UNIX_EPOCH.checked_add(Duration::new(secs as u64, nanos))
+    } else {
+        let abs_secs = secs.unsigned_abs();
+        UNIX_EPOCH
+            .checked_sub(Duration::from_secs(abs_secs))?
+            .checked_add(Duration::from_nanos(u64::from(nanos)))
+    }
+}
+
+/// Abre o emulador de terminal disponível no ambiente Linux com `cwd` apontando para `path`.
+pub fn open_terminal_at(path: &Path) -> Result<(), FsError> {
+    let env_term = std::env::var("TERMINAL").ok();
+    let candidates: [&str; 9] = [
+        "xdg-terminal-exec",
+        "x-terminal-emulator",
+        "kitty",
+        "alacritty",
+        "wezterm",
+        "foot",
+        "gnome-terminal",
+        "konsole",
+        "xterm",
+    ];
+
+    if let Some(term) = env_term.as_deref().filter(|s| !s.trim().is_empty())
+        && Command::new(term).current_dir(path).spawn().is_ok()
+    {
+        return Ok(());
+    }
+
+    for bin in candidates {
+        if Command::new(bin).current_dir(path).spawn().is_ok() {
+            return Ok(());
+        }
+    }
+
+    Err(FsError::Io {
+        path: path.to_path_buf(),
+        message: "nenhum emulador de terminal encontrado no PATH ($TERMINAL)".to_owned(),
+    })
+}
 
 /// Tenta transferência kernel-to-kernel via `copy_file_range(2)` no Linux.
 /// Retorna `None` quando o par de descritores/filesystem exige fallback para read/write em userspace.
