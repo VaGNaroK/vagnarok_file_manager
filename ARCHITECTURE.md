@@ -6,7 +6,7 @@
 
 ## 1. Visão Geral e Objetivos de Engenharia
 
-O projeto tem como objetivo entregar um gerenciador de arquivos moderno para power users e desenvolvedores, unindo a clareza visual dos mockups ([DESIGN.md](DESIGN.md), [code.html](code.html), `screen.png`) com execução nativa sem WebView, sem Electron/Tauri e sem bindings pesados de C/C++.
+O projeto tem como objetivo entregar um gerenciador de arquivos moderno para power users e desenvolvedores, unindo a clareza visual dos mockups ([DESIGN.md](DESIGN.md), `code.html`, `screen.png`) com execução nativa sem WebView, sem Electron/Tauri e sem bindings pesados de C/C++.
 
 ### Metas Técnicas
 * **Renderização GPU a 60–120+ FPS**: Interface desenhada via `iced` + `wgpu` (Vulkan no Linux, DirectX 12/Vulkan no Windows, com fallback `tiny-skia`).
@@ -19,7 +19,7 @@ O projeto tem como objetivo entregar um gerenciador de arquivos moderno para pow
 
 ## 2. Análise e Reconciliação do Mockup Inicial
 
-A inspeção conjunta de [DESIGN.md](DESIGN.md), [code.html](code.html) e do mockup inicial `screen.png` revelou decisões que devem ser normalizadas na arquitetura:
+A inspeção conjunta de [DESIGN.md](DESIGN.md), `code.html` e do mockup inicial `screen.png` revelou decisões que devem ser normalizadas na arquitetura:
 
 | Aspecto | Estado Atual no Mockup | Decisão Arquitetural |
 | :--- | :--- | :--- |
