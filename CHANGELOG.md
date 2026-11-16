@@ -21,10 +21,24 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-15 | **Polimento Técnico** | Grid agrupado/unificado, tamanho recursivo Hero Card, QuickLook `512 KB`, restaurar/esvaziar lixeira, benchmarks | 36 passando |
 | 2026-11-15 | **Pós-Polimento UX & Multi-Janela** | Duplo clique, anti-flicker, navegação 2D, sanitização `\n`, janela flutuante de Propriedades em 5 abas | 41 passando |
 | 2026-11-16 | **Git, UX Sidebar & Zoom Ctrl+Scroll** | Ativação do Git (`main` + `.gitignore`), menu de contexto em favoritos/barra lateral, Propriedades via `stat_entry` e zoom `Ctrl + Scroll` no Grid | 42 passando |
+| 2026-11-16 | **Internacionalização Multi-Idiomas (Fluent)** | 6 locales `.ftl` (`pt-BR`, `en-US`, `es-ES`, `fr-FR`, `de-DE`, `it-IT`), detecção do SO (`sys-locale`), pluralização CLDR, `LocaleFormatSpec` e seletores multi-idioma | 44 passando |
 
 ---
 
 ## [0.1.0-dev] — 2026-11-16
+
+### Internacionalização Multi-Idiomas (`Project Fluent`)
+
+* **Motor Fluent & 6 locales embutidos** (`Cargo.toml`, `crates/fm-core/locales/*.ftl`, `crates/fm-core/src/i18n.rs`):
+  * Integrados `fluent-bundle`, `unic-langid`, `sys-locale` e `fluent-syntax` (dev) sem I/O em runtime (`include_str!`) e com cache estático `OnceLock` em `Strings` (`Copy + Send + Sync`, `set_use_isolating(false)` e fallback automático para `en-US`).
+  * Adicionados catálogos completos para **Português (BR)**, **English (US)**, **Español**, **Français**, **Deutsch** e **Italiano**, com regras plurais CLDR (`format_items_count`, `format_folders_count`, `format_files_count`, `format_selected_multi`), formatação de bytes exatos e descrição de tipos (`describe_entry_kind`).
+  * Testes automatizados em `fm-core` (`all_locales_match_canonical_keys_and_variables` e `resolves_locale_tags_and_plural_forms`) validando paridade de 100% das chaves e variáveis entre todos os `.ftl`.
+* **Modelo de idioma, detecção do SO & formatação regional** (`crates/fm-core/src/{state,domain,lib}.rs`, `crates/fm-fs/src/config.rs`):
+  * Expandido `Language` (`ALL`, `bcp47()`, `short_code()`, `native_name()`, `from_locale_tag()`, `detect_system()`) e adicionado `language_customized: bool` em `AppConfig`.
+  * Removido o acoplamento `pt_br: bool` em favor de `LocaleFormatSpec`, `format_grouped_u64(value, thousands_sep)` e `local_timestamp_kind()`.
+* **Seletores de idioma & limpeza de literais na UI** (`crates/fm-app/src/app.rs`, `views/{header,modals,canvas,inspector,footer}.rs`):
+  * Clique no indicador de idioma no topo (`PT`/`EN`/`ES`/`FR`/`DE`/`IT`) abre `ContextMenuKind::LanguageMenu` com opção **Sistema (Auto)** (`Message::UseSystemLanguage`) e seleção direta (`Message::SetLanguage`); **Preferências** exibe pílulas para todos os idiomas e modo automático, propagando imediatamente inclusive para janelas flutuantes de Propriedades.
+  * Removidos `strings.close == "Fechar"` e textos hardcoded restantes em ações, diálogos, Inspetor, rodapé e canvas.
 
 ### Repositório Git, UX da Barra Lateral & Zoom `Ctrl + Scroll`
 
@@ -205,7 +219,7 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 Última bateria executada sobre o workspace atual (sem alterações posteriores):
 * `cargo fmt --all -- --check`: aprovado (`exit 0`).
 * `cargo clippy --workspace --all-targets -- -D warnings`: aprovado (`0` avisos).
-* `cargo test --workspace`: **42 testes aprovados, 0 falhas** (`fm-app`: 7, `fm-core`: 7, `fm-fs`: 12, `fm-index`: 2, `fm-preview`: 7, `fm-telemetry`: 6, `fm-theme`: 1).
+* `cargo test --workspace`: **44 testes aprovados, 0 falhas** (`fm-app`: 7, `fm-core`: 9, `fm-fs`: 12, `fm-index`: 2, `fm-preview`: 7, `fm-telemetry`: 6, `fm-theme`: 1).
 * `cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings`: aprovado (`0` avisos).
 * `cargo build -p fm-app`: compilado com sucesso (`target/debug/fm-app`).
 
