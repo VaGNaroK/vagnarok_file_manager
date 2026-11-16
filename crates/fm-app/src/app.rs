@@ -430,6 +430,7 @@ pub enum Message {
     WindowToggleMaximize,
     WindowClose,
     ModifiersChanged(keyboard::Modifiers),
+    WindowUnfocused(window::Id),
     GlobalKeyPressed {
         window_id: window::Id,
         key: keyboard::Key,
@@ -1919,11 +1920,7 @@ impl App {
                     WindowDecorationsMode::IntegratedCsd => WindowDecorationsMode::NativeWm,
                 };
                 let persist = self.persist_config_task();
-                if cfg!(not(target_os = "windows")) {
-                    Task::batch([persist, window::toggle_decorations(self.main_window_id)])
-                } else {
-                    persist
-                }
+                Task::batch([persist, window::toggle_decorations(self.main_window_id)])
             }
             Message::ConfigSaved(err) => {
                 if let Some(msg) = err {
@@ -2520,11 +2517,26 @@ impl App {
                 }
                 Task::none()
             }
+            Message::WindowUnfocused(window_id) => {
+                if window_id == self.main_window_id {
+                    self.current_modifiers = keyboard::Modifiers::empty();
+                    if self.grid_zoom_dirty {
+                        self.grid_zoom_dirty = false;
+                        return self.persist_config_task();
+                    }
+                }
+                Task::none()
+            }
             Message::GlobalKeyPressed {
                 window_id,
                 key,
                 modifiers,
-            } => self.handle_global_key(window_id, key, modifiers),
+            } => {
+                if window_id == self.main_window_id {
+                    self.current_modifiers = modifiers;
+                }
+                self.handle_global_key(window_id, key, modifiers)
+            }
         }
     }
 
@@ -2534,18 +2546,37 @@ impl App {
                 Some(Message::ModifiersChanged(modifiers))
             }
             Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                let is_shortcut = modifiers.control()
-                    || modifiers.alt()
+                let effective = apply_modifier_key_press(&key, modifiers);
+                let is_modifier_key = effective != modifiers;
+                let is_shortcut = effective.control()
+                    || effective.alt()
                     || matches!(
                         key,
                         keyboard::Key::Named(Named::Escape | Named::F5 | Named::Tab)
                     );
-                if status == event::Status::Ignored || is_shortcut {
+                if is_modifier_key {
+                    Some(Message::ModifiersChanged(effective))
+                } else if status == event::Status::Ignored || is_shortcut {
                     Some(Message::GlobalKeyPressed {
                         window_id,
                         key,
-                        modifiers,
+                        modifiers: effective,
                     })
+                } else {
+                    None
+                }
+            }
+            Event::Keyboard(keyboard::Event::KeyReleased { key, modifiers, .. }) => {
+                let effective = apply_modifier_key_release(&key, modifiers);
+                if effective != modifiers
+                    || matches!(
+                        key,
+                        keyboard::Key::Named(
+                            Named::Control | Named::Shift | Named::Alt | Named::Super
+                        )
+                    )
+                {
+                    Some(Message::ModifiersChanged(effective))
                 } else {
                     None
                 }
@@ -2560,9 +2591,7 @@ impl App {
             Event::Window(window::Event::Resized(size)) => {
                 Some(Message::WindowResized { window_id, size })
             }
-            Event::Window(window::Event::Unfocused) => {
-                Some(Message::ModifiersChanged(keyboard::Modifiers::empty()))
-            }
+            Event::Window(window::Event::Unfocused) => Some(Message::WindowUnfocused(window_id)),
             Event::Window(window::Event::FileDropped(path)) => {
                 Some(Message::FileDropped { window_id, path })
             }
@@ -4081,6 +4110,34 @@ fn apply_window_vibrancy(id: window::Id, theme: ThemePreset) -> Task<Message> {
 #[cfg(not(target_os = "windows"))]
 fn apply_window_vibrancy(_id: window::Id, _theme: ThemePreset) -> Task<Message> {
     Task::none()
+}
+
+fn apply_modifier_key_press(
+    key: &keyboard::Key,
+    mut modifiers: keyboard::Modifiers,
+) -> keyboard::Modifiers {
+    match key {
+        keyboard::Key::Named(Named::Control) => modifiers.insert(keyboard::Modifiers::CTRL),
+        keyboard::Key::Named(Named::Shift) => modifiers.insert(keyboard::Modifiers::SHIFT),
+        keyboard::Key::Named(Named::Alt) => modifiers.insert(keyboard::Modifiers::ALT),
+        keyboard::Key::Named(Named::Super) => modifiers.insert(keyboard::Modifiers::LOGO),
+        _ => {}
+    }
+    modifiers
+}
+
+fn apply_modifier_key_release(
+    key: &keyboard::Key,
+    mut modifiers: keyboard::Modifiers,
+) -> keyboard::Modifiers {
+    match key {
+        keyboard::Key::Named(Named::Control) => modifiers.remove(keyboard::Modifiers::CTRL),
+        keyboard::Key::Named(Named::Shift) => modifiers.remove(keyboard::Modifiers::SHIFT),
+        keyboard::Key::Named(Named::Alt) => modifiers.remove(keyboard::Modifiers::ALT),
+        keyboard::Key::Named(Named::Super) => modifiers.remove(keyboard::Modifiers::LOGO),
+        _ => {}
+    }
+    modifiers
 }
 
 fn wheel_zoom_delta(delta: mouse::ScrollDelta) -> f32 {

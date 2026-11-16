@@ -8,8 +8,9 @@ use fm_theme::{
 use iced::Alignment::{self, Center};
 use iced::advanced::layout;
 use iced::advanced::renderer;
-use iced::advanced::widget::{Operation, Tree};
+use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, overlay};
+use iced::keyboard;
 use iced::mouse;
 use iced::widget::{
     Space, button, column, container, image, mouse_area, responsive, row, scrollable, space, stack,
@@ -102,8 +103,7 @@ pub fn view<'a>(
     .style(styles::canvas_container(palette))
     .into();
 
-    let zoom_active = tab.view_mode == ViewMode::Grid
-        && app.current_modifiers.control()
+    let can_zoom = tab.view_mode == ViewMode::Grid
         && app.active_dialog.is_none()
         && app.context_menu.is_none()
         && app.breadcrumb_menu.is_none()
@@ -112,7 +112,8 @@ pub fn view<'a>(
 
     Element::new(CtrlWheelZoom {
         content: panel,
-        intercept: zoom_active,
+        can_zoom,
+        intercept: can_zoom && app.current_modifiers.control(),
         on_wheel: Box::new(Message::CtrlWheelZoom),
     })
 }
@@ -1577,14 +1578,29 @@ fn columns_view<'a>(
 }
 
 /// Intercepts mouse wheel events before child `scrollable` viewports when
+#[derive(Default)]
+struct CtrlWheelState {
+    ctrl_held: bool,
+}
+
+/// Wrapper that intercepts mouse wheel events over the central canvas while
 /// `Ctrl` is held so the grid zooms smoothly in place without scrolling.
 struct CtrlWheelZoom<'a, Message> {
     content: Element<'a, Message>,
+    can_zoom: bool,
     intercept: bool,
     on_wheel: Box<dyn Fn(mouse::ScrollDelta) -> Message + 'a>,
 }
 
 impl<Message> Widget<Message, iced::Theme, iced::Renderer> for CtrlWheelZoom<'_, Message> {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<CtrlWheelState>()
+    }
+
+    fn state(&self) -> tree::State {
+        tree::State::new(CtrlWheelState::default())
+    }
+
     fn size(&self) -> Size<Length> {
         self.content.as_widget().size()
     }
@@ -1656,7 +1672,33 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for CtrlWheelZoom<'_,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        if self.intercept
+        let state = tree.state.downcast_mut::<CtrlWheelState>();
+        match event {
+            Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) => {
+                state.ctrl_held = mods.control();
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                if matches!(key, keyboard::Key::Named(keyboard::key::Named::Control))
+                    || modifiers.control()
+                {
+                    state.ctrl_held = true;
+                }
+            }
+            Event::Keyboard(keyboard::Event::KeyReleased { key, modifiers, .. }) => {
+                if matches!(key, keyboard::Key::Named(keyboard::key::Named::Control)) {
+                    state.ctrl_held = false;
+                } else {
+                    state.ctrl_held = modifiers.control();
+                }
+            }
+            Event::Window(iced::window::Event::Unfocused) => {
+                state.ctrl_held = false;
+            }
+            _ => {}
+        }
+
+        if self.can_zoom
+            && (self.intercept || state.ctrl_held)
             && matches!(event, Event::Mouse(mouse::Event::WheelScrolled { .. }))
             && cursor.is_over(layout.bounds())
             && let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
