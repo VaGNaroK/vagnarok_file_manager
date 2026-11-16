@@ -25,6 +25,21 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-16 | **Alpha 1 (`v0.1.0-alpha.1`), Sobre & GPLv3** | Aba e menu **Sobre**, versão `0.1.0-alpha.1`, troca de licença para `GPL-3.0-or-later` (`LICENSE`) e tag `v0.1.0-alpha.1` | 44 passando |
 | 2026-11-16 | **Alpha 2 (`v0.1.0-alpha.2`), Empacotamento & CI/CD** | Dropdown de idiomas, pipeline `.deb`/Flatpak/Inno Setup + ZIP portátil, `winresource`, correções de testes no Windows e `README.md` | 44 passando (Linux) |
 | 2026-11-16 | **Alpha 3 (`v0.1.0-alpha.3`), Polimento Windows & Lixeira** | Lixeira virtual no Windows (`trash://`) com restauração, remoção do CMD em release, correção de controles duplicados e limpeza do mockup `code.html` | 45 unitários |
+| 2026-11-16 | **Alpha 4 (`v0.1.0-alpha.4`), Paridade de Atalhos & Janela no Windows** | Zoom `Ctrl + Scroll` no Windows, rastreamento de modificadores via `KeyPressed`/`KeyReleased`, alternância ao vivo de decorações da janela e `rustfmt` | 45 unitários |
+
+---
+
+## [0.1.0-alpha.4] — 2026-11-16
+
+### Correções no Windows & Paridade com Linux
+
+* **Zoom `Ctrl + Scroll` no Grid e rastreamento de modificadores** (`crates/fm-app/src/app.rs`, `crates/fm-app/src/views/canvas.rs`):
+  * Atualização de `current_modifiers` também em `KeyPressed` e `KeyReleased` (além de `ModifiersChanged`), e limpeza de modificadores em `WindowUnfocused` restrita à janela principal (`main_window_id`).
+  * Adicionado estado interno `CtrlWheelState` no widget `CtrlWheelZoom` para capturar `Ctrl + WheelScrolled` diretamente no Windows, garantindo funcionamento tanto do zoom no Grid quanto da seleção múltipla (`Ctrl+Click` / `Shift+Click`).
+* **Alternância ao vivo das decorações da janela** (`crates/fm-app/src/app.rs`):
+  * `Message::ToggleWindowDecorations` agora executa `window::toggle_decorations(self.main_window_id)` também no Windows, aplicando a troca entre barra nativa e CSD integrado sem reiniciar o aplicativo.
+* **Formatação** (`crates/fm-app/src/views/header.rs`, `crates/fm-fs/src/lib.rs`):
+  * Ajustada formatação conforme `cargo fmt --all -- --check`.
 
 ---
 
