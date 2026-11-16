@@ -286,19 +286,87 @@ impl ThemePreset {
 }
 
 /// Idiomas suportados pela camada de UI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum Language {
     #[default]
     PtBr,
     EnUs,
+    EsEs,
+    FrFr,
+    DeDe,
+    ItIt,
 }
 
 impl Language {
-    pub fn toggled(self) -> Self {
+    pub const ALL: [Self; 6] = [
+        Self::PtBr,
+        Self::EnUs,
+        Self::EsEs,
+        Self::FrFr,
+        Self::DeDe,
+        Self::ItIt,
+    ];
+
+    pub const fn bcp47(self) -> &'static str {
         match self {
-            Self::PtBr => Self::EnUs,
-            Self::EnUs => Self::PtBr,
+            Self::PtBr => "pt-BR",
+            Self::EnUs => "en-US",
+            Self::EsEs => "es-ES",
+            Self::FrFr => "fr-FR",
+            Self::DeDe => "de-DE",
+            Self::ItIt => "it-IT",
         }
+    }
+
+    pub const fn short_code(self) -> &'static str {
+        match self {
+            Self::PtBr => "PT",
+            Self::EnUs => "EN",
+            Self::EsEs => "ES",
+            Self::FrFr => "FR",
+            Self::DeDe => "DE",
+            Self::ItIt => "IT",
+        }
+    }
+
+    pub const fn native_name(self) -> &'static str {
+        match self {
+            Self::PtBr => "Português (BR)",
+            Self::EnUs => "English (US)",
+            Self::EsEs => "Español",
+            Self::FrFr => "Français",
+            Self::DeDe => "Deutsch",
+            Self::ItIt => "Italiano",
+        }
+    }
+
+    /// Resolve um tag de locale (BCP-47 ou POSIX, ex.: `pt_BR.UTF-8`, `es-419`, `de`).
+    pub fn from_locale_tag(tag: &str) -> Option<Self> {
+        let base = tag.split('.').next().unwrap_or(tag).trim();
+        let norm = base.replace('_', "-").to_ascii_lowercase();
+        let primary = norm.split('-').next().unwrap_or("");
+        match primary {
+            "pt" => Some(Self::PtBr),
+            "en" => Some(Self::EnUs),
+            "es" => Some(Self::EsEs),
+            "fr" => Some(Self::FrFr),
+            "de" => Some(Self::DeDe),
+            "it" => Some(Self::ItIt),
+            _ => None,
+        }
+    }
+
+    /// Detecta o idioma do sistema operacional com fallback para inglês (`EnUs`).
+    pub fn detect_system() -> Self {
+        sys_locale::get_locale()
+            .as_deref()
+            .and_then(Self::from_locale_tag)
+            .unwrap_or(Self::EnUs)
+    }
+
+    pub fn toggled(self) -> Self {
+        let idx = Self::ALL.iter().position(|&lang| lang == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
     }
 }
 
@@ -327,6 +395,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub theme_customized: bool,
     pub language: Language,
+    #[serde(default)]
+    pub language_customized: bool,
     pub show_hero_card: bool,
     pub show_inspector: bool,
     pub sidebar_collapsed: bool,
@@ -348,7 +418,8 @@ impl Default for AppConfig {
         Self {
             theme: ThemePreset::AetherLight,
             theme_customized: false,
-            language: Language::PtBr,
+            language: Language::detect_system(),
+            language_customized: false,
             show_hero_card: true,
             show_inspector: false,
             sidebar_collapsed: false,

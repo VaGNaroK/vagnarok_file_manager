@@ -78,7 +78,8 @@ mod tests {
         let cfg = AppConfig {
             theme: ThemePreset::ObsidianFlow,
             theme_customized: true,
-            language: Language::EnUs,
+            language: Language::EsEs,
+            language_customized: true,
             show_hero_card: false,
             show_inspector: true,
             sidebar_collapsed: true,
@@ -95,7 +96,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(loaded.theme, ThemePreset::ObsidianFlow);
-        assert_eq!(loaded.language, Language::EnUs);
+        assert_eq!(loaded.language, Language::EsEs);
+        assert!(loaded.language_customized);
         assert!(!loaded.show_hero_card);
         assert!(loaded.show_inspector);
         assert!(loaded.sidebar_collapsed);

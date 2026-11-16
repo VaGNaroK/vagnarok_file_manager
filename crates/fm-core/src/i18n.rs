@@ -1,8 +1,45 @@
+use std::fmt::Write as _;
+use std::sync::OnceLock;
+use std::time::SystemTime;
+
+use compact_str::CompactString;
+use fluent_bundle::concurrent::FluentBundle;
+use fluent_bundle::{FluentArgs, FluentResource};
+use unic_langid::LanguageIdentifier;
+
+use crate::domain::{
+    EntryKind, FileEntry, LocalTimestampKind, LocaleFormatSpec, format_grouped_u64,
+    local_timestamp_kind,
+};
 use crate::state::Language;
 
-/// Catálogo tipado de textos da interface para evitar mistura de idiomas.
-#[derive(Debug, Clone, Copy)]
+const FTL_EN_US: &str = include_str!("../locales/en-US.ftl");
+const FTL_PT_BR: &str = include_str!("../locales/pt-BR.ftl");
+const FTL_ES_ES: &str = include_str!("../locales/es-ES.ftl");
+const FTL_FR_FR: &str = include_str!("../locales/fr-FR.ftl");
+const FTL_DE_DE: &str = include_str!("../locales/de-DE.ftl");
+const FTL_IT_IT: &str = include_str!("../locales/it-IT.ftl");
+
+struct StringsInner {
+    language: Language,
+    format: LocaleFormatSpec,
+    bundle: FluentBundle<FluentResource>,
+}
+
+static CACHE_EN_US: OnceLock<Strings> = OnceLock::new();
+static CACHE_PT_BR: OnceLock<Strings> = OnceLock::new();
+static CACHE_ES_ES: OnceLock<Strings> = OnceLock::new();
+static CACHE_FR_FR: OnceLock<Strings> = OnceLock::new();
+static CACHE_DE_DE: OnceLock<Strings> = OnceLock::new();
+static CACHE_IT_IT: OnceLock<Strings> = OnceLock::new();
+
+/// Catálogo localizado de textos da interface backed por Project Fluent (`include_str!`).
+///
+/// Mantido como handle `Copy` apoiado em caches `OnceLock` estáticos por idioma
+/// para zero alocações e zero I/O de disco na thread de UI.
+#[derive(Clone, Copy)]
 pub struct Strings {
+    inner: &'static StringsInner,
     pub quick_access: &'static str,
     pub drives: &'static str,
     pub tags_and_system: &'static str,
@@ -16,6 +53,8 @@ pub struct Strings {
     pub trash: &'static str,
     pub preferences: &'static str,
     pub search_placeholder: &'static str,
+    pub no_active_tab: &'static str,
+    pub follow_system: &'static str,
     pub new_item: &'static str,
     pub sort: &'static str,
     pub hidden: &'static str,
@@ -32,9 +71,6 @@ pub struct Strings {
     pub quicklook_hint: &'static str,
     pub quicklook_title: &'static str,
     pub close: &'static str,
-    pub items_unit: &'static str,
-    pub folders_unit: &'static str,
-    pub files_unit: &'static str,
     pub col_name: &'static str,
     pub col_size: &'static str,
     pub col_type: &'static str,
@@ -46,6 +82,8 @@ pub struct Strings {
     pub go_back: &'static str,
     pub retry: &'static str,
     pub root_fs: &'static str,
+    pub dir_badge: &'static str,
+    pub file_badge: &'static str,
     pub binary_preview_hint: &'static str,
     pub deep_search: &'static str,
     pub deep_search_title: &'static str,
@@ -64,6 +102,7 @@ pub struct Strings {
     pub cancel: &'static str,
     pub create: &'static str,
     pub name_label: &'static str,
+    pub invalid_name: &'static str,
     pub confirm_trash_msg: &'static str,
     pub confirm_delete_msg: &'static str,
     pub clipboard_copy_tag: &'static str,
@@ -75,6 +114,11 @@ pub struct Strings {
     pub hero_card_label: &'static str,
     pub decorations_label: &'static str,
     pub default_view_label: &'static str,
+    pub view_grid: &'static str,
+    pub view_list: &'static str,
+    pub view_columns: &'static str,
+    pub window_bar_native: &'static str,
+    pub window_bar_csd: &'static str,
     pub pin_favorite: &'static str,
     pub unpin_favorite: &'static str,
     pub remove_favorite: &'static str,
@@ -131,279 +175,699 @@ pub struct Strings {
     pub prop_symlink_target: &'static str,
     pub prop_archive_notice: &'static str,
     pub prop_applied_notice: &'static str,
+    pub prop_pending_changes: &'static str,
+    pub prop_calculating: &'static str,
+    pub prop_sha_na_folders: &'static str,
+    pub prop_sha_computing: &'static str,
+    pub yes_label: &'static str,
+    pub no_label: &'static str,
+    pub ext_label: &'static str,
+    pub perm_read: &'static str,
+    pub perm_write: &'static str,
+    pub perm_execute: &'static str,
+}
+
+impl std::fmt::Debug for Strings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Strings")
+            .field("language", &self.inner.language)
+            .finish()
+    }
 }
 
 impl Strings {
-    pub const fn for_language(lang: Language) -> Self {
+    pub fn for_language(lang: Language) -> Self {
         match lang {
-            Language::PtBr => Self::pt_br(),
-            Language::EnUs => Self::en_us(),
+            Language::EnUs => *CACHE_EN_US.get_or_init(|| Self::build(Language::EnUs)),
+            Language::PtBr => *CACHE_PT_BR.get_or_init(|| Self::build(Language::PtBr)),
+            Language::EsEs => *CACHE_ES_ES.get_or_init(|| Self::build(Language::EsEs)),
+            Language::FrFr => *CACHE_FR_FR.get_or_init(|| Self::build(Language::FrFr)),
+            Language::DeDe => *CACHE_DE_DE.get_or_init(|| Self::build(Language::DeDe)),
+            Language::ItIt => *CACHE_IT_IT.get_or_init(|| Self::build(Language::ItIt)),
         }
     }
 
-    pub const fn pt_br() -> Self {
-        Self {
-            quick_access: "ACESSO RÁPIDO",
-            drives: "UNIDADES",
-            tags_and_system: "TAGS E SISTEMA",
-            documents: "Documentos",
-            home: "Início",
-            desktop: "Área de Trabalho",
-            downloads: "Downloads",
-            pictures: "Imagens",
-            code_dev: "Código / Dev",
-            starred: "Favoritos",
-            trash: "Lixeira",
-            preferences: "Preferências",
-            search_placeholder: "Buscar neste diretório...",
-            new_item: "+ Novo",
-            sort: "Ordenar",
-            hidden: "Ocultos",
-            folders: "PASTAS",
-            files: "ARQUIVOS",
-            total_size: "TAMANHO DIRETO",
-            inspector_title: "Inspetor",
-            inspector_empty: "Selecione um item para ver metadados, permissões e checksum.",
-            permissions: "Permissões",
-            modified: "Modificado",
-            checksum: "SHA-256",
-            mime_type: "Tipo MIME",
-            selected_none: "Selecionado: Nenhum",
-            quicklook_hint: "Space: QuickLook",
-            quicklook_title: "QuickLook",
-            close: "Fechar",
-            items_unit: "itens",
-            folders_unit: "pastas",
-            files_unit: "arquivos",
-            col_name: "Nome",
-            col_size: "Tamanho",
-            col_type: "Tipo",
-            col_perms: "Permissões",
-            col_modified: "Modificado",
-            free_of: "livres de",
-            loading: "Carregando diretório...",
-            empty_dir: "Pasta vazia",
-            go_back: "Voltar",
-            retry: "Tentar novamente",
-            root_fs: "Sistema",
-            binary_preview_hint: "Arquivo binário ou muito grande — formato sem prévia direta.",
-            deep_search: "Subpastas",
-            deep_search_title: "Busca Profunda (Fuzzy)",
-            deep_search_empty: "Nenhum arquivo encontrado nas subpastas.",
-            searching: "Buscando em subpastas...",
-            computing_hash: "calculando...",
-            new_folder: "Nova Pasta",
-            new_file: "Novo Arquivo",
-            rename: "Renomear (F2)",
-            copy: "Copiar (Ctrl+C)",
-            cut: "Recortar (Ctrl+X)",
-            paste: "Colar (Ctrl+V)",
-            move_to_trash: "Enviar para Lixeira (Del)",
-            delete_permanent: "Excluir Permanentemente (Shift+Del)",
-            confirm: "Confirmar",
-            cancel: "Cancelar",
-            create: "Criar",
-            name_label: "Nome",
-            confirm_trash_msg: "Deseja enviar os itens selecionados para a lixeira?",
-            confirm_delete_msg: "Esta ação remove permanentemente do disco e não pode ser desfeita.",
-            clipboard_copy_tag: "Copiados",
-            clipboard_cut_tag: "Recortados",
-            transferring: "Transferindo...",
-            prefs_title: "Preferências",
-            theme_label: "Tema",
-            lang_label: "Idioma",
-            hero_card_label: "Exibir cartão resumo da pasta",
-            decorations_label: "Barra de janela",
-            default_view_label: "Visualização padrão",
-            pin_favorite: "Fixar",
-            unpin_favorite: "Desafixar",
-            remove_favorite: "Remover dos favoritos",
-            empty_subdir: "Subpasta vazia",
-            open_terminal: "Terminal",
-            git_status_label: "Status Git",
-            conflict_title: "Conflito no Destino",
-            conflict_msg: "Alguns itens já existem no destino. Como deseja continuar?",
-            conflict_rename: "Manter ambos (Renomear)",
-            conflict_overwrite: "Sobrescrever",
-            conflict_skip: "Pular existentes",
-            created: "Criado em",
-            open_item: "Abrir",
-            open_in_new_tab: "Abrir em nova aba",
-            copy_path: "Copiar caminho",
-            select_all: "Selecionar tudo (Ctrl+A)",
-            path_copied: "Caminho copiado",
-            properties: "Propriedades",
-            filter_all: "Todos",
-            filter_ext: "Filtrar",
-            directories_only: "Pastas",
-            archive_readonly: "Arquivo compactado (somente leitura)",
-            grid_group_label: "Agrupar pastas no Grid",
-            dirs_first_label: "Pastas primeiro na ordenação",
-            recursive_size_label: "TAMANHO TOTAL",
-            empty_trash: "Esvaziar lixeira",
-            restore_item: "Restaurar",
-            confirm_empty_trash_msg: "Deseja esvaziar permanentemente todos os itens da lixeira do sistema?",
-            trash_emptied: "Lixeira esvaziada.",
-            trash_restored: "Itens restaurados para o local original.",
-            location_label: "Localização",
-            copy_sha256: "Copiar SHA-256",
-            hash_copied: "SHA-256 copiado",
-            properties_header_prefix: "Informações: ",
-            prop_tab_general: "Geral",
-            prop_tab_security: "Segurança",
-            prop_tab_history: "Histórico",
-            prop_tab_metadata: "Metadados",
-            prop_tab_permissions: "Permissões",
-            prop_kind_label: "Tipo",
-            prop_system_mime_label: "Sistema / MIME",
-            prop_accessed_label: "Último acesso",
-            prop_quick_props: "Propriedades Rápidas",
-            prop_readonly: "Somente leitura",
-            prop_hidden: "Oculto",
-            prop_advanced_settings: "Configurações Avançadas",
-            prop_confirm: "Confirmar",
-            prop_apply: "Aplicar",
-            prop_open_default: "Abrir padrão",
-            prop_owner: "Proprietário",
-            prop_group: "Grupo",
-            prop_others: "Outros",
-            prop_octal_mode: "Modo octal",
-            prop_symlink_target: "Alvo do symlink",
-            prop_archive_notice: "Somente leitura (dentro de arquivo compactado)",
-            prop_applied_notice: "Propriedades aplicadas.",
+    pub fn language(self) -> Language {
+        self.inner.language
+    }
+
+    pub fn format_spec(self) -> LocaleFormatSpec {
+        self.inner.format
+    }
+
+    /// Formata um inteiro usando o separador de milhares do idioma ativo.
+    pub fn format_grouped(self, value: u64) -> CompactString {
+        format_grouped_u64(value, self.inner.format.thousands_sep)
+    }
+
+    /// Formata a contagem exata de bytes (`"(14.931.200 bytes)"`).
+    pub fn format_exact_bytes(self, value: u64) -> String {
+        let grouped = self.format_grouped(value);
+        let mut args = FluentArgs::new();
+        args.set("bytes", grouped.as_str());
+        self.format_msg("exact-bytes", Some(&args))
+    }
+
+    /// Formata contagem de itens usando regras plurais CLDR do Fluent.
+    pub fn format_items_count(self, count: usize) -> String {
+        let mut args = FluentArgs::new();
+        args.set("count", count as i64);
+        self.format_msg("items-count", Some(&args))
+    }
+
+    /// Formata contagem de pastas usando regras plurais CLDR do Fluent.
+    pub fn format_folders_count(self, count: usize) -> String {
+        let mut args = FluentArgs::new();
+        args.set("count", count as i64);
+        self.format_msg("folders-count", Some(&args))
+    }
+
+    /// Formata contagem de arquivos usando regras plurais CLDR do Fluent.
+    pub fn format_files_count(self, count: usize) -> String {
+        let mut args = FluentArgs::new();
+        args.set("count", count as i64);
+        self.format_msg("files-count", Some(&args))
+    }
+
+    /// Formata resumo de seleção múltipla no rodapé (`"3 itens (12.4 KB)"`).
+    pub fn format_selected_multi(self, count: usize, size_label: &str) -> String {
+        let mut args = FluentArgs::new();
+        args.set("count", count as i64);
+        args.set("size", size_label);
+        self.format_msg("selected-multi", Some(&args))
+    }
+
+    /// Formata idade relativa (`agora`, `há 14m`, `2h ago`, `vor 3 Tg.`).
+    pub fn format_age(self, modified: SystemTime) -> String {
+        let Ok(elapsed) = SystemTime::now().duration_since(modified) else {
+            return self.format_msg("age-now", None);
+        };
+        let secs = elapsed.as_secs();
+        if secs < 60 {
+            self.format_msg("age-now", None)
+        } else if secs < 3600 {
+            let mut args = FluentArgs::new();
+            args.set("m", (secs / 60) as i64);
+            self.format_msg("age-minutes", Some(&args))
+        } else if secs < 86_400 {
+            let mut args = FluentArgs::new();
+            args.set("h", (secs / 3600) as i64);
+            self.format_msg("age-hours", Some(&args))
+        } else {
+            let mut args = FluentArgs::new();
+            args.set("d", (secs / 86_400) as i64);
+            self.format_msg("age-days", Some(&args))
         }
     }
 
-    pub const fn en_us() -> Self {
-        Self {
-            quick_access: "QUICK ACCESS",
-            drives: "DRIVES",
-            tags_and_system: "TAGS & SYSTEM",
-            documents: "Documents",
-            home: "Home",
-            desktop: "Desktop",
-            downloads: "Downloads",
-            pictures: "Pictures",
-            code_dev: "Code / Dev",
-            starred: "Favorites",
-            trash: "Trash",
-            preferences: "Preferences",
-            search_placeholder: "Search in directory...",
-            new_item: "+ New",
-            sort: "Sort",
-            hidden: "Hidden",
-            folders: "FOLDERS",
-            files: "FILES",
-            total_size: "DIRECT SIZE",
-            inspector_title: "Inspector",
-            inspector_empty: "Select an item to view metadata, permissions, and checksum.",
-            permissions: "Permissions",
-            modified: "Modified",
-            checksum: "SHA-256",
-            mime_type: "MIME Type",
-            selected_none: "Selected: None",
-            quicklook_hint: "Space: QuickLook",
-            quicklook_title: "QuickLook",
-            close: "Close",
-            items_unit: "items",
-            folders_unit: "folders",
-            files_unit: "files",
-            col_name: "Name",
-            col_size: "Size",
-            col_type: "Type",
-            col_perms: "Permissions",
-            col_modified: "Modified",
-            free_of: "free of",
-            loading: "Loading directory...",
-            empty_dir: "Empty folder",
-            go_back: "Go back",
-            retry: "Retry",
-            root_fs: "System",
-            binary_preview_hint: "Binary or oversized file — no direct preview available.",
-            deep_search: "Subfolders",
-            deep_search_title: "Deep Search (Fuzzy)",
-            deep_search_empty: "No matching files found in subfolders.",
-            searching: "Searching subfolders...",
-            computing_hash: "computing...",
-            new_folder: "New Folder",
-            new_file: "New File",
-            rename: "Rename (F2)",
-            copy: "Copy (Ctrl+C)",
-            cut: "Cut (Ctrl+X)",
-            paste: "Paste (Ctrl+V)",
-            move_to_trash: "Move to Trash (Del)",
-            delete_permanent: "Delete Permanently (Shift+Del)",
-            confirm: "Confirm",
-            cancel: "Cancel",
-            create: "Create",
-            name_label: "Name",
-            confirm_trash_msg: "Send the selected items to the system trash?",
-            confirm_delete_msg: "This permanently deletes items from disk and cannot be undone.",
-            clipboard_copy_tag: "Copied",
-            clipboard_cut_tag: "Cut",
-            transferring: "Transferring...",
-            prefs_title: "Preferences",
-            theme_label: "Theme",
-            lang_label: "Language",
-            hero_card_label: "Show folder summary card",
-            decorations_label: "Window bar",
-            default_view_label: "Default view mode",
-            pin_favorite: "Pin",
-            unpin_favorite: "Unpin",
-            remove_favorite: "Remove from favorites",
-            empty_subdir: "Empty subfolder",
-            open_terminal: "Terminal",
-            git_status_label: "Git Status",
-            conflict_title: "Destination Conflict",
-            conflict_msg: "Some items already exist at the destination. How would you like to proceed?",
-            conflict_rename: "Keep both (Rename)",
-            conflict_overwrite: "Overwrite",
-            conflict_skip: "Skip existing",
-            created: "Created",
-            open_item: "Open",
-            open_in_new_tab: "Open in new tab",
-            copy_path: "Copy path",
-            select_all: "Select all (Ctrl+A)",
-            path_copied: "Path copied",
-            properties: "Properties",
-            filter_all: "All",
-            filter_ext: "Filter",
-            directories_only: "Folders",
-            archive_readonly: "Compressed archive (read-only)",
-            grid_group_label: "Group folders in Grid",
-            dirs_first_label: "Folders first when sorting",
-            recursive_size_label: "TOTAL SIZE",
-            empty_trash: "Empty trash",
-            restore_item: "Restore",
-            confirm_empty_trash_msg: "Permanently delete every item currently in the system trash?",
-            trash_emptied: "Trash emptied.",
-            trash_restored: "Restored item(s) to original location.",
-            location_label: "Location",
-            copy_sha256: "Copy SHA-256",
-            hash_copied: "SHA-256 copied",
-            properties_header_prefix: "Properties: ",
-            prop_tab_general: "General",
-            prop_tab_security: "Security",
-            prop_tab_history: "History",
-            prop_tab_metadata: "Metadata",
-            prop_tab_permissions: "Permissions",
-            prop_kind_label: "Type",
-            prop_system_mime_label: "System / MIME",
-            prop_accessed_label: "Last accessed",
-            prop_quick_props: "Quick Properties",
-            prop_readonly: "Read-only",
-            prop_hidden: "Hidden",
-            prop_advanced_settings: "Advanced Settings",
-            prop_confirm: "Confirm",
-            prop_apply: "Apply",
-            prop_open_default: "Open default",
-            prop_owner: "Owner",
-            prop_group: "Group",
-            prop_others: "Others",
-            prop_octal_mode: "Octal mode",
-            prop_symlink_target: "Symlink target",
-            prop_archive_notice: "Read-only (inside compressed archive)",
-            prop_applied_notice: "Properties applied.",
+    /// Formata data/hora local curta (`Hoje, 17:45`, `Yesterday, 18:05`, `10 Nov 2026, 14:32`).
+    pub fn format_timestamp_short(self, ts: SystemTime) -> String {
+        match local_timestamp_kind(ts) {
+            LocalTimestampKind::Today { hour, minute } => {
+                let mut time = String::with_capacity(5);
+                let _ = write!(&mut time, "{hour:02}:{minute:02}");
+                let mut args = FluentArgs::new();
+                args.set("time", time.as_str());
+                self.format_msg("ts-today", Some(&args))
+            }
+            LocalTimestampKind::Yesterday { hour, minute } => {
+                let mut time = String::with_capacity(5);
+                let _ = write!(&mut time, "{hour:02}:{minute:02}");
+                let mut args = FluentArgs::new();
+                args.set("time", time.as_str());
+                self.format_msg("ts-yesterday", Some(&args))
+            }
+            LocalTimestampKind::Date {
+                day,
+                month_idx,
+                year,
+                hour,
+                minute,
+            } => {
+                let month = self
+                    .inner
+                    .format
+                    .months_short
+                    .get(month_idx)
+                    .copied()
+                    .unwrap_or("Jan");
+                format!("{day:02} {month} {year:04}, {hour:02}:{minute:02}")
+            }
         }
+    }
+
+    /// Descreve o tipo do item localizado para a janela de Propriedades.
+    pub fn describe_entry_kind(self, entry: &FileEntry) -> String {
+        match &entry.kind {
+            EntryKind::Directory => self.format_msg("kind-folder", None),
+            EntryKind::Symlink {
+                target_is_dir: true,
+            } => self.format_msg("kind-symlink-dir", None),
+            EntryKind::Symlink {
+                target_is_dir: false,
+            } => self.format_msg("kind-symlink-file", None),
+            EntryKind::Special => self.format_msg("kind-special", None),
+            EntryKind::File => match &entry.extension {
+                Some(ext) => {
+                    let low = ext.to_ascii_lowercase();
+                    let mut args = FluentArgs::new();
+                    args.set("ext", low.as_str());
+                    self.format_msg("kind-file-ext", Some(&args))
+                }
+                None => self.format_msg("kind-file", None),
+            },
+        }
+    }
+
+    fn format_msg(self, id: &str, args: Option<&FluentArgs<'_>>) -> String {
+        if let Some(res) = try_format_in_bundle(&self.inner.bundle, id, args) {
+            return res;
+        }
+        if self.inner.language != Language::EnUs {
+            let en = Self::for_language(Language::EnUs);
+            if let Some(res) = try_format_in_bundle(&en.inner.bundle, id, args) {
+                return res;
+            }
+        }
+        id.to_owned()
+    }
+
+    fn build(lang: Language) -> Self {
+        let bundle = build_bundle(lang);
+        let fallback = if lang == Language::EnUs {
+            None
+        } else {
+            Some(&Self::for_language(Language::EnUs).inner.bundle)
+        };
+        let format = locale_format_spec(lang);
+
+        let resolve = |id: &str| -> &'static str {
+            let s = try_format_in_bundle(&bundle, id, None)
+                .or_else(|| fallback.and_then(|fb| try_format_in_bundle(fb, id, None)))
+                .unwrap_or_else(|| id.to_owned());
+            Box::leak(s.into_boxed_str())
+        };
+
+        let quick_access = resolve("quick-access");
+        let drives = resolve("drives");
+        let tags_and_system = resolve("tags-and-system");
+        let documents = resolve("documents");
+        let home = resolve("home");
+        let desktop = resolve("desktop");
+        let downloads = resolve("downloads");
+        let pictures = resolve("pictures");
+        let code_dev = resolve("code-dev");
+        let starred = resolve("starred");
+        let trash = resolve("trash");
+        let preferences = resolve("preferences");
+        let search_placeholder = resolve("search-placeholder");
+        let no_active_tab = resolve("no-active-tab");
+        let follow_system = resolve("follow-system");
+        let new_item = resolve("new-item");
+        let sort = resolve("sort");
+        let hidden = resolve("hidden");
+        let folders = resolve("folders");
+        let files = resolve("files");
+        let total_size = resolve("total-size");
+        let inspector_title = resolve("inspector-title");
+        let inspector_empty = resolve("inspector-empty");
+        let permissions = resolve("permissions");
+        let modified = resolve("modified");
+        let checksum = resolve("checksum");
+        let mime_type = resolve("mime-type");
+        let selected_none = resolve("selected-none");
+        let quicklook_hint = resolve("quicklook-hint");
+        let quicklook_title = resolve("quicklook-title");
+        let close = resolve("close");
+        let col_name = resolve("col-name");
+        let col_size = resolve("col-size");
+        let col_type = resolve("col-type");
+        let col_perms = resolve("col-perms");
+        let col_modified = resolve("col-modified");
+        let free_of = resolve("free-of");
+        let loading = resolve("loading");
+        let empty_dir = resolve("empty-dir");
+        let go_back = resolve("go-back");
+        let retry = resolve("retry");
+        let root_fs = resolve("root-fs");
+        let dir_badge = resolve("dir-badge");
+        let file_badge = resolve("file-badge");
+        let binary_preview_hint = resolve("binary-preview-hint");
+        let deep_search = resolve("deep-search");
+        let deep_search_title = resolve("deep-search-title");
+        let deep_search_empty = resolve("deep-search-empty");
+        let searching = resolve("searching");
+        let computing_hash = resolve("computing-hash");
+        let new_folder = resolve("new-folder");
+        let new_file = resolve("new-file");
+        let rename = resolve("rename");
+        let copy = resolve("copy");
+        let cut = resolve("cut");
+        let paste = resolve("paste");
+        let move_to_trash = resolve("move-to-trash");
+        let delete_permanent = resolve("delete-permanent");
+        let confirm = resolve("confirm");
+        let cancel = resolve("cancel");
+        let create = resolve("create");
+        let name_label = resolve("name-label");
+        let invalid_name = resolve("invalid-name");
+        let confirm_trash_msg = resolve("confirm-trash-msg");
+        let confirm_delete_msg = resolve("confirm-delete-msg");
+        let clipboard_copy_tag = resolve("clipboard-copy-tag");
+        let clipboard_cut_tag = resolve("clipboard-cut-tag");
+        let transferring = resolve("transferring");
+        let prefs_title = resolve("prefs-title");
+        let theme_label = resolve("theme-label");
+        let lang_label = resolve("lang-label");
+        let hero_card_label = resolve("hero-card-label");
+        let decorations_label = resolve("decorations-label");
+        let default_view_label = resolve("default-view-label");
+        let view_grid = resolve("view-grid");
+        let view_list = resolve("view-list");
+        let view_columns = resolve("view-columns");
+        let window_bar_native = resolve("window-bar-native");
+        let window_bar_csd = resolve("window-bar-csd");
+        let pin_favorite = resolve("pin-favorite");
+        let unpin_favorite = resolve("unpin-favorite");
+        let remove_favorite = resolve("remove-favorite");
+        let empty_subdir = resolve("empty-subdir");
+        let open_terminal = resolve("open-terminal");
+        let git_status_label = resolve("git-status-label");
+        let conflict_title = resolve("conflict-title");
+        let conflict_msg = resolve("conflict-msg");
+        let conflict_rename = resolve("conflict-rename");
+        let conflict_overwrite = resolve("conflict-overwrite");
+        let conflict_skip = resolve("conflict-skip");
+        let created = resolve("created");
+        let open_item = resolve("open-item");
+        let open_in_new_tab = resolve("open-in-new-tab");
+        let copy_path = resolve("copy-path");
+        let select_all = resolve("select-all");
+        let path_copied = resolve("path-copied");
+        let properties = resolve("properties");
+        let filter_all = resolve("filter-all");
+        let filter_ext = resolve("filter-ext");
+        let directories_only = resolve("directories-only");
+        let archive_readonly = resolve("archive-readonly");
+        let grid_group_label = resolve("grid-group-label");
+        let dirs_first_label = resolve("dirs-first-label");
+        let recursive_size_label = resolve("recursive-size-label");
+        let empty_trash = resolve("empty-trash");
+        let restore_item = resolve("restore-item");
+        let confirm_empty_trash_msg = resolve("confirm-empty-trash-msg");
+        let trash_emptied = resolve("trash-emptied");
+        let trash_restored = resolve("trash-restored");
+        let location_label = resolve("location-label");
+        let copy_sha256 = resolve("copy-sha256");
+        let hash_copied = resolve("hash-copied");
+        let properties_header_prefix = resolve("properties-header-prefix");
+        let prop_tab_general = resolve("prop-tab-general");
+        let prop_tab_security = resolve("prop-tab-security");
+        let prop_tab_history = resolve("prop-tab-history");
+        let prop_tab_metadata = resolve("prop-tab-metadata");
+        let prop_tab_permissions = resolve("prop-tab-permissions");
+        let prop_kind_label = resolve("prop-kind-label");
+        let prop_system_mime_label = resolve("prop-system-mime-label");
+        let prop_accessed_label = resolve("prop-accessed-label");
+        let prop_quick_props = resolve("prop-quick-props");
+        let prop_readonly = resolve("prop-readonly");
+        let prop_hidden = resolve("prop-hidden");
+        let prop_advanced_settings = resolve("prop-advanced-settings");
+        let prop_confirm = resolve("prop-confirm");
+        let prop_apply = resolve("prop-apply");
+        let prop_open_default = resolve("prop-open-default");
+        let prop_owner = resolve("prop-owner");
+        let prop_group = resolve("prop-group");
+        let prop_others = resolve("prop-others");
+        let prop_octal_mode = resolve("prop-octal-mode");
+        let prop_symlink_target = resolve("prop-symlink-target");
+        let prop_archive_notice = resolve("prop-archive-notice");
+        let prop_applied_notice = resolve("prop-applied-notice");
+        let prop_pending_changes = resolve("prop-pending-changes");
+        let prop_calculating = resolve("prop-calculating");
+        let prop_sha_na_folders = resolve("prop-sha-na-folders");
+        let prop_sha_computing = resolve("prop-sha-computing");
+        let yes_label = resolve("yes-label");
+        let no_label = resolve("no-label");
+        let ext_label = resolve("ext-label");
+        let perm_read = resolve("perm-read");
+        let perm_write = resolve("perm-write");
+        let perm_execute = resolve("perm-execute");
+
+        let inner = Box::leak(Box::new(StringsInner {
+            language: lang,
+            format,
+            bundle,
+        }));
+
+        Self {
+            inner,
+            quick_access,
+            drives,
+            tags_and_system,
+            documents,
+            home,
+            desktop,
+            downloads,
+            pictures,
+            code_dev,
+            starred,
+            trash,
+            preferences,
+            search_placeholder,
+            no_active_tab,
+            follow_system,
+            new_item,
+            sort,
+            hidden,
+            folders,
+            files,
+            total_size,
+            inspector_title,
+            inspector_empty,
+            permissions,
+            modified,
+            checksum,
+            mime_type,
+            selected_none,
+            quicklook_hint,
+            quicklook_title,
+            close,
+            col_name,
+            col_size,
+            col_type,
+            col_perms,
+            col_modified,
+            free_of,
+            loading,
+            empty_dir,
+            go_back,
+            retry,
+            root_fs,
+            dir_badge,
+            file_badge,
+            binary_preview_hint,
+            deep_search,
+            deep_search_title,
+            deep_search_empty,
+            searching,
+            computing_hash,
+            new_folder,
+            new_file,
+            rename,
+            copy,
+            cut,
+            paste,
+            move_to_trash,
+            delete_permanent,
+            confirm,
+            cancel,
+            create,
+            name_label,
+            invalid_name,
+            confirm_trash_msg,
+            confirm_delete_msg,
+            clipboard_copy_tag,
+            clipboard_cut_tag,
+            transferring,
+            prefs_title,
+            theme_label,
+            lang_label,
+            hero_card_label,
+            decorations_label,
+            default_view_label,
+            view_grid,
+            view_list,
+            view_columns,
+            window_bar_native,
+            window_bar_csd,
+            pin_favorite,
+            unpin_favorite,
+            remove_favorite,
+            empty_subdir,
+            open_terminal,
+            git_status_label,
+            conflict_title,
+            conflict_msg,
+            conflict_rename,
+            conflict_overwrite,
+            conflict_skip,
+            created,
+            open_item,
+            open_in_new_tab,
+            copy_path,
+            select_all,
+            path_copied,
+            properties,
+            filter_all,
+            filter_ext,
+            directories_only,
+            archive_readonly,
+            grid_group_label,
+            dirs_first_label,
+            recursive_size_label,
+            empty_trash,
+            restore_item,
+            confirm_empty_trash_msg,
+            trash_emptied,
+            trash_restored,
+            location_label,
+            copy_sha256,
+            hash_copied,
+            properties_header_prefix,
+            prop_tab_general,
+            prop_tab_security,
+            prop_tab_history,
+            prop_tab_metadata,
+            prop_tab_permissions,
+            prop_kind_label,
+            prop_system_mime_label,
+            prop_accessed_label,
+            prop_quick_props,
+            prop_readonly,
+            prop_hidden,
+            prop_advanced_settings,
+            prop_confirm,
+            prop_apply,
+            prop_open_default,
+            prop_owner,
+            prop_group,
+            prop_others,
+            prop_octal_mode,
+            prop_symlink_target,
+            prop_archive_notice,
+            prop_applied_notice,
+            prop_pending_changes,
+            prop_calculating,
+            prop_sha_na_folders,
+            prop_sha_computing,
+            yes_label,
+            no_label,
+            ext_label,
+            perm_read,
+            perm_write,
+            perm_execute,
+        }
+    }
+}
+
+fn ftl_source(lang: Language) -> &'static str {
+    match lang {
+        Language::EnUs => FTL_EN_US,
+        Language::PtBr => FTL_PT_BR,
+        Language::EsEs => FTL_ES_ES,
+        Language::FrFr => FTL_FR_FR,
+        Language::DeDe => FTL_DE_DE,
+        Language::ItIt => FTL_IT_IT,
+    }
+}
+
+fn locale_format_spec(lang: Language) -> LocaleFormatSpec {
+    match lang {
+        Language::PtBr => LocaleFormatSpec {
+            thousands_sep: '.',
+            months_short: [
+                "Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+            ],
+        },
+        Language::EnUs => LocaleFormatSpec {
+            thousands_sep: ',',
+            months_short: [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            ],
+        },
+        Language::EsEs => LocaleFormatSpec {
+            thousands_sep: '.',
+            months_short: [
+                "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic",
+            ],
+        },
+        Language::FrFr => LocaleFormatSpec {
+            thousands_sep: ' ',
+            months_short: [
+                "Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc",
+            ],
+        },
+        Language::DeDe => LocaleFormatSpec {
+            thousands_sep: '.',
+            months_short: [
+                "Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez",
+            ],
+        },
+        Language::ItIt => LocaleFormatSpec {
+            thousands_sep: '.',
+            months_short: [
+                "Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic",
+            ],
+        },
+    }
+}
+
+fn build_bundle(lang: Language) -> FluentBundle<FluentResource> {
+    let langid: LanguageIdentifier = lang
+        .bcp47()
+        .parse()
+        .expect("embedded BCP-47 locale identifier must parse");
+    let mut bundle = FluentBundle::new_concurrent(vec![langid]);
+    // Disable Unicode BiDi isolation marks so Iced renders cleanly without box glyphs.
+    bundle.set_use_isolating(false);
+    let res = FluentResource::try_new(ftl_source(lang).to_owned())
+        .expect("embedded FTL resource must parse cleanly");
+    bundle
+        .add_resource(res)
+        .expect("embedded FTL resource has no duplicate IDs");
+    bundle
+}
+
+fn try_format_in_bundle(
+    bundle: &FluentBundle<FluentResource>,
+    id: &str,
+    args: Option<&FluentArgs<'_>>,
+) -> Option<String> {
+    let msg = bundle.get_message(id)?;
+    let pattern = msg.value()?;
+    let mut errors = Vec::new();
+    let formatted = bundle.format_pattern(pattern, args, &mut errors);
+    if errors.is_empty() {
+        Some(formatted.into_owned())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fluent_syntax::ast::{Entry, Expression, InlineExpression, PatternElement};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn collect_ftl_keys_and_vars(source: &str) -> BTreeMap<String, BTreeSet<String>> {
+        let ast = fluent_syntax::parser::parse(source).expect("FTL must parse");
+        let mut out = BTreeMap::new();
+        for entry in ast.body {
+            if let Entry::Message(msg) = entry {
+                let mut vars = BTreeSet::new();
+                if let Some(pattern) = msg.value {
+                    collect_pattern_vars(&pattern.elements, &mut vars);
+                }
+                out.insert(msg.id.name.to_owned(), vars);
+            }
+        }
+        out
+    }
+
+    fn collect_pattern_vars<S: AsRef<str>>(
+        elements: &[PatternElement<S>],
+        vars: &mut BTreeSet<String>,
+    ) {
+        for elem in elements {
+            if let PatternElement::Placeable { expression } = elem {
+                collect_expr_vars(expression, vars);
+            }
+        }
+    }
+
+    fn collect_expr_vars<S: AsRef<str>>(expr: &Expression<S>, vars: &mut BTreeSet<String>) {
+        match expr {
+            Expression::Select { selector, variants } => {
+                collect_inline_vars(selector, vars);
+                for variant in variants {
+                    collect_pattern_vars(&variant.value.elements, vars);
+                }
+            }
+            Expression::Inline(inline) => collect_inline_vars(inline, vars),
+        }
+    }
+
+    fn collect_inline_vars<S: AsRef<str>>(
+        inline: &InlineExpression<S>,
+        vars: &mut BTreeSet<String>,
+    ) {
+        if let InlineExpression::VariableReference { id } = inline {
+            vars.insert(id.name.as_ref().to_owned());
+        }
+    }
+
+    #[test]
+    fn all_locales_match_canonical_keys_and_variables() {
+        let base = collect_ftl_keys_and_vars(ftl_source(Language::EnUs));
+        assert!(!base.is_empty());
+
+        for lang in Language::ALL {
+            let cur = collect_ftl_keys_and_vars(ftl_source(lang));
+            let missing: Vec<_> = base.keys().filter(|k| !cur.contains_key(*k)).collect();
+            let extra: Vec<_> = cur.keys().filter(|k| !base.contains_key(*k)).collect();
+            assert!(
+                missing.is_empty(),
+                "{} missing keys: {missing:?}",
+                lang.bcp47()
+            );
+            assert!(extra.is_empty(), "{} extra keys: {extra:?}", lang.bcp47());
+
+            for (key, base_vars) in &base {
+                let cur_vars = &cur[key];
+                assert_eq!(
+                    cur_vars,
+                    base_vars,
+                    "{} variable mismatch for key '{key}'",
+                    lang.bcp47()
+                );
+            }
+
+            let strings = Strings::for_language(lang);
+            assert_ne!(strings.format_items_count(1), "");
+            assert_ne!(strings.format_items_count(5), "");
+            assert_ne!(strings.format_folders_count(2), "");
+            assert_ne!(strings.format_files_count(3), "");
+            assert_ne!(strings.format_selected_multi(2, "4.0 KB"), "");
+            assert_ne!(strings.format_exact_bytes(1024), "");
+            assert_ne!(strings.format_age(SystemTime::now()), "");
+            assert_ne!(strings.format_timestamp_short(SystemTime::now()), "");
+        }
+    }
+
+    #[test]
+    fn resolves_locale_tags_and_plural_forms() {
+        assert_eq!(
+            Language::from_locale_tag("pt_BR.UTF-8"),
+            Some(Language::PtBr)
+        );
+        assert_eq!(Language::from_locale_tag("es-419"), Some(Language::EsEs));
+        assert_eq!(Language::from_locale_tag("de"), Some(Language::DeDe));
+        assert_eq!(Language::from_locale_tag("unknown"), None);
+
+        let pt = Strings::for_language(Language::PtBr);
+        assert_eq!(pt.format_items_count(1), "1 item");
+        assert_eq!(pt.format_items_count(4), "4 itens");
+        assert_eq!(pt.format_grouped(14_931_200), "14.931.200");
+
+        let en = Strings::for_language(Language::EnUs);
+        assert_eq!(en.format_items_count(1), "1 item");
+        assert_eq!(en.format_items_count(4), "4 items");
+        assert_eq!(en.format_grouped(14_931_200), "14,931,200");
+
+        let de = Strings::for_language(Language::DeDe);
+        assert_eq!(de.format_items_count(1), "1 Element");
+        assert_eq!(de.format_items_count(4), "4 Elemente");
     }
 }
