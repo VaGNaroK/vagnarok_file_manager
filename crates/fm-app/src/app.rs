@@ -2006,7 +2006,10 @@ impl App {
                     .iter()
                     .find(|(_, props)| props.entry.path == path)
                 {
-                    return window::gain_focus(existing_id);
+                    if existing_id != self.main_window_id {
+                        return window::gain_focus(existing_id);
+                    }
+                    return Task::none();
                 }
                 let entry = self.current_tab().and_then(|t| {
                     t.visible_entries
@@ -2307,14 +2310,24 @@ impl App {
                     Message::OpenDefaultFinished,
                 )
             }
-            Message::DragPropertiesWindow(window_id) => window::drag(window_id),
+            Message::DragPropertiesWindow(window_id) => {
+                if window_id == self.main_window_id {
+                    Task::none()
+                } else {
+                    window::drag(window_id)
+                }
+            }
             Message::ClosePropertiesWindow(window_id) => {
                 if let Some(mut props) = self.properties_windows.remove(&window_id)
                     && let Some(cancel) = props.cancel.take()
                 {
                     cancel.cancel();
                 }
-                window::close(window_id)
+                if window_id == self.main_window_id {
+                    Task::none()
+                } else {
+                    window::close(window_id)
+                }
             }
             Message::OpenFilterMenu => {
                 self.breadcrumb_menu = None;
@@ -2614,7 +2627,9 @@ impl App {
     pub fn view(&self, window_id: window::Id) -> Element<'_, Message> {
         let palette = self.palette();
         let strings = self.strings();
-        if let Some(props) = self.properties_windows.get(&window_id) {
+        if window_id != self.main_window_id
+            && let Some(props) = self.properties_windows.get(&window_id)
+        {
             return views::modals::properties_window_view(window_id, props, palette, strings);
         }
         let tab = self.current_tab();
@@ -2650,6 +2665,17 @@ impl App {
             stack![
                 main_shell,
                 views::modals::dialog_modal(dialog, palette, strings),
+            ]
+            .into()
+        } else if let Some(props) = self.properties_windows.get(&self.main_window_id) {
+            stack![
+                main_shell,
+                views::modals::properties_modal_overlay(
+                    self.main_window_id,
+                    props,
+                    palette,
+                    strings,
+                ),
             ]
             .into()
         } else if self.prefs_open {
@@ -2718,6 +2744,10 @@ impl App {
         let telemetry = Some(existing_telemetry.unwrap_or_else(|| basic_file_telemetry(&entry)));
         let size_loading = entry.kind.is_dir_like() && !is_archive;
 
+        #[cfg(target_os = "windows")]
+        let (win_id, open_task) = (self.main_window_id, Task::<window::Id>::none());
+
+        #[cfg(not(target_os = "windows"))]
         let (win_id, open_task) = window::open(window::Settings {
             size: Size::new(720.0, 520.0),
             min_size: Some(Size::new(640.0, 460.0)),

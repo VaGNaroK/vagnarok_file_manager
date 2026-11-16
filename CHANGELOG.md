@@ -38,6 +38,8 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
   * Adicionado estado interno `CtrlWheelState` no widget `CtrlWheelZoom` para capturar `Ctrl + WheelScrolled` diretamente no Windows, garantindo funcionamento tanto do zoom no Grid quanto da seleção múltipla (`Ctrl+Click` / `Shift+Click`).
 * **Alternância ao vivo das decorações da janela** (`crates/fm-app/src/app.rs`):
   * `Message::ToggleWindowDecorations` agora executa `window::toggle_decorations(self.main_window_id)` também no Windows, aplicando a troca entre barra nativa e CSD integrado sem reiniciar o aplicativo.
+* **Janela de Propriedades no Windows sem distorção de swapchain** (`crates/fm-app/src/{app.rs,views/modals.rs}`):
+  * No Windows, **Propriedades** agora abre como modal centralizado sobre a janela principal (`properties_modal_overlay`), evitando o bug multi-janela do `iced`/`wgpu` DX12 que esticava o viewport principal para `720×520` após abrir/fechar a janela flutuante.
 * **Formatação** (`crates/fm-app/src/views/header.rs`, `crates/fm-fs/src/lib.rs`):
   * Ajustada formatação conforme `cargo fmt --all -- --check`.
 

@@ -385,6 +385,32 @@ pub fn dialog_modal<'a>(
         .into()
 }
 
+pub fn properties_modal_overlay<'a>(
+    win_id: window::Id,
+    props: &'a PropertiesWindowState,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let card = container(properties_window_view(win_id, props, palette, strings))
+        .width(Length::Fixed(720.0))
+        .height(Length::Fixed(520.0))
+        .style(move |_| styles::panel_surface(palette.surface, palette.border, 12.0));
+
+    mouse_area(
+        container(mouse_area(card).on_press(Message::Noop))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.45))),
+                ..Default::default()
+            }),
+    )
+    .on_press(Message::ClosePropertiesWindow(win_id))
+    .into()
+}
+
 pub fn properties_window_view<'a>(
     win_id: window::Id,
     props: &'a PropertiesWindowState,
