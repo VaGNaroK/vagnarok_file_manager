@@ -1501,7 +1501,7 @@ dependencies = [
 
 [[package]]
 name = "fm-app"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "compact_str",
  "fm-core",
@@ -1522,7 +1522,7 @@ dependencies = [
 
 [[package]]
 name = "fm-core"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1539,7 +1539,7 @@ dependencies = [
 
 [[package]]
 name = "fm-fs"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-trait",
  "compact_str",
@@ -1562,7 +1562,7 @@ dependencies = [
 
 [[package]]
 name = "fm-index"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "compact_str",
  "fm-core",
@@ -1576,7 +1576,7 @@ dependencies = [
 
 [[package]]
 name = "fm-preview"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "directories",
  "fast_image_resize",
@@ -1591,7 +1591,7 @@ dependencies = [
 
 [[package]]
 name = "fm-telemetry"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "compact_str",
  "directories",
@@ -1607,7 +1607,7 @@ dependencies = [
 
 [[package]]
 name = "fm-theme"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "fm-core",
  "iced",

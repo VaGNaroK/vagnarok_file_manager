@@ -60,7 +60,7 @@ members = [
 
 [workspace.package]
 edition = "2024" # ou "2021" conforme toolchain instalado
-license = "MIT OR Apache-2.0"
+license = "GPL-3.0-or-later"
 
 [profile.dev.package."*"]
 opt-level = 2 # Mantém Iced/wgpu/image fluidos mesmo em build de desenvolvimento
