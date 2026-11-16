@@ -394,21 +394,15 @@ pub fn properties_modal_overlay<'a>(
     let card = container(properties_window_view(win_id, props, palette, strings))
         .width(Length::Fixed(720.0))
         .height(Length::Fixed(520.0))
-        .style(move |_| styles::panel_surface(palette.surface, palette.border, 12.0));
+        .style(styles::modal_card(palette));
 
-    mouse_area(
-        container(mouse_area(card).on_press(Message::Noop))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.45))),
-                ..Default::default()
-            }),
-    )
-    .on_press(Message::ClosePropertiesWindow(win_id))
-    .into()
+    container(card)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Center)
+        .align_y(Center)
+        .style(move |_| styles::modal_backdrop()(&iced::Theme::Light))
+        .into()
 }
 
 pub fn properties_window_view<'a>(
