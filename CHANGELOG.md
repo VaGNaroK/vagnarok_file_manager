@@ -2,7 +2,7 @@
 
 Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador de arquivos desktop nativo em Rust com `iced` 0.14 + `wgpu` para Linux e Windows) estão documentadas neste arquivo.
 
-> **Nota sobre a linha do tempo**: os commits históricos iniciais do ramo `main` (`baseline` até `0.1.0-dev`) foram reconstruídos cronologicamente a partir dos marcos registrados do projeto, da árvore de código do workspace (`0.1.0`, Rust `edition = "2024"`) e das verificações executadas entre **2026-11-14** e **2026-11-15**.
+> **Nota sobre a linha do tempo**: o repositório Git (ramo `main`, com `.gitignore` configurando exclusão de `/target/`) foi ativado e populado cronologicamente com commits por onda de desenvolvimento a partir dos marcos registrados do projeto, da árvore do workspace (`0.1.0`, Rust `edition = "2024"`) e das verificações executadas entre **2026-11-14** e **2026-11-16 (UTC)**.
 
 ---
 
@@ -20,21 +20,23 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-15 | **Fase P6** | `CopyFileExW`/`ShellExecuteExW`, `longPathAware`, Mica/Acrylic, `ArchiveVfs`, `redb` telemetria, CI | 34 passando |
 | 2026-11-15 | **Polimento Técnico** | Grid agrupado/unificado, tamanho recursivo Hero Card, QuickLook `512 KB`, restaurar/esvaziar lixeira, benchmarks | 36 passando |
 | 2026-11-15 | **Pós-Polimento UX & Multi-Janela** | Duplo clique, anti-flicker, navegação 2D, sanitização `\n`, janela flutuante de Propriedades em 5 abas | 41 passando |
-| 2026-11-16 | **UX Sidebar & Zoom Ctrl+Scroll** | Menu de contexto em favoritos/barra lateral e zoom in-place com `Ctrl + Scroll` no Grid | 42 passando |
+| 2026-11-16 | **Git, UX Sidebar & Zoom Ctrl+Scroll** | Ativação do Git (`main` + `.gitignore`), menu de contexto em favoritos/barra lateral, Propriedades via `stat_entry` e zoom `Ctrl + Scroll` no Grid | 42 passando |
 
 ---
 
 ## [0.1.0-dev] — 2026-11-16
 
-### UX Sidebar & Zoom `Ctrl + Scroll`
+### Repositório Git, UX da Barra Lateral & Zoom `Ctrl + Scroll`
 
+* **Ativação e mapeamento histórico do Git** (`.gitignore`, ramo `main`):
+  * Inicializado o repositório Git em `main` com [.gitignore](.gitignore) ignorando `/target/` e temporários, mapeando cronologicamente todas as ondas de desenvolvimento do baseline inicial (`9cedaef`) até o estado atual.
 * **Menu de contexto nos favoritos e barra lateral** (`crates/fm-app/src/views/sidebar.rs`, `modals.rs`, `app.rs`, `crates/fm-core/src/i18n.rs`):
   * Adicionado clique direito em pastas favoritadas (e nos atalhos de *Acesso Rápido*, *Unidades* e *Lixeira*) via `Message::OpenSidebarContextMenu` → `ContextMenuKind::SidebarPlace`.
   * Opções contextuais: **Abrir**, **Abrir em nova aba**, **Copiar caminho**, **Propriedades** e **Remover dos favoritos** (`Message::RemoveFavorite`, chave i18n `remove_favorite`, persistido em `config.toml`), além de sanitização `sanitize_single_line` nos rótulos de favoritos.
-  * **Corrigido** (`crates/fm-app/src/app.rs`): `Message::OpenProperties` agora usa `fm_fs::stat_entry` (`Message::PropertiesEntryStatLoaded` + helper `open_properties_window`) quando o caminho não está na aba ativa, abrindo a janela flutuante **Informações** também pela barra lateral, e `PropertiesApplied` atualiza `config.favorites` quando uma pasta favoritada é renomeada.
+  * **Corrigido** (`crates/fm-app/src/app.rs`): `Message::OpenProperties` agora consulta `fm_fs::stat_entry` (`Message::PropertiesEntryStatLoaded` + helper `open_properties_window`) quando o caminho não está listado na aba ativa, garantindo abertura da janela flutuante centralizada **Informações** também pela barra lateral, e `PropertiesApplied` sincroniza `config.favorites` caso uma pasta favoritada seja renomeada.
 * **Zoom no modo Grade com `Ctrl + Scroll`** (`crates/fm-app/src/views/canvas.rs`, `app.rs`):
   * Adicionado wrapper `CtrlWheelZoom` sobre o painel central que intercepta `mouse::Event::WheelScrolled` quando `Ctrl` está pressionado em `ViewMode::Grid` (sem menus/modais abertos), evitando rolagem simultânea da grade.
-  * `Message::CtrlWheelZoom` converte deltas de mouse (`Lines`) e trackpad (`Pixels`) via `wheel_zoom_delta`, atualiza miniaturas visíveis e persiste a largura em `config.toml` após `350 ms` de pausa (`Message::FlushZoomConfig`) ou ao soltar `Ctrl` (`ModifiersChanged` / `window::Event::Unfocused`).
+  * `Message::CtrlWheelZoom` converte deltas de mouse (`Lines`) e trackpad (`Pixels`) via `wheel_zoom_delta` (com teste unitário `wheel_zoom_delta_maps_lines_and_pixels`), atualiza miniaturas visíveis (também em `StepGridCardWidth`/`ResetGridCardWidth`) e persiste a largura em `config.toml` após `350 ms` de pausa (`Message::FlushZoomConfig`) ou ao soltar `Ctrl` (`ModifiersChanged` / `window::Event::Unfocused`).
 
 ---
 
