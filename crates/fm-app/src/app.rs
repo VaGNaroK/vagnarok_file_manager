@@ -53,6 +53,10 @@ pub enum ContextMenuKind {
         path: PathBuf,
         is_dir: bool,
     },
+    SidebarPlace {
+        path: PathBuf,
+        is_favorite: bool,
+    },
     Background,
     NewMenu,
     FilterMenu,
@@ -322,6 +326,11 @@ pub enum Message {
         entries: Vec<FileEntry>,
     },
     ToggleFavoriteActive,
+    RemoveFavorite(PathBuf),
+    OpenSidebarContextMenu {
+        path: PathBuf,
+        is_favorite: bool,
+    },
     OpenPreferences,
     ClosePreferences,
     SetDefaultViewMode(ViewMode),
@@ -386,6 +395,8 @@ pub enum Message {
     EndColumnResize(window::Id),
     StepGridCardWidth(f32),
     ResetGridCardWidth,
+    CtrlWheelZoom(mouse::ScrollDelta),
+    FlushZoomConfig(u64),
     CursorMoved {
         window_id: window::Id,
         position: Point,
@@ -482,6 +493,8 @@ pub struct App {
     pub status_notice: Option<String>,
     pub last_entry_click: Option<(TabId, PathBuf, Instant)>,
     pub last_watcher_reload: Option<(PathBuf, Instant)>,
+    pub grid_zoom_dirty: bool,
+    pub zoom_save_seq: u64,
 }
 
 impl App {
@@ -592,6 +605,8 @@ impl App {
             status_notice: None,
             last_entry_click: None,
             last_watcher_reload: None,
+            grid_zoom_dirty: false,
+            zoom_save_seq: 0,
         };
 
         let auto_theme_task = if !app.config.theme_customized {
@@ -751,7 +766,10 @@ impl App {
                 }
                 Task::none()
             }
-            Message::NavigateTo(path) => self.navigate_active_tab(path),
+            Message::NavigateTo(path) => {
+                self.context_menu = None;
+                self.navigate_active_tab(path)
+            }
             Message::NavigateBack => {
                 let req = self.alloc_request_id();
                 let mut target_path = None;
@@ -1752,6 +1770,22 @@ impl App {
                 }
                 Task::none()
             }
+            Message::RemoveFavorite(path) => {
+                self.context_menu = None;
+                if let Some(pos) = self.config.favorites.iter().position(|p| p == &path) {
+                    self.config.favorites.remove(pos);
+                    return self.persist_config_task();
+                }
+                Task::none()
+            }
+            Message::OpenSidebarContextMenu { path, is_favorite } => {
+                self.breadcrumb_menu = None;
+                self.context_menu = Some(ContextMenuState {
+                    kind: ContextMenuKind::SidebarPlace { path, is_favorite },
+                    position: self.cursor_position,
+                });
+                Task::none()
+            }
             Message::OpenPreferences => {
                 self.prefs_open = true;
                 Task::none()
@@ -2411,14 +2445,52 @@ impl App {
                 Task::none()
             }
             Message::StepGridCardWidth(delta) => {
+                self.grid_zoom_dirty = false;
                 let next =
                     views::virtualized::clamp_grid_card_width(self.config.grid_card_width + delta);
                 self.config.grid_card_width = next;
-                self.persist_config_task()
+                let persist = self.persist_config_task();
+                let thumbs = self.queue_visible_thumbnails();
+                Task::batch([persist, thumbs])
             }
             Message::ResetGridCardWidth => {
+                self.grid_zoom_dirty = false;
                 self.config.grid_card_width = views::virtualized::GRID_CARD_WIDTH_DEFAULT;
-                self.persist_config_task()
+                let persist = self.persist_config_task();
+                let thumbs = self.queue_visible_thumbnails();
+                Task::batch([persist, thumbs])
+            }
+            Message::CtrlWheelZoom(delta) => {
+                let px_delta = wheel_zoom_delta(delta);
+                if px_delta.abs() <= f32::EPSILON {
+                    return Task::none();
+                }
+                let next = views::virtualized::clamp_grid_card_width(
+                    self.config.grid_card_width + px_delta,
+                );
+                if (next - self.config.grid_card_width).abs() <= f32::EPSILON {
+                    return Task::none();
+                }
+                self.config.grid_card_width = next;
+                self.grid_zoom_dirty = true;
+                self.zoom_save_seq = self.zoom_save_seq.wrapping_add(1);
+                let seq = self.zoom_save_seq;
+                let thumbs = self.queue_visible_thumbnails();
+                let save_debounce = Task::perform(
+                    async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+                        seq
+                    },
+                    Message::FlushZoomConfig,
+                );
+                Task::batch([thumbs, save_debounce])
+            }
+            Message::FlushZoomConfig(seq) => {
+                if seq == self.zoom_save_seq && self.grid_zoom_dirty {
+                    self.grid_zoom_dirty = false;
+                    return self.persist_config_task();
+                }
+                Task::none()
             }
             Message::CursorMoved {
                 window_id,
@@ -2513,6 +2585,10 @@ impl App {
             Message::WindowClose => window::close(self.main_window_id),
             Message::ModifiersChanged(modifiers) => {
                 self.current_modifiers = modifiers;
+                if !modifiers.control() && self.grid_zoom_dirty {
+                    self.grid_zoom_dirty = false;
+                    return self.persist_config_task();
+                }
                 Task::none()
             }
             Message::GlobalKeyPressed {
@@ -2554,6 +2630,9 @@ impl App {
             }
             Event::Window(window::Event::Resized(size)) => {
                 Some(Message::WindowResized { window_id, size })
+            }
+            Event::Window(window::Event::Unfocused) => {
+                Some(Message::ModifiersChanged(keyboard::Modifiers::empty()))
             }
             Event::Window(window::Event::FileDropped(path)) => {
                 Some(Message::FileDropped { window_id, path })
@@ -3905,4 +3984,37 @@ fn apply_window_vibrancy(id: window::Id, theme: ThemePreset) -> Task<Message> {
 #[cfg(not(target_os = "windows"))]
 fn apply_window_vibrancy(_id: window::Id, _theme: ThemePreset) -> Task<Message> {
     Task::none()
+}
+
+fn wheel_zoom_delta(delta: mouse::ScrollDelta) -> f32 {
+    match delta {
+        mouse::ScrollDelta::Lines { y, .. } => y * 16.0,
+        mouse::ScrollDelta::Pixels { y, .. } => y * 0.25,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wheel_zoom_delta;
+    use iced::mouse::ScrollDelta;
+
+    #[test]
+    fn wheel_zoom_delta_maps_lines_and_pixels() {
+        assert_eq!(
+            wheel_zoom_delta(ScrollDelta::Lines { x: 0.0, y: 1.0 }),
+            16.0
+        );
+        assert_eq!(
+            wheel_zoom_delta(ScrollDelta::Lines { x: 0.0, y: -1.0 }),
+            -16.0
+        );
+        assert_eq!(
+            wheel_zoom_delta(ScrollDelta::Pixels { x: 0.0, y: 40.0 }),
+            10.0
+        );
+        assert_eq!(
+            wheel_zoom_delta(ScrollDelta::Pixels { x: 12.0, y: 0.0 }),
+            0.0
+        );
+    }
 }

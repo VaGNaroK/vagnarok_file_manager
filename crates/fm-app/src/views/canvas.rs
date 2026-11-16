@@ -6,12 +6,16 @@ use fm_theme::{
     FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_BOLD, FONT_UI_SEMIBOLD, ThemePalette, styles,
 };
 use iced::Alignment::{self, Center};
+use iced::advanced::layout;
+use iced::advanced::renderer;
+use iced::advanced::widget::{Operation, Tree};
+use iced::advanced::{Clipboard, Layout, Shell, Widget, overlay};
 use iced::mouse;
 use iced::widget::{
     Space, button, column, container, image, mouse_area, responsive, row, scrollable, space, stack,
     text,
 };
-use iced::{Color, ContentFit, Element, Length, Padding};
+use iced::{Color, ContentFit, Element, Event, Length, Padding, Rectangle, Size, Vector};
 use lucide_icons::iced::{
     icon_arrow_up_down, icon_chevron_right, icon_clipboard_paste, icon_copy, icon_eye,
     icon_eye_off, icon_filter, icon_folder_tree, icon_info, icon_minus, icon_pencil, icon_plus,
@@ -86,7 +90,7 @@ pub fn view<'a>(
 
     let body = mouse_area(body).on_right_press(Message::OpenCanvasContextMenu);
 
-    container(
+    let panel: Element<'a, Message> = container(
         column![header_stack, body]
             .spacing(16)
             .width(Length::Fill)
@@ -96,7 +100,21 @@ pub fn view<'a>(
     .height(Length::Fill)
     .padding(Padding::from([14, 20]))
     .style(styles::canvas_container(palette))
-    .into()
+    .into();
+
+    let zoom_active = tab.view_mode == ViewMode::Grid
+        && app.current_modifiers.control()
+        && app.active_dialog.is_none()
+        && app.context_menu.is_none()
+        && app.breadcrumb_menu.is_none()
+        && !app.quicklook_open
+        && !app.prefs_open;
+
+    Element::new(CtrlWheelZoom {
+        content: panel,
+        intercept: zoom_active,
+        on_wheel: Box::new(Message::CtrlWheelZoom),
+    })
 }
 
 fn error_banner<'a>(
@@ -1557,6 +1575,142 @@ fn columns_view<'a>(
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+/// Intercepts mouse wheel events before child `scrollable` viewports when
+/// `Ctrl` is held so the grid zooms smoothly in place without scrolling.
+struct CtrlWheelZoom<'a, Message> {
+    content: Element<'a, Message>,
+    intercept: bool,
+    on_wheel: Box<dyn Fn(mouse::ScrollDelta) -> Message + 'a>,
+}
+
+impl<Message> Widget<Message, iced::Theme, iced::Renderer> for CtrlWheelZoom<'_, Message> {
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content));
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.content
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        if self.intercept
+            && matches!(event, Event::Mouse(mouse::Event::WheelScrolled { .. }))
+            && cursor.is_over(layout.bounds())
+            && let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
+        {
+            shell.publish((self.on_wheel)(*delta));
+            shell.capture_event();
+            return;
+        }
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &iced::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
 }
 
 fn truncate_label(s: &str, max_chars: usize) -> String {

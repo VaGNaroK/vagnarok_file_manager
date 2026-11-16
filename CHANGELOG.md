@@ -20,6 +20,20 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-15 | **Fase P6** | `CopyFileExW`/`ShellExecuteExW`, `longPathAware`, Mica/Acrylic, `ArchiveVfs`, `redb` telemetria, CI | 34 passando |
 | 2026-11-15 | **Polimento Técnico** | Grid agrupado/unificado, tamanho recursivo Hero Card, QuickLook `512 KB`, restaurar/esvaziar lixeira, benchmarks | 36 passando |
 | 2026-11-15 | **Pós-Polimento UX & Multi-Janela** | Duplo clique, anti-flicker, navegação 2D, sanitização `\n`, janela flutuante de Propriedades em 5 abas | 41 passando |
+| 2026-11-16 | **UX Sidebar & Zoom Ctrl+Scroll** | Menu de contexto em favoritos/barra lateral e zoom in-place com `Ctrl + Scroll` no Grid | 42 passando |
+
+---
+
+## [0.1.0-dev] — 2026-11-16
+
+### UX Sidebar & Zoom `Ctrl + Scroll`
+
+* **Menu de contexto nos favoritos e barra lateral** (`crates/fm-app/src/views/sidebar.rs`, `modals.rs`, `app.rs`, `crates/fm-core/src/i18n.rs`):
+  * Adicionado clique direito em pastas favoritadas (e nos atalhos de *Acesso Rápido*, *Unidades* e *Lixeira*) via `Message::OpenSidebarContextMenu` → `ContextMenuKind::SidebarPlace`.
+  * Opções contextuais: **Abrir**, **Abrir em nova aba**, **Copiar caminho**, **Propriedades** e **Remover dos favoritos** (`Message::RemoveFavorite`, chave i18n `remove_favorite`, persistido em `config.toml`), além de sanitização `sanitize_single_line` nos rótulos de favoritos.
+* **Zoom no modo Grade com `Ctrl + Scroll`** (`crates/fm-app/src/views/canvas.rs`, `app.rs`):
+  * Adicionado wrapper `CtrlWheelZoom` sobre o painel central que intercepta `mouse::Event::WheelScrolled` quando `Ctrl` está pressionado em `ViewMode::Grid` (sem menus/modais abertos), evitando rolagem simultânea da grade.
+  * `Message::CtrlWheelZoom` converte deltas de mouse (`Lines`) e trackpad (`Pixels`) via `wheel_zoom_delta`, atualiza miniaturas visíveis e persiste a largura em `config.toml` após `350 ms` de pausa (`Message::FlushZoomConfig`) ou ao soltar `Ctrl` (`ModifiersChanged` / `window::Event::Unfocused`).
 
 ---
 
@@ -188,7 +202,7 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 Última bateria executada sobre o workspace atual (sem alterações posteriores):
 * `cargo fmt --all -- --check`: aprovado (`exit 0`).
 * `cargo clippy --workspace --all-targets -- -D warnings`: aprovado (`0` avisos).
-* `cargo test --workspace`: **41 testes aprovados, 0 falhas** (`fm-app`: 6, `fm-core`: 7, `fm-fs`: 12, `fm-index`: 2, `fm-preview`: 7, `fm-telemetry`: 6, `fm-theme`: 1).
+* `cargo test --workspace`: **42 testes aprovados, 0 falhas** (`fm-app`: 7, `fm-core`: 7, `fm-fs`: 12, `fm-index`: 2, `fm-preview`: 7, `fm-telemetry`: 6, `fm-theme`: 1).
 * `cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings`: aprovado (`0` avisos).
 * `cargo build -p fm-app`: compilado com sucesso (`target/debug/fm-app`).
 

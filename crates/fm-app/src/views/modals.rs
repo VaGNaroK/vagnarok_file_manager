@@ -15,8 +15,8 @@ use lucide_icons::iced::{
     icon_check, icon_check_square, icon_clipboard_copy, icon_clipboard_paste, icon_copy,
     icon_external_link, icon_eye, icon_file_plus, icon_file_text, icon_filter, icon_folder,
     icon_folder_plus, icon_hard_drive, icon_info, icon_lock, icon_pencil, icon_rotate_ccw,
-    icon_scissors, icon_settings, icon_shield_check, icon_sliders_horizontal, icon_terminal,
-    icon_trash_2, icon_x,
+    icon_scissors, icon_settings, icon_shield_check, icon_sliders_horizontal, icon_star_off,
+    icon_terminal, icon_trash_2, icon_x,
 };
 
 use crate::app::{
@@ -2025,6 +2025,52 @@ pub fn context_menu_overlay<'a>(
                     palette,
                 ));
         }
+        ContextMenuKind::SidebarPlace { path, is_favorite } => {
+            items = items
+                .push(ctx_item(
+                    icon_external_link()
+                        .size(14)
+                        .color(palette.accent_primary)
+                        .into(),
+                    strings.open_item,
+                    palette.text_primary,
+                    Message::NavigateTo(path.clone()),
+                    palette,
+                ))
+                .push(ctx_item(
+                    icon_folder().size(14).color(palette.accent_primary).into(),
+                    strings.open_in_new_tab,
+                    palette.text_primary,
+                    Message::OpenInNewTab(path.clone()),
+                    palette,
+                ))
+                .push(ctx_item(
+                    icon_clipboard_copy()
+                        .size(14)
+                        .color(palette.text_secondary)
+                        .into(),
+                    strings.copy_path,
+                    palette.text_primary,
+                    Message::CopyPath(path.clone()),
+                    palette,
+                ))
+                .push(ctx_item(
+                    icon_info().size(14).color(palette.text_secondary).into(),
+                    strings.properties,
+                    palette.text_primary,
+                    Message::OpenProperties(path.clone()),
+                    palette,
+                ));
+            if *is_favorite {
+                items = items.push(ctx_divider(palette)).push(ctx_item(
+                    icon_star_off().size(14).color(palette.status_error).into(),
+                    strings.remove_favorite,
+                    palette.status_error,
+                    Message::RemoveFavorite(path.clone()),
+                    palette,
+                ));
+            }
+        }
         ContextMenuKind::FilterMenu => {
             if let Some(tab) = app.current_tab() {
                 let active_ext = tab.extension_filter.as_deref();
@@ -2143,6 +2189,13 @@ pub fn context_menu_overlay<'a>(
     let est_height = match &menu.kind {
         ContextMenuKind::NewMenu => 84.0,
         ContextMenuKind::Entry { .. } => 340.0,
+        ContextMenuKind::SidebarPlace { is_favorite, .. } => {
+            if *is_favorite {
+                196.0
+            } else {
+                156.0
+            }
+        }
         ContextMenuKind::Background => 240.0,
         ContextMenuKind::FilterMenu => 320.0,
     };

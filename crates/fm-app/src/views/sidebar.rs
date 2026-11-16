@@ -1,7 +1,7 @@
 use fm_core::{DriveKind, Strings, format_bytes};
 use fm_theme::{FONT_MONO, FONT_UI, FONT_UI_SEMIBOLD, Spacing, ThemePalette, styles};
 use iced::Alignment::Center;
-use iced::widget::{Space, button, column, container, row, scrollable, space, text};
+use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, space, text};
 use iced::{Element, Length, Padding};
 use lucide_icons::iced::{
     icon_database, icon_download, icon_folder, icon_hard_drive, icon_home, icon_image,
@@ -9,6 +9,7 @@ use lucide_icons::iced::{
 };
 
 use crate::app::{App, Message, SidebarTarget};
+use crate::views::sanitize_single_line;
 
 pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Element<'a, Message> {
     let collapsed = app.config.sidebar_collapsed;
@@ -59,13 +60,17 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
             let active = app
                 .current_tab()
                 .is_some_and(|t| t.current_path == resolved);
-            quick_col = quick_col.push(sidebar_btn(
+            quick_col = quick_col.push(sidebar_btn_owned(
                 icon,
-                label,
+                label.to_owned(),
                 collapsed,
                 active,
                 palette,
                 Message::SelectSidebar(target),
+                Some(Message::OpenSidebarContextMenu {
+                    path: resolved,
+                    is_favorite: false,
+                }),
             ));
         }
     }
@@ -99,6 +104,10 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
                 active,
                 palette,
                 Message::SelectDrive(drive.mount_path.clone()),
+                Some(Message::OpenSidebarContextMenu {
+                    path: drive.mount_path.clone(),
+                    is_favorite: false,
+                }),
             );
 
             if !collapsed
@@ -149,11 +158,12 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
     if !app.config.favorites.is_empty() {
         let mut fav_col = column![].spacing(2);
         for fav_path in &app.config.favorites {
-            let label = fav_path
+            let raw_label = fav_path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| fav_path.to_string_lossy().into_owned());
+            let label = sanitize_single_line(&raw_label);
             let active = app
                 .current_tab()
                 .is_some_and(|t| &t.current_path == fav_path);
@@ -164,6 +174,10 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
                 active,
                 palette,
                 Message::NavigateTo(fav_path.clone()),
+                Some(Message::OpenSidebarContextMenu {
+                    path: fav_path.clone(),
+                    is_favorite: true,
+                }),
             ));
         }
         sections = sections.push(fav_col);
@@ -173,13 +187,17 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
         let active = app
             .current_tab()
             .is_some_and(|t| &t.current_path == trash_path);
-        sections = sections.push(sidebar_btn(
+        sections = sections.push(sidebar_btn_owned(
             icon_trash_2().size(16),
-            strings.trash,
+            strings.trash.to_owned(),
             collapsed,
             active,
             palette,
             Message::SelectSidebar(SidebarTarget::Trash),
+            Some(Message::OpenSidebarContextMenu {
+                path: trash_path.clone(),
+                is_favorite: false,
+            }),
         ));
     }
 
@@ -232,7 +250,15 @@ fn sidebar_btn<'a>(
     palette: ThemePalette,
     msg: Message,
 ) -> Element<'a, Message> {
-    sidebar_btn_owned(icon, label.to_owned(), collapsed, active, palette, msg)
+    sidebar_btn_owned(
+        icon,
+        label.to_owned(),
+        collapsed,
+        active,
+        palette,
+        msg,
+        None,
+    )
 }
 
 fn sidebar_btn_owned<'a>(
@@ -242,6 +268,7 @@ fn sidebar_btn_owned<'a>(
     active: bool,
     palette: ThemePalette,
     msg: Message,
+    right_click: Option<Message>,
 ) -> Element<'a, Message> {
     let content: Element<'a, Message> = if collapsed {
         row![space::horizontal(), icon, space::horizontal()]
@@ -252,17 +279,22 @@ fn sidebar_btn_owned<'a>(
             icon,
             text(label)
                 .size(13)
-                .font(if active { FONT_UI_SEMIBOLD } else { FONT_UI }),
+                .font(if active { FONT_UI_SEMIBOLD } else { FONT_UI })
+                .wrapping(text::Wrapping::None),
         ]
         .spacing(8)
         .align_y(Center)
         .into()
     };
 
-    button(content)
+    let btn = button(content)
         .width(Length::Fill)
         .padding([6, 10])
         .style(styles::sidebar_item_button(palette, active))
-        .on_press(msg)
-        .into()
+        .on_press(msg);
+    if let Some(ctx_msg) = right_click {
+        mouse_area(btn).on_right_press(ctx_msg).into()
+    } else {
+        btn.into()
+    }
 }
