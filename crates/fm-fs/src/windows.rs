@@ -80,7 +80,17 @@ pub fn scan_directory_native(
                     fs_type: fs_type_for_path(path),
                 });
             }
-            return Err(map_io_err(path, std::io::Error::from(err)));
+            let io_err = win_err_to_io(err);
+            // Em raízes vazias no Windows, `FindFirstFileExW("X:\\*")` pode retornar `ERROR_FILE_NOT_FOUND` (2).
+            if io_err.kind() == std::io::ErrorKind::NotFound && path.is_dir() {
+                return Ok(DirectorySnapshot {
+                    request_id,
+                    path: path.to_path_buf(),
+                    entries: Vec::new(),
+                    fs_type: fs_type_for_path(path),
+                });
+            }
+            return Err(map_io_err(path, io_err));
         }
     };
 
@@ -151,7 +161,7 @@ pub fn scan_directory_native(
         match unsafe { FindNextFileW(handle.0, &raw mut find_data) } {
             Ok(()) => {}
             Err(err) if err.code() == ERROR_NO_MORE_FILES.into() => break,
-            Err(err) => return Err(map_io_err(path, std::io::Error::from(err))),
+            Err(err) => return Err(map_io_err(path, win_err_to_io(err))),
         }
     }
 
@@ -210,7 +220,7 @@ fn shell_execute_verb(path: &Path, verb: &str) -> Result<(), FsError> {
     };
 
     // SAFETY: `info`, `verb_w` e `file_w` permanecem vivos e imutáveis na stack durante `ShellExecuteExW`.
-    unsafe { ShellExecuteExW(&raw mut info) }.map_err(|e| map_io_err(path, std::io::Error::from(e)))
+    unsafe { ShellExecuteExW(&raw mut info) }.map_err(|e| map_io_err(path, win_err_to_io(e)))
 }
 
 struct WinCopyCallbackState<'a> {
@@ -282,7 +292,7 @@ pub fn copy_file_native(
         return Err(FsError::Cancelled);
     }
 
-    res.map_err(|e| map_io_err(dst, std::io::Error::from(e)))
+    res.map_err(|e| map_io_err(dst, win_err_to_io(e)))
 }
 
 pub fn extract_permissions_and_hidden(_name: &str, meta: &Metadata) -> (PermissionsMeta, bool) {
@@ -321,7 +331,7 @@ pub fn apply_entry_properties(path: &Path, patch: &PropertyPatch) -> Result<(), 
     }
     // SAFETY: `wide` é null-terminated válido e `attrs` é bitmask válida de atributos Win32.
     unsafe { SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_FLAGS_AND_ATTRIBUTES(attrs)) }
-        .map_err(|e| map_io_err(path, std::io::Error::from(e)))
+        .map_err(|e| map_io_err(path, win_err_to_io(e)))
 }
 
 pub fn volume_space(path: &Path) -> Option<VolumeSpace> {
@@ -488,10 +498,41 @@ fn to_str_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// Converte `windows::core::Error` (`HRESULT_FROM_WIN32`) para `std::io::Error` preservando o código Win32.
+fn win_err_to_io(err: windows::core::Error) -> std::io::Error {
+    let raw = err.code().0 as u32;
+    if (raw & 0xFFFF_0000) == 0x8007_0000 {
+        std::io::Error::from_raw_os_error((raw & 0xFFFF) as i32)
+    } else {
+        std::io::Error::from(err)
+    }
+}
+
 fn decode_wide_z(buf: &[u16]) -> Option<CompactString> {
     let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
     if end == 0 {
         return None;
     }
     Some(CompactString::from(String::from_utf16_lossy(&buf[..end])))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::win_err_to_io;
+    use std::io::ErrorKind;
+    use windows::Win32::Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND,
+    };
+    use windows::core::{Error as WinError, HRESULT};
+
+    #[test]
+    fn maps_hresult_win32_codes_to_io_error_kinds() {
+        let not_found_file = WinError::from(HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0));
+        let not_found_path = WinError::from(HRESULT::from_win32(ERROR_PATH_NOT_FOUND.0));
+        let denied = WinError::from(HRESULT::from_win32(ERROR_ACCESS_DENIED.0));
+
+        assert_eq!(win_err_to_io(not_found_file).kind(), ErrorKind::NotFound);
+        assert_eq!(win_err_to_io(not_found_path).kind(), ErrorKind::NotFound);
+        assert_eq!(win_err_to_io(denied).kind(), ErrorKind::PermissionDenied);
+    }
 }

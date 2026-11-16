@@ -3,11 +3,11 @@ name = "fm-preview"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 directories.workspace = true
 fast_image_resize.workspace = true
-fm-core.workspace = true
 image.workspace = true
 lru.workspace = true
 redb.workspace = true

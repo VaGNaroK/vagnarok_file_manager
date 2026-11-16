@@ -689,7 +689,19 @@ mod tests {
             let tmp = TestDir::new();
             std::fs::create_dir(tmp.0.join("src")).expect("mkdir src");
             std::fs::write(tmp.0.join("main.rs"), b"fn main() {}").expect("write main.rs");
-            std::fs::write(tmp.0.join(".env"), b"SECRET=1").expect("write .env");
+            let env_path = tmp.0.join(".env");
+            std::fs::write(&env_path, b"SECRET=1").expect("write .env");
+            #[cfg(target_os = "windows")]
+            apply_entry_properties(
+                env_path,
+                PropertyPatch {
+                    readonly: None,
+                    hidden: Some(true),
+                    posix_mode: None,
+                },
+            )
+            .await
+            .expect("set FILE_ATTRIBUTE_HIDDEN on .env");
 
             let fs = LocalFs::new();
             let snap = fs
