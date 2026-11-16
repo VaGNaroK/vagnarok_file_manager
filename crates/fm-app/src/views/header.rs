@@ -87,8 +87,7 @@ fn tab_strip_row<'a>(app: &'a App, palette: ThemePalette) -> Element<'a, Message
 
     let mut right_controls = row![lang_btn, theme_btn].spacing(4).align_y(Center);
 
-    let show_csd = cfg!(target_os = "windows")
-        || app.config.window_decorations == WindowDecorationsMode::IntegratedCsd;
+    let show_csd = app.config.window_decorations == WindowDecorationsMode::IntegratedCsd;
     if show_csd {
         right_controls = right_controls.push(window_controls(palette));
     }
