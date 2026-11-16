@@ -24,6 +24,28 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-16 | **Internacionalização Multi-Idiomas (Fluent)** | 6 locales `.ftl` (`pt-BR`, `en-US`, `es-ES`, `fr-FR`, `de-DE`, `it-IT`), detecção do SO (`sys-locale`), pluralização CLDR, `LocaleFormatSpec` e seletores multi-idioma | 44 passando |
 | 2026-11-16 | **Alpha 1 (`v0.1.0-alpha.1`), Sobre & GPLv3** | Aba e menu **Sobre**, versão `0.1.0-alpha.1`, troca de licença para `GPL-3.0-or-later` (`LICENSE`) e tag `v0.1.0-alpha.1` | 44 passando |
 | 2026-11-16 | **Alpha 2 (`v0.1.0-alpha.2`), Empacotamento & CI/CD** | Dropdown de idiomas, pipeline `.deb`/Flatpak/Inno Setup + ZIP portátil, `winresource`, correções de testes no Windows e `README.md` | 44 passando (Linux) |
+| 2026-11-16 | **Alpha 3 (`v0.1.0-alpha.3`), Polimento Windows & Lixeira** | Lixeira virtual no Windows (`trash://`) com restauração, remoção do CMD em release, correção de controles duplicados e limpeza do mockup `code.html` | 45 unitários |
+
+---
+
+## [0.1.0-alpha.3] — 2026-11-16
+
+### Windows UX & Lixeira (Recycle Bin)
+
+* **Lixeira virtual no Windows** (`crates/fm-core/src/{domain,lib}.rs`, `crates/fm-fs/src/lib.rs`, `crates/fm-app/src/{app,views/header}.rs`):
+  * Adicionados `VIRTUAL_TRASH_PATH` (`"trash://"`) e `is_virtual_trash_path` em `fm-core`.
+  * `resolve_trash_dir` agora expõe `trash://` no Windows, exibindo o ícone **Lixeira** na barra lateral esquerda.
+  * `LocalFs::list_dir` lista os itens da Lixeira do Windows via `trash::os_limited::list()`, `restore_trash_items` restaura por `item.id` exato e `delete_permanent` purga itens da Lixeira via `trash::os_limited::purge_all`.
+  * Breadcrumb, título da aba e botão **Subir** adaptados para a raiz virtual `trash://`.
+* **Sem janela de console em `release` no Windows** (`crates/fm-app/src/main.rs`):
+  * Adicionado `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` e ajustado o filtro padrão do `tracing_subscriber` para reduzir ruído de `wgpu`/`naga`.
+* **Controles de janela sem duplicação** (`crates/fm-app/src/views/header.rs`):
+  * Removido `cfg!(target_os = "windows") ||` de `show_csd` para que os botões integrados sejam exibidos apenas quando `WindowDecorationsMode::IntegratedCsd` estiver ativo.
+
+### Manutenção
+
+* **Limpeza de mockup inicial** (`code.html`, `ARCHITECTURE.md`, `specs/00-spec-index.md`, `specs/01-mockup-reconciliation.md`):
+  * Removido o arquivo `code.html` e convertidas suas referências em markdown para texto formatado.
 
 ---
 
