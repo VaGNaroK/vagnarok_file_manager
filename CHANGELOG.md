@@ -23,10 +23,11 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-16 | **Git, UX Sidebar & Zoom Ctrl+Scroll** | Ativação do Git (`main` + `.gitignore`), menu de contexto em favoritos/barra lateral, Propriedades via `stat_entry` e zoom `Ctrl + Scroll` no Grid | 42 passando |
 | 2026-11-16 | **Internacionalização Multi-Idiomas (Fluent)** | 6 locales `.ftl` (`pt-BR`, `en-US`, `es-ES`, `fr-FR`, `de-DE`, `it-IT`), detecção do SO (`sys-locale`), pluralização CLDR, `LocaleFormatSpec` e seletores multi-idioma | 44 passando |
 | 2026-11-16 | **Alpha 1 (`v0.1.0-alpha.1`), Sobre & GPLv3** | Aba e menu **Sobre**, versão `0.1.0-alpha.1`, troca de licença para `GPL-3.0-or-later` (`LICENSE`) e tag `v0.1.0-alpha.1` | 44 passando |
+| 2026-11-16 | **Alpha 2 (`v0.1.0-alpha.2`), Empacotamento & CI/CD** | Dropdown de idiomas, pipeline `.deb`/Flatpak/Inno Setup + ZIP portátil, `winresource`, correções de testes no Windows e `README.md` | 44 passando (Linux) |
 
 ---
 
-## [Unreleased]
+## [0.1.0-alpha.2] — 2026-11-16
 
 ### Empacotamento, Distribuição Multiplataforma & CI/CD
 
@@ -47,6 +48,14 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 
 * **Dropdown (`pick_list`) de idiomas em Preferências** (`crates/fm-app/src/views/modals.rs`, `crates/fm-core/{src/i18n.rs,locales/*.ftl}`):
   * Substituída a grade de botões de idiomas na aba **Geral** por um dropdown compacto com suporte à opção **Sistema (Auto)** e escalável para novos idiomas.
+
+### Correções no Windows & Documentação
+
+* **Compatibilidade e testes em `fm-fs` no Windows** (`crates/fm-fs/src/{windows.rs,lib.rs}`, `Cargo.toml`, `crates/*/Cargo.toml`):
+  * Adicionado `win_err_to_io` para converter códigos Win32 encapsulados em `HRESULT` (`0x8007xxxx`) preservando `ErrorKind::NotFound` / `PermissionDenied`, além do ajuste do teste de item oculto com `FILE_ATTRIBUTE_HIDDEN` no Windows.
+  * Eliminados avisos de manifesto Cargo (`rust-version.workspace = true` nos 7 crates e limpeza de dependências não usadas por alvo).
+* **Documentação & Captura principal** (`README.md`, `assets/screenshots/screenhome.png`, `AGENTS.md`, `specs/00-spec-index.md`):
+  * Criado `README.md` completo com captura real [screenhome.png](assets/screenshots/screenhome.png) em `assets/screenshots/` e adicionada política obrigatória de commit/aviso no Spec Kit.
 
 ---
 

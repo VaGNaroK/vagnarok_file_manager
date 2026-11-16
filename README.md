@@ -9,7 +9,7 @@
   </p>
 
   <p>
-    <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/versão-v0.1.0--alpha.1-blue?style=flat-square" alt="Versão v0.1.0-alpha.1" /></a>
+    <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/versão-v0.1.0--alpha.2-blue?style=flat-square" alt="Versão v0.1.0-alpha.2" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/licença-GPL--3.0--or--later-green?style=flat-square" alt="Licença GPL-3.0-or-later" /></a>
     <img src="https://img.shields.io/badge/rust-1.88%2B%20(edition%202024)-orange?style=flat-square" alt="Rust 1.88+" />
     <img src="https://img.shields.io/badge/plataformas-Linux%20%7C%20Windows-lightgrey?style=flat-square" alt="Linux e Windows" />
@@ -26,7 +26,7 @@
 
 O **Vagnarok File Manager** (`dev.vagnarok.FileManager`) combina interface reativa acelerada por GPU (`wgpu` com fallback `tiny-skia`) e drivers nativos de sistema de arquivos para manter a thread de UI sempre livre, mesmo em diretórios com dezenas de milhares de itens.
 
-* **Estágio atual**: `v0.1.0-alpha.1` (prévia alpha funcional com suporte a Linux e Windows).
+* **Estágio atual**: `v0.1.0-alpha.2` (prévia alpha funcional com suporte a Linux e Windows).
 * **Temas oficiais**: **Obsidian Flow** (Dark) e **Aether Light** (Light), selecionáveis em runtime ou sincronizados automaticamente com o tema do sistema operacional.
 * **Arquitetura estrita**: toda leitura de disco, geração de miniaturas, cálculo de hash, busca profunda e telemetria Git roda em workers assíncronos canceláveis (`tokio` + `rayon`).
 

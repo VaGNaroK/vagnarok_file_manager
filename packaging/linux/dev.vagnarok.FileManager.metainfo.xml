@@ -13,7 +13,7 @@
   <developer id="dev.vagnarok">
     <name>Vagnarok (em desenvolvimento)</name>
   </developer>
-  <url type="homepage">https://github.com/vagnarok/vagnarok_file_manager</url>
+  <url type="homepage">https://github.com/VaGNaroK/vagnarok_file_manager</url>
   <description>
     <p>
       Vagnarok File Manager is a native GPU-accelerated desktop file manager built
@@ -29,6 +29,11 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.1.0-alpha.2" date="2026-11-16">
+      <description>
+        <p>Adds multi-platform packaging (.deb, Flatpak, Windows Inno Setup + portable ZIP), language selector dropdown, Windows filesystem error mapping fixes, and updated project documentation.</p>
+      </description>
+    </release>
     <release version="0.1.0-alpha.1" date="2026-11-16">
       <description>
         <p>First public alpha release: LocalFs, ArchiveVfs, virtualized views, SIMD thumbnails, floating Properties, 6 languages via Project Fluent, and GPLv3 licensing.</p>
