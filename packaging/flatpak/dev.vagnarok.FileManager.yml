@@ -1,0 +1,44 @@
+id: dev.vagnarok.FileManager
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: vagnarok-file-manager
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --filesystem=host
+  - --filesystem=xdg-run/gvfsd
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.Flatpak
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/vagnarok-file-manager/.cargo-home
+
+modules:
+  - name: vagnarok-file-manager
+    buildsystem: simple
+    build-commands:
+      - cargo build --release --offline --locked -p fm-app
+      - install -Dm755 target/release/vagnarok-file-manager /app/bin/vagnarok-file-manager
+      - install -Dm644 packaging/linux/dev.vagnarok.FileManager.desktop /app/share/applications/dev.vagnarok.FileManager.desktop
+      - install -Dm644 packaging/linux/dev.vagnarok.FileManager.metainfo.xml /app/share/metainfo/dev.vagnarok.FileManager.metainfo.xml
+      - install -Dm644 assets/icons/dev.vagnarok.FileManager.svg /app/share/icons/hicolor/scalable/apps/dev.vagnarok.FileManager.svg
+      - install -Dm644 assets/icons/vagnarok-128.png /app/share/icons/hicolor/128x128/apps/dev.vagnarok.FileManager.png
+      - install -Dm644 assets/icons/vagnarok-256.png /app/share/icons/hicolor/256x256/apps/dev.vagnarok.FileManager.png
+      - install -Dm644 assets/icons/vagnarok-512.png /app/share/icons/hicolor/512x512/apps/dev.vagnarok.FileManager.png
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - target
+          - dist
+          - flatpak-build
+          - repo

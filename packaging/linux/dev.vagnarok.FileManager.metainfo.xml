@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.vagnarok.FileManager</id>
+  <name>Vagnarok File Manager</name>
+  <summary>Native high-performance file manager written in Rust</summary>
+  <summary xml:lang="pt-BR">Gerenciador de arquivos nativo de alta performance em Rust</summary>
+  <summary xml:lang="es">Gestor de archivos nativo de alto rendimiento en Rust</summary>
+  <summary xml:lang="fr">Gestionnaire de fichiers natif haute performance en Rust</summary>
+  <summary xml:lang="de">Nativer Hochleistungs-Dateimanager in Rust</summary>
+  <summary xml:lang="it">Gestore di file nativo ad alte prestazioni in Rust</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="dev.vagnarok">
+    <name>Vagnarok (em desenvolvimento)</name>
+  </developer>
+  <url type="homepage">https://github.com/vagnarok/vagnarok_file_manager</url>
+  <description>
+    <p>
+      Vagnarok File Manager is a native GPU-accelerated desktop file manager built
+      100% in Rust with Iced and wgpu, featuring virtualized Grid, Detail Table, and
+      Miller Columns views, live directory watching, fuzzy deep search, Git telemetry,
+      ArchiveVfs navigation (.zip/.tar/.tar.gz), floating Properties windows, and
+      multi-language Project Fluent localization.
+    </p>
+  </description>
+  <launchable type="desktop-id">dev.vagnarok.FileManager.desktop</launchable>
+  <provides>
+    <binary>vagnarok-file-manager</binary>
+  </provides>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0-alpha.1" date="2026-11-16">
+      <description>
+        <p>First public alpha release: LocalFs, ArchiveVfs, virtualized views, SIMD thumbnails, floating Properties, 6 languages via Project Fluent, and GPLv3 licensing.</p>
+      </description>
+    </release>
+  </releases>
+</component>

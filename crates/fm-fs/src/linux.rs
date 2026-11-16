@@ -213,15 +213,16 @@ pub fn open_terminal_at(path: &Path) -> Result<(), FsError> {
         "konsole",
         "xterm",
     ];
+    let in_flatpak = std::env::var_os("FLATPAK_ID").is_some();
 
     if let Some(term) = env_term.as_deref().filter(|s| !s.trim().is_empty())
-        && Command::new(term).current_dir(path).spawn().is_ok()
+        && spawn_terminal_cmd(term, path, in_flatpak)
     {
         return Ok(());
     }
 
     for bin in candidates {
-        if Command::new(bin).current_dir(path).spawn().is_ok() {
+        if spawn_terminal_cmd(bin, path, in_flatpak) {
             return Ok(());
         }
     }
@@ -230,6 +231,32 @@ pub fn open_terminal_at(path: &Path) -> Result<(), FsError> {
         path: path.to_path_buf(),
         message: "nenhum emulador de terminal encontrado no PATH ($TERMINAL)".to_owned(),
     })
+}
+
+fn spawn_terminal_cmd(bin: &str, path: &Path, in_flatpak: bool) -> bool {
+    if in_flatpak {
+        let has_host_bin = Command::new("flatpak-spawn")
+            .args([
+                "--host",
+                "sh",
+                "-c",
+                "command -v \"$1\" >/dev/null 2>&1",
+                "sh",
+                bin,
+            ])
+            .status()
+            .is_ok_and(|st| st.success());
+        if !has_host_bin {
+            return false;
+        }
+        return Command::new("flatpak-spawn")
+            .arg("--host")
+            .arg(format!("--directory={}", path.to_string_lossy()))
+            .arg(bin)
+            .spawn()
+            .is_ok();
+    }
+    Command::new(bin).current_dir(path).spawn().is_ok()
 }
 
 pub fn open_default(path: &Path) -> Result<(), FsError> {

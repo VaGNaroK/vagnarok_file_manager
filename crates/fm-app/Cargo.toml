@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "vagnarok-file-manager"
+path = "src/main.rs"
+
 [dependencies]
 compact_str.workspace = true
 fm-core.workspace = true
@@ -20,5 +24,31 @@ tokio-util.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[build-dependencies]
+winresource.workspace = true
+
 [target.'cfg(target_os = "windows")'.dependencies]
 window-vibrancy.workspace = true
+
+[package.metadata.deb]
+name = "vagnarok-file-manager"
+maintainer = "VaGNaroK <indialuz42@gmail.com>"
+copyright = "2026, Vagnarok File Manager Contributors"
+license-file = ["../../LICENSE", "0"]
+extended-description = """\
+Native cross-platform desktop file manager written 100% in Rust with \
+Iced + wgpu, virtualized viewports, live watcher, fuzzy search, ArchiveVfs, \
+and multi-language Fluent UI."""
+depends = "$auto"
+recommends = "libvulkan1, mesa-vulkan-drivers"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/vagnarok-file-manager", "usr/bin/", "755"],
+    ["../../packaging/linux/dev.vagnarok.FileManager.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/linux/dev.vagnarok.FileManager.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["../../assets/icons/dev.vagnarok.FileManager.svg", "usr/share/icons/hicolor/scalable/apps/dev.vagnarok.FileManager.svg", "644"],
+    ["../../assets/icons/vagnarok-128.png", "usr/share/icons/hicolor/128x128/apps/dev.vagnarok.FileManager.png", "644"],
+    ["../../assets/icons/vagnarok-256.png", "usr/share/icons/hicolor/256x256/apps/dev.vagnarok.FileManager.png", "644"],
+    ["../../assets/icons/vagnarok-512.png", "usr/share/icons/hicolor/512x512/apps/dev.vagnarok.FileManager.png", "644"],
+]

@@ -1,4 +1,9 @@
 /target/
+/dist/
+/vendor/
+/.cargo/
+/flatpak-build/
+/repo/
 **/*.rs.bk
 *.pdb
 .DS_Store

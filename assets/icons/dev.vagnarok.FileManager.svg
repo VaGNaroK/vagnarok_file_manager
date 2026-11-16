@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#1E293B"/>
+    </linearGradient>
+    <linearGradient id="tabGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#4338CA"/>
+    </linearGradient>
+    <linearGradient id="folderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3B82F6"/>
+      <stop offset="55%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App badge -->
+  <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#bgGrad)" stroke="#334155" stroke-width="8"/>
+
+  <!-- Folder back tab -->
+  <path d="M96 144 C96 122 114 104 136 104 L212 104 C224 104 235 110 242 120 L262 148 L392 148 C406 148 416 158 416 172 L416 212 L96 212 Z" fill="url(#tabGrad)"/>
+
+  <!-- Folder front body -->
+  <rect x="88" y="168" width="336" height="236" rx="34" fill="url(#folderGrad)"/>
+
+  <!-- Top edge highlight -->
+  <rect x="108" y="172" width="296" height="6" rx="3" fill="#BFDBFE" fill-opacity="0.35"/>
+
+  <!-- Geometric V emblem -->
+  <path d="M188 232 L256 350 L324 232" fill="none" stroke="#F8FAFC" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

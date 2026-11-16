@@ -1,0 +1,23 @@
+[Desktop Entry]
+Type=Application
+Name=Vagnarok File Manager
+GenericName=File Manager
+GenericName[pt_BR]=Gerenciador de Arquivos
+GenericName[es]=Gestor de Archivos
+GenericName[fr]=Gestionnaire de Fichiers
+GenericName[de]=Dateimanager
+GenericName[it]=Gestore di File
+Comment=Native high-performance file manager written in Rust
+Comment[pt_BR]=Gerenciador de arquivos nativo de alta performance em Rust
+Comment[es]=Gestor de archivos nativo de alto rendimiento en Rust
+Comment[fr]=Gestionnaire de fichiers natif haute performance en Rust
+Comment[de]=Nativer Hochleistungs-Dateimanager in Rust
+Comment[it]=Gestore di file nativo ad alte prestazioni in Rust
+Exec=vagnarok-file-manager %U
+Icon=dev.vagnarok.FileManager
+Terminal=false
+Categories=System;FileTools;FileManager;
+MimeType=inode/directory;
+Keywords=files;folders;explorer;fm;directory;archive;
+StartupNotify=true
+StartupWMClass=vagnarok-file-manager

@@ -26,6 +26,30 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 
 ---
 
+## [Unreleased]
+
+### Empacotamento, Distribuição Multiplataforma & CI/CD
+
+* **Identidade, ícones e recursos nativos** (`assets/icons/*`, `crates/fm-app/{Cargo.toml,build.rs,vagnarok.rc}`, `Cargo.toml`):
+  * Definido o binário instalado como `vagnarok-file-manager` (`[[bin]]` em `crates/fm-app/Cargo.toml`) e o App ID reverso `dev.vagnarok.FileManager`.
+  * Gerado ícone vetorial [`dev.vagnarok.FileManager.svg`](assets/icons/dev.vagnarok.FileManager.svg) seguindo a paleta `ObsidianFlow`/`AetherLight`, além de PNGs (`128`/`256`/`512`) e [`vagnarok.ico`](assets/icons/vagnarok.ico) multi-resolução.
+  * Integrado `winresource` em `build.rs` para embutir ícone, manifesto `longPathAware` / `PerMonitorV2` e metadados do executável no Windows (MSVC e MinGW).
+* **Pacotes Linux (`.deb` e Flatpak)** (`crates/fm-app/Cargo.toml`, `packaging/linux/*`, `packaging/flatpak/*`, `crates/fm-fs/src/linux.rs`):
+  * Configurado `[package.metadata.deb]` para geração de `.deb` via `cargo-deb`.
+  * Adicionados [`dev.vagnarok.FileManager.desktop`](packaging/linux/dev.vagnarok.FileManager.desktop) e [`dev.vagnarok.FileManager.metainfo.xml`](packaging/linux/dev.vagnarok.FileManager.metainfo.xml) validados com `desktop-file-validate` e `appstreamcli validate --no-net`.
+  * Criado manifesto Flatpak [`dev.vagnarok.FileManager.yml`](packaging/flatpak/dev.vagnarok.FileManager.yml) (`org.freedesktop.Platform//24.08`, build offline vendored) e suporte a `flatpak-spawn --host` em `open_terminal_at` quando `FLATPAK_ID` estiver ativo.
+* **Instalador Windows & Release automatizada** (`packaging/windows/vagnarok.iss`, `.github/workflows/release.yml`, `scripts/cut-release.sh`, `.gitignore`):
+  * Criado script Inno Setup [`vagnarok.iss`](packaging/windows/vagnarok.iss) com 6 idiomas, licença GPLv3, ícone e integrações opcionais.
+  * Criado workflow [`release.yml`](.github/workflows/release.yml) disparado por tags `v*.*.*` ou `workflow_dispatch`, validando `Cargo.toml` vs. tag, rodando testes, gerando `.deb` (`ubuntu-22.04`), `.flatpak` (`ubuntu-24.04`), setup `.exe` + ZIP portátil (`windows-latest`), `SHA256SUMS.txt` e publicando GitHub Release.
+  * Adicionado helper local executável [`scripts/cut-release.sh`](scripts/cut-release.sh) para bump SemVer, checagem, commit e criação de tag anotada.
+
+### Interface & UX
+
+* **Dropdown (`pick_list`) de idiomas em Preferências** (`crates/fm-app/src/views/modals.rs`, `crates/fm-core/{src/i18n.rs,locales/*.ftl}`):
+  * Substituída a grade de botões de idiomas na aba **Geral** por um dropdown compacto com suporte à opção **Sistema (Auto)** e escalável para novos idiomas.
+
+---
+
 ## [0.1.0-alpha.1] — 2026-11-16
 
 ### Aba "Sobre", Versionamento `v0.1.0-alpha.1` & Licença GPLv3
