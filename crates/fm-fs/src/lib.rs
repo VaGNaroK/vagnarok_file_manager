@@ -30,7 +30,6 @@ use std::path::{Path, PathBuf};
 
 use compact_str::CompactString;
 use directories::{BaseDirs, UserDirs};
-use fm_core::domain::FsType;
 use fm_core::{
     DirectorySnapshot, DriveInfo, EntryExtraInfo, EntryKind, FileEntry, FsError, PermissionsMeta,
     UserPlaces, VIRTUAL_TRASH_PATH, VfsProvider, VolumeSpace, compute_entry_id,
@@ -499,6 +498,17 @@ pub(crate) fn scan_directory_blocking(
     })
 }
 
+fn default_permissions_meta() -> PermissionsMeta {
+    #[cfg(target_os = "windows")]
+    {
+        PermissionsMeta::WinAttributes(0)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        PermissionsMeta::PosixMode(0)
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn list_virtual_trash(
     request_id: u64,
@@ -531,13 +541,6 @@ fn list_virtual_trash(
         };
         let created_at = meta.as_ref().and_then(|m| m.created().ok());
         let name = CompactString::from(item.name.to_string_lossy().as_ref());
-        let extension = if is_dir {
-            None
-        } else {
-            Path::new(&item.name)
-                .extension()
-                .map(|e| CompactString::from(e.to_string_lossy().as_ref()))
-        };
         let kind = if is_dir {
             EntryKind::Directory
         } else {
@@ -549,26 +552,22 @@ fn list_virtual_trash(
             item_path
         };
 
-        entries.push(FileEntry {
-            id: compute_entry_id(&entry_path),
+        entries.push(make_file_entry(
             name,
-            path: entry_path,
+            entry_path,
             kind,
             size_bytes,
             modified_at,
             created_at,
-            permissions: PermissionsMeta::default(),
-            extension,
-            is_hidden: false,
-            is_symlink: false,
-            child_count: None,
-        });
+            default_permissions_meta(),
+            false,
+        ));
     }
 
     Ok(DirectorySnapshot {
         path: PathBuf::from(VIRTUAL_TRASH_PATH),
         entries,
-        fs_type: FsType::Unknown,
+        fs_type: None,
         request_id,
     })
 }
@@ -581,7 +580,7 @@ fn list_virtual_trash(
     Ok(DirectorySnapshot {
         path: PathBuf::from(VIRTUAL_TRASH_PATH),
         entries: Vec::new(),
-        fs_type: FsType::Unknown,
+        fs_type: None,
         request_id,
     })
 }
@@ -747,20 +746,16 @@ pub async fn stat_entry(path: PathBuf) -> Result<FileEntry, FsError> {
 
 fn stat_entry_blocking(entry_path: &Path) -> Result<FileEntry, FsError> {
     if is_virtual_trash_path(entry_path) {
-        return Ok(FileEntry {
-            id: compute_entry_id(entry_path),
-            name: CompactString::from("Trash"),
-            path: entry_path.to_path_buf(),
-            kind: EntryKind::Directory,
-            size_bytes: 0,
-            modified_at: None,
-            created_at: None,
-            permissions: PermissionsMeta::default(),
-            extension: None,
-            is_hidden: false,
-            is_symlink: false,
-            child_count: None,
-        });
+        return Ok(make_file_entry(
+            CompactString::from("Trash"),
+            entry_path.to_path_buf(),
+            EntryKind::Directory,
+            0,
+            None,
+            None,
+            default_permissions_meta(),
+            false,
+        ));
     }
     let link_meta = std::fs::symlink_metadata(entry_path).map_err(|e| map_io_err(entry_path, e))?;
     let name = entry_path
