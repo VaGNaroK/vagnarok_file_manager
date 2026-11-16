@@ -14,6 +14,10 @@
     <img src="https://img.shields.io/badge/rust-1.88%2B%20(edition%202024)-orange?style=flat-square" alt="Rust 1.88+" />
     <img src="https://img.shields.io/badge/plataformas-Linux%20%7C%20Windows-lightgrey?style=flat-square" alt="Linux e Windows" />
   </p>
+
+  <p>
+    <img src="assets/screenshots/screenhome.png" alt="Vagnarok File Manager — Tela Principal (Aether Light)" width="880" />
+  </p>
 </div>
 
 ---
@@ -91,7 +95,8 @@ O repositório é organizado em 7 crates com fronteiras rígidas de dependência
 vagnarok_file_manager/
 ├── assets/
 │   ├── fonts/               # Inter e JetBrains Mono embutidas
-│   └── icons/               # Ícone vetorial SVG, PNGs (128/256/512) e .ico
+│   ├── icons/               # Ícone vetorial SVG, PNGs (128/256/512) e .ico
+│   └── screenshots/         # Capturas de tela para documentação (screenhome.png)
 ├── crates/
 │   ├── fm-core/             # Domínio puro, traits VfsProvider, estado, eventos e i18n (.ftl)
 │   ├── fm-fs/               # LocalFs (Linux rustix / Windows Win32), ArchiveVfs, CopyEngine, config TOML

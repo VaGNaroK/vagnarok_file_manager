@@ -1,6 +1,6 @@
 # Spec 01 — Reconciliação do Mockup Inicial
 
-Esta spec define a decisão canônica para cada inconsistência encontrada nos arquivos originais de design ([DESIGN.md](../DESIGN.md), [code.html](../code.html) e [screen.png](../screen.png)).
+Esta spec define a decisão canônica para cada inconsistência encontrada nos arquivos originais de design ([DESIGN.md](../DESIGN.md), [code.html](../code.html) e `screen.png`).
 
 ---
 
