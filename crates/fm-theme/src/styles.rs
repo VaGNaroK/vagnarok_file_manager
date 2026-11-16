@@ -1,5 +1,6 @@
 use iced::border::Radius;
-use iced::widget::{button, container, text_input};
+use iced::overlay::menu;
+use iced::widget::{button, container, pick_list, text_input};
 use iced::{Background, Border, Color, Shadow, Theme, Vector};
 
 use crate::palette::ThemePalette;
@@ -324,5 +325,45 @@ pub fn search_input_style(
             value: p.text_primary,
             selection: p.accent_surface,
         }
+    }
+}
+
+pub fn pick_list_style(p: ThemePalette) -> impl Fn(&Theme, pick_list::Status) -> pick_list::Style {
+    move |_, status| {
+        let (bg, border_color) = match status {
+            pick_list::Status::Opened { .. } => (p.surface_lowest, p.accent_primary),
+            pick_list::Status::Hovered => (p.surface_high, p.border_strong),
+            pick_list::Status::Active => (p.surface_lowest, p.border),
+        };
+        pick_list::Style {
+            text_color: p.text_primary,
+            placeholder_color: p.text_muted,
+            handle_color: p.text_secondary,
+            background: Background::Color(bg),
+            border: Border {
+                color: border_color,
+                width: 1.0,
+                radius: Radius::from(8.0),
+            },
+        }
+    }
+}
+
+pub fn dropdown_menu_style(p: ThemePalette) -> impl Fn(&Theme) -> menu::Style {
+    move |_| menu::Style {
+        background: Background::Color(p.surface_lowest),
+        border: Border {
+            color: p.border_strong,
+            width: 1.0,
+            radius: Radius::from(10.0),
+        },
+        text_color: p.text_primary,
+        selected_text_color: p.on_accent,
+        selected_background: Background::Color(p.accent_primary),
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.18),
+            offset: Vector::new(0.0, 6.0),
+            blur_radius: 16.0,
+        },
     }
 }

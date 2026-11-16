@@ -9,7 +9,8 @@ use fm_theme::{
 };
 use iced::Alignment::Center;
 use iced::widget::{
-    Space, button, column, container, mouse_area, row, scrollable, space, text, text_input,
+    Space, button, column, container, mouse_area, pick_list, row, scrollable, space, text,
+    text_input,
 };
 use iced::{Background, Border, Color, Element, Length, Padding, border::Radius, window};
 use lucide_icons::iced::{
@@ -1483,6 +1484,18 @@ fn size_bar_ratio(bytes: u64) -> f32 {
     ((log_val / 11.0) as f32).clamp(0.10, 0.96)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LanguageOption {
+    language: Option<Language>,
+    label: String,
+}
+
+impl std::fmt::Display for LanguageOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
 pub fn preferences_modal<'a>(
     app: &'a App,
     palette: ThemePalette,
@@ -1497,28 +1510,41 @@ pub fn preferences_modal<'a>(
         WindowDecorationsMode::IntegratedCsd => strings.window_bar_csd,
     };
 
-    let auto_lang_btn = button(text(strings.follow_system).size(11).font(FONT_UI_SEMIBOLD))
-        .padding([4, 8])
-        .style(styles::tab_button(palette, !app.config.language_customized))
-        .on_press(Message::UseSystemLanguage);
-
-    let mut lang_row_1 = row![auto_lang_btn].spacing(4).align_y(Center);
-    let mut lang_row_2 = row![].spacing(4).align_y(Center);
-    for (idx, &lang) in Language::ALL.iter().enumerate() {
-        let active = app.config.language_customized && app.config.language == lang;
-        let pill = button(text(lang.native_name()).size(11).font(FONT_UI))
-            .padding([4, 8])
-            .style(styles::tab_button(palette, active))
-            .on_press(Message::SetLanguage(lang));
-        if idx < 2 {
-            lang_row_1 = lang_row_1.push(pill);
-        } else {
-            lang_row_2 = lang_row_2.push(pill);
-        }
+    let mut lang_options = Vec::with_capacity(Language::ALL.len() + 1);
+    lang_options.push(LanguageOption {
+        language: None,
+        label: strings.follow_system.to_owned(),
+    });
+    for lang in Language::ALL {
+        lang_options.push(LanguageOption {
+            language: Some(lang),
+            label: lang.native_name().to_owned(),
+        });
     }
-    let lang_controls = column![lang_row_1, lang_row_2]
-        .spacing(4)
-        .align_x(iced::alignment::Horizontal::Right);
+    let selected_lang = if app.config.language_customized {
+        LanguageOption {
+            language: Some(app.config.language),
+            label: app.config.language.native_name().to_owned(),
+        }
+    } else {
+        LanguageOption {
+            language: None,
+            label: strings.follow_system.to_owned(),
+        }
+    };
+    let lang_controls: Element<'a, Message> = pick_list(lang_options, Some(selected_lang), |opt| {
+        match opt.language {
+            Some(lang) => Message::SetLanguage(lang),
+            None => Message::UseSystemLanguage,
+        }
+    })
+    .text_size(12)
+    .font(FONT_UI)
+    .padding([6, 10])
+    .width(Length::Fixed(220.0))
+    .style(styles::pick_list_style(palette))
+    .menu_style(styles::dropdown_menu_style(palette))
+    .into();
 
     let pref_row = |label: &'a str, control: Element<'a, Message>| {
         container(
@@ -1599,7 +1625,7 @@ pub fn preferences_modal<'a>(
                     .on_press(Message::ToggleTheme)
                     .into(),
             ),
-            pref_row(strings.lang_label, lang_controls.into()),
+            pref_row(strings.lang_label, lang_controls),
             pref_row(
                 strings.hero_card_label,
                 button(
@@ -2362,7 +2388,19 @@ pub fn context_menu_overlay<'a>(
     let x = menu.position.x.clamp(8.0, max_x);
     let y = menu.position.y.clamp(8.0, max_y);
 
-    let card = container(items.width(Length::Fixed(menu_width)))
+    let card_body: Element<'a, Message> = if matches!(
+        menu.kind,
+        ContextMenuKind::LanguageMenu | ContextMenuKind::FilterMenu
+    ) {
+        scrollable(items.width(Length::Fixed(menu_width)))
+            .height(Length::Shrink)
+            .into()
+    } else {
+        items.width(Length::Fixed(menu_width)).into()
+    };
+
+    let card = container(card_body)
+        .max_height(320.0)
         .padding(8)
         .style(styles::modal_card(palette));
 
