@@ -520,7 +520,10 @@ fn list_virtual_trash(
         let item_path = PathBuf::from(&item.id);
         let meta = std::fs::symlink_metadata(&item_path).ok();
         let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
-        let size_bytes = meta.as_ref().map(|m| if is_dir { 0 } else { m.len() }).unwrap_or(0);
+        let size_bytes = meta
+            .as_ref()
+            .map(|m| if is_dir { 0 } else { m.len() })
+            .unwrap_or(0);
         let modified_at = if item.time_deleted >= 0 {
             Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(item.time_deleted as u64))
         } else {

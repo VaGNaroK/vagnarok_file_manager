@@ -126,8 +126,9 @@ fn navigation_row<'a>(
 ) -> Element<'a, Message> {
     let can_back = tab.is_some_and(TabState::can_go_back);
     let can_fwd = tab.is_some_and(TabState::can_go_forward);
-    let can_up = tab
-        .is_some_and(|t| !fm_core::is_virtual_trash_path(&t.current_path) && t.current_path.parent().is_some());
+    let can_up = tab.is_some_and(|t| {
+        !fm_core::is_virtual_trash_path(&t.current_path) && t.current_path.parent().is_some()
+    });
 
     let mut back_btn = button(icon_arrow_left().size(15))
         .padding([5, 7])
@@ -277,11 +278,7 @@ fn unified_breadcrumb<'a>(
                 .font(FONT_UI_SEMIBOLD)
                 .color(palette.text_primary)
                 .wrapping(text::Wrapping::None);
-            crumbs = crumbs.push(
-                icon_chevron_right()
-                    .size(12)
-                    .color(palette.text_muted),
-            );
+            crumbs = crumbs.push(icon_chevron_right().size(12).color(palette.text_muted));
             crumbs = crumbs.push(
                 button(txt)
                     .padding([3, 6])
