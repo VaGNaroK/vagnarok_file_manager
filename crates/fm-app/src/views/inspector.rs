@@ -1,4 +1,4 @@
-use fm_core::{Language, Strings, TabState, ThemePreset, format_age, format_bytes};
+use fm_core::{Strings, TabState, ThemePreset, format_bytes};
 use fm_theme::{
     FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_BOLD, FONT_UI_SEMIBOLD, Spacing, ThemePalette,
     styles,
@@ -23,8 +23,6 @@ pub fn drawer<'a>(
         return Space::new().width(0).height(0).into();
     }
 
-    let pt_br = app.config.language == Language::PtBr;
-
     let body: Element<'a, Message> = match tab {
         Some(tab) => {
             let count = tab.selection.count();
@@ -36,7 +34,7 @@ pub fn drawer<'a>(
             } else if count > 1 {
                 let total = tab.selection.selected_bytes(&tab.visible_entries);
                 column![
-                    text(format!("{count} {}", strings.items_unit))
+                    text(strings.format_items_count(count))
                         .size(15)
                         .font(FONT_UI_SEMIBOLD)
                         .color(palette.text_primary),
@@ -64,8 +62,8 @@ pub fn drawer<'a>(
                 let size_str = if entry.kind.is_dir_like() {
                     entry
                         .child_count
-                        .map(|c| format!("{c} {}", strings.items_unit))
-                        .unwrap_or_else(|| "DIR".to_owned())
+                        .map(|c| strings.format_items_count(c as usize))
+                        .unwrap_or_else(|| strings.dir_badge.to_owned())
                 } else {
                     format_bytes(entry.size_bytes).to_string()
                 };
@@ -97,14 +95,14 @@ pub fn drawer<'a>(
                 if let Some(modified) = entry.modified_at {
                     info_col = info_col.push(meta_row(
                         strings.modified,
-                        format_age(modified, pt_br).to_string(),
+                        strings.format_age(modified),
                         palette,
                     ));
                 }
                 if let Some(created) = entry.created_at {
                     info_col = info_col.push(meta_row(
                         strings.created,
-                        format_age(created, pt_br).to_string(),
+                        strings.format_age(created),
                         palette,
                     ));
                 }

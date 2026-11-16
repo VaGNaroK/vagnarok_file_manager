@@ -1,6 +1,6 @@
 use fm_core::{
-    CopyMode, DIR_FILTER_SENTINEL, FileEntry, JobProgress, Language, SelectionModifiers,
-    SortDirection, SortField, Strings, TabState, ViewMode, format_age, format_bytes,
+    CopyMode, DIR_FILTER_SENTINEL, FileEntry, JobProgress, SelectionModifiers, SortDirection,
+    SortField, Strings, TabState, ViewMode, format_bytes,
 };
 use fm_theme::{
     FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_BOLD, FONT_UI_SEMIBOLD, ThemePalette, styles,
@@ -40,7 +40,7 @@ pub fn view<'a>(
     strings: Strings,
 ) -> Element<'a, Message> {
     let Some(tab) = tab else {
-        return container(text("Nenhuma aba ativa"))
+        return container(text(strings.no_active_tab))
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
@@ -625,13 +625,13 @@ fn hero_card<'a>(
     let metrics = row![
         metric_block(
             strings.folders,
-            format!("{} {}", stats.dir_count, strings.folders_unit),
+            strings.format_folders_count(stats.dir_count),
             palette.text_primary,
             palette,
         ),
         metric_block(
             strings.files,
-            format!("{} {}", stats.file_count, strings.files_unit),
+            strings.format_files_count(stats.file_count),
             palette.text_primary,
             palette,
         ),
@@ -856,8 +856,8 @@ fn grid_item_card<'a>(
     let sub_label = if entry.kind.is_dir_like() {
         entry
             .child_count
-            .map(|c| format!("{c} {}", strings.items_unit))
-            .unwrap_or_else(|| "DIR".to_owned())
+            .map(|c| strings.format_items_count(c as usize))
+            .unwrap_or_else(|| strings.dir_badge.to_owned())
     } else {
         format_bytes(entry.size_bytes).to_string()
     };
@@ -1034,7 +1034,6 @@ fn detail_table_view<'a>(
         ctrl: app.current_modifiers.control(),
         shift: app.current_modifiers.shift(),
     };
-    let pt_br = app.config.language == Language::PtBr;
     let w = app.table_col_weights;
     let p = [
         portion(w[0]),
@@ -1093,20 +1092,20 @@ fn detail_table_view<'a>(
         let size_txt = if entry.kind.is_dir_like() {
             entry
                 .child_count
-                .map(|c| format!("{c} {}", strings.items_unit))
+                .map(|c| strings.format_items_count(c as usize))
                 .unwrap_or_else(|| "—".to_owned())
         } else {
             format_bytes(entry.size_bytes).to_string()
         };
         let kind_txt = if entry.kind.is_dir_like() {
-            "DIR"
+            strings.dir_badge
         } else {
-            entry.extension.as_deref().unwrap_or("FILE")
+            entry.extension.as_deref().unwrap_or(strings.file_badge)
         };
         let perms = entry.permissions.format_compact(entry.kind.is_dir_like());
         let age_txt = entry
             .modified_at
-            .map(|m| format_age(m, pt_br).to_string())
+            .map(|m| strings.format_age(m))
             .unwrap_or_else(|| "—".to_owned());
 
         let row_content = row![

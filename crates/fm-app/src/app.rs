@@ -7,9 +7,9 @@ use compact_str::CompactString;
 use fm_core::{
     AppConfig, ClipboardTransfer, ConflictPolicy, CopyMode, DIR_FILTER_SENTINEL, DirectorySnapshot,
     DriveInfo, EntryExtraInfo, EntryId, FileEntry, FolderSummary, FsError, JobProgress, JobState,
-    PermissionsMeta, RecursiveSize, SelectedFileTelemetry, SelectionModifiers, SortDirection,
-    SortField, Strings, TabId, TabState, ThemePreset, UserPlaces, VfsProvider, ViewMode,
-    VolumeSpace, WindowDecorationsMode,
+    Language, PermissionsMeta, RecursiveSize, SelectedFileTelemetry, SelectionModifiers,
+    SortDirection, SortField, Strings, TabId, TabState, ThemePreset, UserPlaces, VfsProvider,
+    ViewMode, VolumeSpace, WindowDecorationsMode,
 };
 use fm_fs::LocalFs;
 use fm_index::SearchHit;
@@ -60,6 +60,7 @@ pub enum ContextMenuKind {
     Background,
     NewMenu,
     FilterMenu,
+    LanguageMenu,
 }
 
 #[derive(Debug, Clone)]
@@ -219,7 +220,9 @@ pub enum Message {
     CommitPathDraft,
     ToggleTheme,
     SystemThemeDetected(iced::theme::Mode),
-    ToggleLanguage,
+    OpenLanguageMenu,
+    SetLanguage(Language),
+    UseSystemLanguage,
     ToggleSidebar,
     ToggleInspector,
     ToggleHeroCard,
@@ -502,7 +505,10 @@ impl App {
     pub fn boot() -> (Self, Task<Message>) {
         let vfs = Arc::new(LocalFs::new());
         let places = fm_fs::user_places();
-        let config = fm_fs::load_config();
+        let mut config = fm_fs::load_config();
+        if !config.language_customized {
+            config.language = Language::detect_system();
+        }
 
         let tab1_path = places
             .documents
@@ -1023,8 +1029,32 @@ impl App {
                 }
                 Task::none()
             }
-            Message::ToggleLanguage => {
-                self.config.language = self.config.language.toggled();
+            Message::OpenLanguageMenu => {
+                self.breadcrumb_menu = None;
+                let is_open = matches!(
+                    self.context_menu.as_ref().map(|m| &m.kind),
+                    Some(ContextMenuKind::LanguageMenu)
+                );
+                if is_open {
+                    self.context_menu = None;
+                } else {
+                    self.context_menu = Some(ContextMenuState {
+                        kind: ContextMenuKind::LanguageMenu,
+                        position: self.cursor_position,
+                    });
+                }
+                Task::none()
+            }
+            Message::SetLanguage(lang) => {
+                self.context_menu = None;
+                self.config.language = lang;
+                self.config.language_customized = true;
+                self.persist_config_task()
+            }
+            Message::UseSystemLanguage => {
+                self.context_menu = None;
+                self.config.language_customized = false;
+                self.config.language = Language::detect_system();
                 self.persist_config_task()
             }
             Message::ToggleSidebar => {
@@ -2107,7 +2137,7 @@ impl App {
                 }
                 let trimmed = props.draft_name.trim().to_owned();
                 if trimmed.is_empty() || trimmed.contains(['/', '\\']) {
-                    self.status_notice = Some("Nome inválido.".to_owned());
+                    self.status_notice = Some(self.strings().invalid_name.to_owned());
                     return Task::none();
                 }
                 let original_path = props.entry.path.clone();
@@ -2854,7 +2884,7 @@ impl App {
             ActiveDialog::CreateItem { is_dir, name } => {
                 let trimmed = name.trim();
                 if trimmed.is_empty() || trimmed.contains(['/', '\\']) {
-                    self.status_notice = Some("Nome inválido.".to_owned());
+                    self.status_notice = Some(self.strings().invalid_name.to_owned());
                     return Task::none();
                 }
                 let Some(dir) = self.current_tab().map(|t| t.current_path.clone()) else {
@@ -2879,7 +2909,7 @@ impl App {
             ActiveDialog::Rename { src, name } => {
                 let trimmed = name.trim();
                 if trimmed.is_empty() || trimmed.contains(['/', '\\']) {
-                    self.status_notice = Some("Nome inválido.".to_owned());
+                    self.status_notice = Some(self.strings().invalid_name.to_owned());
                     return Task::none();
                 }
                 let Some(parent) = src.parent() else {

@@ -17,7 +17,7 @@ pub fn view<'a>(
     let (items_label, selection_label, sha_label, disk_label) = match tab {
         Some(tab) => {
             let total = tab.visible_entries.len();
-            let items_lbl = format!("{total} {}", strings.items_unit);
+            let items_lbl = strings.format_items_count(total);
 
             let sel_count = tab.selection.count();
             let sel_lbl = if sel_count == 0 {
@@ -35,11 +35,7 @@ pub fn view<'a>(
                 }
             } else {
                 let bytes = tab.selection.selected_bytes(&tab.visible_entries);
-                format!(
-                    "{sel_count} {} ({})",
-                    strings.items_unit,
-                    format_bytes(bytes)
-                )
+                strings.format_selected_multi(sel_count, format_bytes(bytes).as_str())
             };
 
             let sha = tab
@@ -67,7 +63,7 @@ pub fn view<'a>(
             (items_lbl, sel_lbl, sha, disk)
         }
         None => (
-            format!("0 {}", strings.items_unit),
+            strings.format_items_count(0),
             strings.selected_none.to_owned(),
             String::new(),
             String::new(),

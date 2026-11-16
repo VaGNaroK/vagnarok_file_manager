@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use fm_core::{Language, Strings, TabState, ThemePreset, ViewMode, WindowDecorationsMode};
+use fm_core::{Strings, TabState, ThemePreset, ViewMode, WindowDecorationsMode};
 use fm_theme::{FONT_MONO, FONT_UI, FONT_UI_SEMIBOLD, Spacing, ThemePalette, styles};
 use iced::Alignment::Center;
 use iced::widget::{Space, button, container, mouse_area, row, space, text, text_input};
@@ -79,14 +79,11 @@ fn tab_strip_row<'a>(app: &'a App, palette: ThemePalette) -> Element<'a, Message
         .style(styles::ghost_button(palette, 8.0))
         .on_press(Message::ToggleTheme);
 
-    let lang_label = match app.config.language {
-        Language::PtBr => "PT",
-        Language::EnUs => "EN",
-    };
+    let lang_label = app.config.language.short_code();
     let lang_btn = button(text(lang_label).size(11).font(FONT_MONO))
         .padding([4, 8])
         .style(styles::ghost_button(palette, 8.0))
-        .on_press(Message::ToggleLanguage);
+        .on_press(Message::OpenLanguageMenu);
 
     let mut right_controls = row![lang_btn, theme_btn].spacing(4).align_y(Center);
 

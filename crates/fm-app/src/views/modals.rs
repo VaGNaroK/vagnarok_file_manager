@@ -2,8 +2,7 @@ use std::path::Path;
 
 use fm_core::{
     ConflictPolicy, DIR_FILTER_SENTINEL, FileEntry, Language, PermissionsMeta, Strings,
-    ThemePreset, ViewMode, WindowDecorationsMode, format_age, format_bytes, format_grouped_u64,
-    format_timestamp_short,
+    ThemePreset, ViewMode, WindowDecorationsMode, format_bytes,
 };
 use fm_theme::{FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_SEMIBOLD, ThemePalette, styles};
 use iced::Alignment::Center;
@@ -390,7 +389,6 @@ pub fn properties_window_view<'a>(
     strings: Strings,
 ) -> Element<'a, Message> {
     let entry = &props.entry;
-    let pt_br = strings.close == "Fechar";
     let is_dir = entry.kind.is_dir_like();
     let is_archive = props.is_archive();
     let dirty = props.is_dirty();
@@ -503,15 +501,11 @@ pub fn properties_window_view<'a>(
 
     // 3. Conteúdo da aba ativa
     let tab_body: Element<'a, Message> = match props.active_tab {
-        PropertiesTab::General => {
-            properties_general_tab(win_id, props, palette, strings, pt_br, is_dir)
-        }
-        PropertiesTab::Security => properties_security_tab(props, palette, strings, pt_br, is_dir),
-        PropertiesTab::History => properties_history_tab(props, palette, strings, pt_br),
-        PropertiesTab::Metadata => properties_metadata_tab(props, palette, strings, pt_br, is_dir),
-        PropertiesTab::Permissions => {
-            properties_permissions_tab(win_id, props, palette, strings, pt_br)
-        }
+        PropertiesTab::General => properties_general_tab(win_id, props, palette, strings, is_dir),
+        PropertiesTab::Security => properties_security_tab(props, palette, strings, is_dir),
+        PropertiesTab::History => properties_history_tab(props, palette, strings),
+        PropertiesTab::Metadata => properties_metadata_tab(props, palette, strings, is_dir),
+        PropertiesTab::Permissions => properties_permissions_tab(win_id, props, palette, strings),
     };
 
     // 4. Rodapé (Confirmar | Cancelar | Aplicar)
@@ -522,15 +516,11 @@ pub fn properties_window_view<'a>(
             .color(palette.text_muted)
             .into()
     } else if dirty {
-        text(if pt_br {
-            "Alterações pendentes"
-        } else {
-            "Pending changes"
-        })
-        .size(11)
-        .font(FONT_UI_SEMIBOLD)
-        .color(palette.accent_primary)
-        .into()
+        text(strings.prop_pending_changes)
+            .size(11)
+            .font(FONT_UI_SEMIBOLD)
+            .color(palette.accent_primary)
+            .into()
     } else {
         Space::new().width(0).height(0).into()
     };
@@ -610,7 +600,6 @@ fn properties_general_tab<'a>(
     props: &'a PropertiesWindowState,
     palette: ThemePalette,
     strings: Strings,
-    pt_br: bool,
     is_dir: bool,
 ) -> Element<'a, Message> {
     let entry = &props.entry;
@@ -673,7 +662,7 @@ fn properties_general_tab<'a>(
     .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 12.0));
 
     // Grade de metadados em 2 colunas
-    let kind_desc = describe_entry_kind(entry, pt_br);
+    let kind_desc = strings.describe_entry_kind(entry);
     let mime_desc = props
         .telemetry
         .as_ref()
@@ -694,19 +683,11 @@ fn properties_general_tab<'a>(
 
     let (size_short, size_exact, size_ratio): (String, String, f32) = if is_dir {
         if props.size_loading {
-            (
-                if pt_br {
-                    "Calculando...".to_owned()
-                } else {
-                    "Calculating...".to_owned()
-                },
-                String::new(),
-                0.35,
-            )
+            (strings.prop_calculating.to_owned(), String::new(), 0.35)
         } else if let Some(sz) = props.recursive_size {
             let prefix = if sz.truncated { ">" } else { "" };
             let short = format!("{prefix}{}", format_bytes(sz.total_bytes));
-            let exact = format!("({} bytes)", format_grouped_u64(sz.total_bytes, pt_br));
+            let exact = strings.format_exact_bytes(sz.total_bytes);
             (short, exact, size_bar_ratio(sz.total_bytes))
         } else {
             ("—".to_owned(), String::new(), 0.0)
@@ -714,7 +695,7 @@ fn properties_general_tab<'a>(
     } else {
         (
             format_bytes(entry.size_bytes).to_string(),
-            format!("({} bytes)", format_grouped_u64(entry.size_bytes, pt_br)),
+            strings.format_exact_bytes(entry.size_bytes),
             size_bar_ratio(entry.size_bytes),
         )
     };
@@ -878,17 +859,17 @@ fn properties_general_tab<'a>(
     // Linha do tempo de timestamps (3 nós verticais)
     let created_val = entry
         .created_at
-        .map(|t| format_timestamp_short(t, pt_br).to_string())
+        .map(|t| strings.format_timestamp_short(t))
         .unwrap_or_else(|| "—".to_owned());
     let modified_val = entry
         .modified_at
-        .map(|t| format_timestamp_short(t, pt_br).to_string())
+        .map(|t| strings.format_timestamp_short(t))
         .unwrap_or_else(|| "—".to_owned());
     let accessed_val = props
         .extra
         .as_ref()
         .and_then(|e| e.accessed_at)
-        .map(|t| format_timestamp_short(t, pt_br).to_string())
+        .map(|t| strings.format_timestamp_short(t))
         .unwrap_or_else(|| "—".to_owned());
 
     let timeline_node =
@@ -1115,7 +1096,6 @@ fn properties_security_tab<'a>(
     props: &'a PropertiesWindowState,
     palette: ThemePalette,
     strings: Strings,
-    pt_br: bool,
     is_dir: bool,
 ) -> Element<'a, Message> {
     let entry = &props.entry;
@@ -1126,15 +1106,9 @@ fn properties_security_tab<'a>(
         .map(|s| s.to_string());
     let sha_text = full_sha.clone().unwrap_or_else(|| {
         if is_dir {
-            if pt_br {
-                "Não aplicável a pastas".to_owned()
-            } else {
-                "Not applicable to folders".to_owned()
-            }
-        } else if pt_br {
-            "Calculando hash SHA-256...".to_owned()
+            strings.prop_sha_na_folders.to_owned()
         } else {
-            "Computing SHA-256 hash...".to_owned()
+            strings.prop_sha_computing.to_owned()
         }
     });
 
@@ -1191,8 +1165,8 @@ fn properties_security_tab<'a>(
             )
         });
 
-    let yes = if pt_br { "Sim" } else { "Yes" };
-    let no = if pt_br { "Não" } else { "No" };
+    let yes = strings.yes_label;
+    let no = strings.no_label;
     let mut flags_col = column![
         prop_kv_row(
             strings.prop_readonly,
@@ -1237,15 +1211,14 @@ fn properties_history_tab<'a>(
     props: &'a PropertiesWindowState,
     palette: ThemePalette,
     strings: Strings,
-    pt_br: bool,
 ) -> Element<'a, Message> {
     let entry = &props.entry;
     let format_ts = |opt: Option<std::time::SystemTime>| -> String {
         opt.map(|t| {
             format!(
                 "{} ({})",
-                format_timestamp_short(t, pt_br),
-                format_age(t, pt_br)
+                strings.format_timestamp_short(t),
+                strings.format_age(t)
             )
         })
         .unwrap_or_else(|| "—".to_owned())
@@ -1286,7 +1259,6 @@ fn properties_metadata_tab<'a>(
     props: &'a PropertiesWindowState,
     palette: ThemePalette,
     strings: Strings,
-    pt_br: bool,
     is_dir: bool,
 ) -> Element<'a, Message> {
     let entry = &props.entry;
@@ -1306,29 +1278,24 @@ fn properties_metadata_tab<'a>(
             .recursive_size
             .map(|sz| {
                 format!(
-                    "{}{} ({} bytes)",
+                    "{}{} {}",
                     if sz.truncated { ">" } else { "" },
                     format_bytes(sz.total_bytes),
-                    format_grouped_u64(sz.total_bytes, pt_br)
+                    strings.format_exact_bytes(sz.total_bytes)
                 )
             })
             .unwrap_or_else(|| "—".to_owned())
     } else {
         format!(
-            "{} ({} bytes)",
+            "{} {}",
             format_bytes(entry.size_bytes),
-            format_grouped_u64(entry.size_bytes, pt_br)
+            strings.format_exact_bytes(entry.size_bytes)
         )
     };
 
     container(
         column![
-            prop_kv_row(
-                if pt_br { "Nome" } else { "Name" },
-                entry.name.to_string(),
-                false,
-                palette,
-            ),
+            prop_kv_row(strings.name_label, entry.name.to_string(), false, palette),
             row![
                 prop_kv_row(
                     strings.location_label,
@@ -1343,12 +1310,7 @@ fn properties_metadata_tab<'a>(
             ]
             .spacing(8)
             .align_y(Center),
-            prop_kv_row(
-                if pt_br { "Extensão" } else { "Extension" },
-                ext,
-                true,
-                palette,
-            ),
+            prop_kv_row(strings.ext_label, ext, true, palette),
             prop_kv_row("MIME", mime, true, palette),
             prop_kv_row(strings.col_size, size_line, true, palette),
             prop_kv_row("EntryId", format!("0x{:016X}", entry.id.0), true, palette),
@@ -1366,7 +1328,6 @@ fn properties_permissions_tab<'a>(
     props: &'a PropertiesWindowState,
     palette: ThemePalette,
     strings: Strings,
-    pt_br: bool,
 ) -> Element<'a, Message> {
     let is_archive = props.is_archive();
     let is_dir = props.entry.kind.is_dir_like();
@@ -1421,9 +1382,9 @@ fn properties_permissions_tab<'a>(
             .on_press_maybe(editable.then_some(Message::PropertiesTogglePosixBit(win_id, bit)))
         };
 
-        let r_lbl = if pt_br { "Leitura" } else { "Read" };
-        let w_lbl = if pt_br { "Escrita" } else { "Write" };
-        let x_lbl = if pt_br { "Execução" } else { "Execute" };
+        let r_lbl = strings.perm_read;
+        let w_lbl = strings.perm_write;
+        let x_lbl = strings.perm_execute;
 
         let perm_group = |title: &'a str, r: u32, w: u32, x: u32| {
             row![
@@ -1555,48 +1516,6 @@ fn prop_kv_row<'a>(
     .into()
 }
 
-fn describe_entry_kind(entry: &FileEntry, pt_br: bool) -> String {
-    match entry.kind {
-        fm_core::EntryKind::Directory => {
-            if pt_br {
-                "Pasta de Arquivos".to_owned()
-            } else {
-                "File Folder".to_owned()
-            }
-        }
-        fm_core::EntryKind::Symlink { target_is_dir } => match (pt_br, target_is_dir) {
-            (true, true) => "Link simbólico (Pasta)".to_owned(),
-            (true, false) => "Link simbólico (Arquivo)".to_owned(),
-            (false, true) => "Symbolic link (Folder)".to_owned(),
-            (false, false) => "Symbolic link (File)".to_owned(),
-        },
-        fm_core::EntryKind::Special => {
-            if pt_br {
-                "Item Especial".to_owned()
-            } else {
-                "Special Entry".to_owned()
-            }
-        }
-        fm_core::EntryKind::File => match &entry.extension {
-            Some(ext) => {
-                let low = ext.to_ascii_lowercase();
-                if pt_br {
-                    format!("Arquivo (.{low})")
-                } else {
-                    format!("File (.{low})")
-                }
-            }
-            None => {
-                if pt_br {
-                    "Arquivo".to_owned()
-                } else {
-                    "File".to_owned()
-                }
-            }
-        },
-    }
-}
-
 fn size_bar_ratio(bytes: u64) -> f32 {
     if bytes == 0 {
         return 0.04;
@@ -1614,14 +1533,33 @@ pub fn preferences_modal<'a>(
         ThemePreset::AetherLight => "AetherLight",
         ThemePreset::ObsidianFlow => "ObsidianFlow",
     };
-    let lang_name = match app.config.language {
-        Language::PtBr => "Português (BR)",
-        Language::EnUs => "English (US)",
-    };
     let deco_name = match app.config.window_decorations {
-        WindowDecorationsMode::NativeWm => "Native WM",
-        WindowDecorationsMode::IntegratedCsd => "Integrated CSD",
+        WindowDecorationsMode::NativeWm => strings.window_bar_native,
+        WindowDecorationsMode::IntegratedCsd => strings.window_bar_csd,
     };
+
+    let auto_lang_btn = button(text(strings.follow_system).size(11).font(FONT_UI_SEMIBOLD))
+        .padding([4, 8])
+        .style(styles::tab_button(palette, !app.config.language_customized))
+        .on_press(Message::UseSystemLanguage);
+
+    let mut lang_row_1 = row![auto_lang_btn].spacing(4).align_y(Center);
+    let mut lang_row_2 = row![].spacing(4).align_y(Center);
+    for (idx, &lang) in Language::ALL.iter().enumerate() {
+        let active = app.config.language_customized && app.config.language == lang;
+        let pill = button(text(lang.native_name()).size(11).font(FONT_UI))
+            .padding([4, 8])
+            .style(styles::tab_button(palette, active))
+            .on_press(Message::SetLanguage(lang));
+        if idx < 2 {
+            lang_row_1 = lang_row_1.push(pill);
+        } else {
+            lang_row_2 = lang_row_2.push(pill);
+        }
+    }
+    let lang_controls = column![lang_row_1, lang_row_2]
+        .spacing(4)
+        .align_x(iced::alignment::Horizontal::Right);
 
     let pref_row = |label: &'a str, control: Element<'a, Message>| {
         container(
@@ -1641,21 +1579,21 @@ pub fn preferences_modal<'a>(
     };
 
     let view_pills = row![
-        button(text("Grid").size(11).font(FONT_MONO))
+        button(text(strings.view_grid).size(11).font(FONT_MONO))
             .padding([4, 10])
             .style(styles::tab_button(
                 palette,
                 app.config.default_view_mode == ViewMode::Grid
             ))
             .on_press(Message::SetDefaultViewMode(ViewMode::Grid)),
-        button(text("List").size(11).font(FONT_MONO))
+        button(text(strings.view_list).size(11).font(FONT_MONO))
             .padding([4, 10])
             .style(styles::tab_button(
                 palette,
                 app.config.default_view_mode == ViewMode::DetailTable
             ))
             .on_press(Message::SetDefaultViewMode(ViewMode::DetailTable)),
-        button(text("Columns").size(11).font(FONT_MONO))
+        button(text(strings.view_columns).size(11).font(FONT_MONO))
             .padding([4, 10])
             .style(styles::tab_button(
                 palette,
@@ -1695,14 +1633,7 @@ pub fn preferences_modal<'a>(
                     .on_press(Message::ToggleTheme)
                     .into(),
             ),
-            pref_row(
-                strings.lang_label,
-                button(text(lang_name).size(12).font(FONT_MONO_BOLD))
-                    .padding([5, 12])
-                    .style(styles::pill_secondary_button(palette))
-                    .on_press(Message::ToggleLanguage)
-                    .into(),
-            ),
+            pref_row(strings.lang_label, lang_controls.into()),
             pref_row(
                 strings.hero_card_label,
                 button(
@@ -2117,6 +2048,44 @@ pub fn context_menu_overlay<'a>(
                 }
             }
         }
+        ContextMenuKind::LanguageMenu => {
+            let auto_active = !app.config.language_customized;
+            items = items
+                .push(ctx_item(
+                    if auto_active {
+                        icon_check().size(14).color(palette.accent_primary).into()
+                    } else {
+                        Space::new().width(14).height(14).into()
+                    },
+                    strings.follow_system,
+                    if auto_active {
+                        palette.accent_primary
+                    } else {
+                        palette.text_primary
+                    },
+                    Message::UseSystemLanguage,
+                    palette,
+                ))
+                .push(ctx_divider(palette));
+            for lang in Language::ALL {
+                let active = app.config.language_customized && app.config.language == lang;
+                items = items.push(ctx_item(
+                    if active {
+                        icon_check().size(14).color(palette.accent_primary).into()
+                    } else {
+                        Space::new().width(14).height(14).into()
+                    },
+                    lang.native_name(),
+                    if active {
+                        palette.accent_primary
+                    } else {
+                        palette.text_primary
+                    },
+                    Message::SetLanguage(lang),
+                    palette,
+                ));
+            }
+        }
         ContextMenuKind::Background => {
             items = items
                 .push(ctx_item(
@@ -2198,6 +2167,7 @@ pub fn context_menu_overlay<'a>(
         }
         ContextMenuKind::Background => 240.0,
         ContextMenuKind::FilterMenu => 320.0,
+        ContextMenuKind::LanguageMenu => 256.0,
     };
     let max_x = (app.window_size.width - menu_width - 12.0).max(8.0);
     let max_y = (app.window_size.height - est_height - 12.0).max(8.0);
