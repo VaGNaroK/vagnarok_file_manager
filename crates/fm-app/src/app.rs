@@ -346,6 +346,7 @@ pub enum Message {
     ConfigSaved(Option<String>),
     OpenDefaultFinished(Result<(), FsError>),
     OpenProperties(PathBuf),
+    PropertiesEntryStatLoaded(Result<FileEntry, FsError>),
     PropertiesFolderSizeReady {
         window_id: window::Id,
         path: PathBuf,
@@ -1951,167 +1952,18 @@ impl App {
                         .or_else(|| t.raw_entries.iter().find(|e| e.path == path))
                         .cloned()
                 });
-                let Some(entry) = entry else {
-                    return Task::none();
-                };
-                let existing_telemetry = self.current_tab().and_then(|t| {
-                    let selected = t.selection.single_selected(&t.visible_entries)?;
-                    (selected.path == entry.path)
-                        .then_some(t.selected_telemetry.as_ref())
-                        .flatten()
-                        .cloned()
-                });
-                let is_archive = fm_fs::archive::split_archive_path(&entry.path).is_some();
-                let needs_file_telemetry = !entry.kind.is_dir_like()
-                    && !is_archive
-                    && existing_telemetry
-                        .as_ref()
-                        .is_none_or(|tel| tel.mime_type.is_none() || tel.sha256_full.is_none());
-                let telemetry =
-                    Some(existing_telemetry.unwrap_or_else(|| basic_file_telemetry(&entry)));
-                let size_loading = entry.kind.is_dir_like() && !is_archive;
-
-                let (win_id, open_task) = window::open(window::Settings {
-                    size: Size::new(720.0, 520.0),
-                    min_size: Some(Size::new(640.0, 460.0)),
-                    position: window::Position::Centered,
-                    decorations: true,
-                    resizable: true,
-                    ..window::Settings::default()
-                });
-
-                let win_cancel = CancellationToken::new();
-                let mut tasks = vec![open_task.discard()];
-
-                if size_loading {
-                    let cancel = win_cancel.clone();
-                    let size_dir = entry.path.clone();
-                    let meta_cache = self.metadata_cache.clone();
-                    tasks.push(Task::perform(
-                        async move {
-                            let size = fm_telemetry::compute_folder_size_cached(
-                                size_dir.clone(),
-                                meta_cache,
-                                cancel,
-                            )
-                            .await;
-                            (size_dir, size)
-                        },
-                        move |(path, size)| Message::PropertiesFolderSizeReady {
-                            window_id: win_id,
-                            path,
-                            size,
-                        },
-                    ));
-                } else if needs_file_telemetry {
-                    let tel_path = entry.path.clone();
-                    let cancel_mime = win_cancel.clone();
-                    let cancel_sha = win_cancel.clone();
-                    let cancel_git = win_cancel.clone();
-                    let size_bytes = entry.size_bytes;
-                    let modified_nanos = entry_mtime_nanos(entry.modified_at);
-                    let meta_cache = self.metadata_cache.clone();
-                    tasks.push(Task::perform(
-                        async move {
-                            let cached = if let Some(ref cache) = meta_cache {
-                                let p = tel_path.clone();
-                                let c = Arc::clone(cache);
-                                tokio::task::spawn_blocking(move || {
-                                    c.get_file(&p, size_bytes, modified_nanos)
-                                })
-                                .await
-                                .ok()
-                                .flatten()
-                            } else {
-                                None
-                            };
-                            let mime = match cached.as_ref().and_then(|c| c.mime.clone()) {
-                                Some(m) => Some(m),
-                                None => {
-                                    fm_telemetry::detect_mime_type(&tel_path, cancel_mime).await
-                                }
-                            };
-                            let sha = match cached
-                                .as_ref()
-                                .and_then(|c| c.sha_prefix.clone().zip(c.sha_full.clone()))
-                            {
-                                Some(pair) => Some(pair),
-                                None => fm_telemetry::compute_sha256(&tel_path, cancel_sha).await,
-                            };
-                            let git_status =
-                                fm_telemetry::detect_file_git_status(&tel_path, cancel_git).await;
-                            if let Some(cache) = meta_cache
-                                && (mime.is_some() || sha.is_some())
-                            {
-                                let p = tel_path.clone();
-                                let val = CachedFileTelemetry {
-                                    mime: mime.clone(),
-                                    sha_prefix: sha.as_ref().map(|(pre, _)| pre.clone()),
-                                    sha_full: sha.as_ref().map(|(_, full)| full.clone()),
-                                };
-                                drop(tokio::task::spawn_blocking(move || {
-                                    cache.put_file(&p, size_bytes, modified_nanos, &val);
-                                }));
-                            }
-                            (tel_path, mime, sha, git_status)
-                        },
-                        move |(path, mime, sha, git_status)| Message::PropertiesTelemetryReady {
-                            window_id: win_id,
-                            path,
-                            mime,
-                            sha,
-                            git_status,
-                        },
-                    ));
+                if let Some(entry) = entry {
+                    return self.open_properties_window(entry);
                 }
-
-                if !is_archive {
-                    let extra_path = entry.path.clone();
-                    tasks.push(Task::perform(
-                        async move {
-                            let extra = fm_fs::read_entry_extra_info(extra_path.clone()).await;
-                            (extra_path, extra)
-                        },
-                        move |(path, extra)| Message::PropertiesExtraInfoReady {
-                            window_id: win_id,
-                            path,
-                            extra,
-                        },
-                    ));
-                }
-
-                let (initial_posix_mode, initial_readonly) = match entry.permissions {
-                    PermissionsMeta::PosixMode(mode) => {
-                        let perms = mode & 0o777;
-                        (Some(perms), (perms & 0o222) == 0)
-                    }
-                    PermissionsMeta::WinAttributes(attrs) => (None, (attrs & 0x1) != 0),
-                };
-                let draft_name = entry.name.to_string();
-                let initial_hidden = entry.is_hidden;
-
-                self.properties_windows.insert(
-                    win_id,
-                    PropertiesWindowState {
-                        entry,
-                        telemetry,
-                        recursive_size: None,
-                        size_loading,
-                        extra: None,
-                        active_tab: PropertiesTab::General,
-                        draft_name,
-                        readonly_draft: initial_readonly,
-                        initial_readonly,
-                        hidden_draft: initial_hidden,
-                        initial_hidden,
-                        posix_mode_draft: initial_posix_mode,
-                        initial_posix_mode,
-                        applying: false,
-                        cancel: Some(win_cancel),
-                    },
-                );
-                Task::batch(tasks)
+                Task::perform(fm_fs::stat_entry(path), Message::PropertiesEntryStatLoaded)
             }
+            Message::PropertiesEntryStatLoaded(result) => match result {
+                Ok(entry) => self.open_properties_window(entry),
+                Err(err) => {
+                    self.status_notice = Some(err.to_string());
+                    Task::none()
+                }
+            },
             Message::PropertiesFolderSizeReady {
                 window_id,
                 path,
@@ -2328,6 +2180,17 @@ impl App {
             } => match result {
                 Ok((updated_entry, updated_extra)) => {
                     let select_path = updated_entry.path.clone();
+                    let mut favorite_config_task = Task::none();
+                    if select_path != original_path
+                        && let Some(fav) = self
+                            .config
+                            .favorites
+                            .iter_mut()
+                            .find(|p| **p == original_path)
+                    {
+                        *fav = select_path.clone();
+                        favorite_config_task = self.persist_config_task();
+                    }
                     self.status_notice = Some(self.strings().prop_applied_notice.to_owned());
                     let close_task = if close_after {
                         if let Some(mut props) = self.properties_windows.remove(&window_id)
@@ -2364,7 +2227,7 @@ impl App {
                     };
                     self.pending_select_path = Some(select_path);
                     let refresh_task = self.update(Message::RefreshActiveTab);
-                    Task::batch([close_task, refresh_task])
+                    Task::batch([close_task, refresh_task, favorite_config_task])
                 }
                 Err(err) => {
                     if let Some(props) = self.properties_windows.get_mut(&window_id) {
@@ -2733,6 +2596,171 @@ impl App {
         let id = self.next_request_id;
         self.next_request_id += 1;
         id
+    }
+
+    /// Opens (or focuses) a floating centered Properties window for `entry`.
+    fn open_properties_window(&mut self, entry: FileEntry) -> Task<Message> {
+        if let Some((&existing_id, _)) = self
+            .properties_windows
+            .iter()
+            .find(|(_, props)| props.entry.path == entry.path)
+        {
+            return window::gain_focus(existing_id);
+        }
+        let existing_telemetry = self.current_tab().and_then(|t| {
+            let selected = t.selection.single_selected(&t.visible_entries)?;
+            (selected.path == entry.path)
+                .then_some(t.selected_telemetry.as_ref())
+                .flatten()
+                .cloned()
+        });
+        let is_archive = fm_fs::archive::split_archive_path(&entry.path).is_some();
+        let needs_file_telemetry = !entry.kind.is_dir_like()
+            && !is_archive
+            && existing_telemetry
+                .as_ref()
+                .is_none_or(|tel| tel.mime_type.is_none() || tel.sha256_full.is_none());
+        let telemetry = Some(existing_telemetry.unwrap_or_else(|| basic_file_telemetry(&entry)));
+        let size_loading = entry.kind.is_dir_like() && !is_archive;
+
+        let (win_id, open_task) = window::open(window::Settings {
+            size: Size::new(720.0, 520.0),
+            min_size: Some(Size::new(640.0, 460.0)),
+            position: window::Position::Centered,
+            decorations: true,
+            resizable: true,
+            ..window::Settings::default()
+        });
+
+        let win_cancel = CancellationToken::new();
+        let mut tasks = vec![open_task.discard()];
+
+        if size_loading {
+            let cancel = win_cancel.clone();
+            let size_dir = entry.path.clone();
+            let meta_cache = self.metadata_cache.clone();
+            tasks.push(Task::perform(
+                async move {
+                    let size = fm_telemetry::compute_folder_size_cached(
+                        size_dir.clone(),
+                        meta_cache,
+                        cancel,
+                    )
+                    .await;
+                    (size_dir, size)
+                },
+                move |(path, size)| Message::PropertiesFolderSizeReady {
+                    window_id: win_id,
+                    path,
+                    size,
+                },
+            ));
+        } else if needs_file_telemetry {
+            let tel_path = entry.path.clone();
+            let cancel_mime = win_cancel.clone();
+            let cancel_sha = win_cancel.clone();
+            let cancel_git = win_cancel.clone();
+            let size_bytes = entry.size_bytes;
+            let modified_nanos = entry_mtime_nanos(entry.modified_at);
+            let meta_cache = self.metadata_cache.clone();
+            tasks.push(Task::perform(
+                async move {
+                    let cached = if let Some(ref cache) = meta_cache {
+                        let p = tel_path.clone();
+                        let c = Arc::clone(cache);
+                        tokio::task::spawn_blocking(move || {
+                            c.get_file(&p, size_bytes, modified_nanos)
+                        })
+                        .await
+                        .ok()
+                        .flatten()
+                    } else {
+                        None
+                    };
+                    let mime = match cached.as_ref().and_then(|c| c.mime.clone()) {
+                        Some(m) => Some(m),
+                        None => fm_telemetry::detect_mime_type(&tel_path, cancel_mime).await,
+                    };
+                    let sha = match cached
+                        .as_ref()
+                        .and_then(|c| c.sha_prefix.clone().zip(c.sha_full.clone()))
+                    {
+                        Some(pair) => Some(pair),
+                        None => fm_telemetry::compute_sha256(&tel_path, cancel_sha).await,
+                    };
+                    let git_status =
+                        fm_telemetry::detect_file_git_status(&tel_path, cancel_git).await;
+                    if let Some(cache) = meta_cache
+                        && (mime.is_some() || sha.is_some())
+                    {
+                        let p = tel_path.clone();
+                        let val = CachedFileTelemetry {
+                            mime: mime.clone(),
+                            sha_prefix: sha.as_ref().map(|(pre, _)| pre.clone()),
+                            sha_full: sha.as_ref().map(|(_, full)| full.clone()),
+                        };
+                        drop(tokio::task::spawn_blocking(move || {
+                            cache.put_file(&p, size_bytes, modified_nanos, &val);
+                        }));
+                    }
+                    (tel_path, mime, sha, git_status)
+                },
+                move |(path, mime, sha, git_status)| Message::PropertiesTelemetryReady {
+                    window_id: win_id,
+                    path,
+                    mime,
+                    sha,
+                    git_status,
+                },
+            ));
+        }
+
+        if !is_archive {
+            let extra_path = entry.path.clone();
+            tasks.push(Task::perform(
+                async move {
+                    let extra = fm_fs::read_entry_extra_info(extra_path.clone()).await;
+                    (extra_path, extra)
+                },
+                move |(path, extra)| Message::PropertiesExtraInfoReady {
+                    window_id: win_id,
+                    path,
+                    extra,
+                },
+            ));
+        }
+
+        let (initial_posix_mode, initial_readonly) = match entry.permissions {
+            PermissionsMeta::PosixMode(mode) => {
+                let perms = mode & 0o777;
+                (Some(perms), (perms & 0o222) == 0)
+            }
+            PermissionsMeta::WinAttributes(attrs) => (None, (attrs & 0x1) != 0),
+        };
+        let draft_name = entry.name.to_string();
+        let initial_hidden = entry.is_hidden;
+
+        self.properties_windows.insert(
+            win_id,
+            PropertiesWindowState {
+                entry,
+                telemetry,
+                recursive_size: None,
+                size_loading,
+                extra: None,
+                active_tab: PropertiesTab::General,
+                draft_name,
+                readonly_draft: initial_readonly,
+                initial_readonly,
+                hidden_draft: initial_hidden,
+                initial_hidden,
+                posix_mode_draft: initial_posix_mode,
+                initial_posix_mode,
+                applying: false,
+                cancel: Some(win_cancel),
+            },
+        );
+        Task::batch(tasks)
     }
 
     fn reset_tab_cancel(&mut self, tab_id: TabId) -> CancellationToken {
