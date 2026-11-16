@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod views;
 
@@ -9,8 +11,11 @@ static GLOBAL: MiMalloc = MiMalloc;
 fn main() -> iced::Result {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new(
+                    "warn,fm_app=info,fm_fs=info,fm_index=info,fm_telemetry=info,fm_preview=info",
+                )
+            }),
         )
         .init();
 
