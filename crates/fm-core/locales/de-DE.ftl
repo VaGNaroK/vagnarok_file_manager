@@ -195,3 +195,17 @@ age-hours = vor { $h } Std.
 age-days = vor { $d } Tg.
 ts-today = Heute, { $time }
 ts-yesterday = Gestern, { $time }
+
+# Einstellungen-Tabs & Über
+prefs-tab-general = Allgemein
+about-tab = Über
+about-subtitle = Nativer Hochleistungs-Dateimanager für Linux & Windows
+about-version-label = Version
+about-developer-label = Entwickler
+about-developer-value = in Entwicklung
+about-stage-label = Phase
+about-stage-alpha = Alpha — Entwicklungsvorschau
+about-license-label = Lizenz
+about-stack-label = Engine / Stack
+about-copy-info = Systeminfos kopieren
+about-info-copied = Systeminfos kopiert

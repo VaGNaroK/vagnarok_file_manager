@@ -2,7 +2,7 @@
 
 Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador de arquivos desktop nativo em Rust com `iced` 0.14 + `wgpu` para Linux e Windows) estão documentadas neste arquivo.
 
-> **Nota sobre a linha do tempo**: o repositório Git (ramo `main`, com `.gitignore` configurando exclusão de `/target/`) foi ativado e populado cronologicamente com commits por onda de desenvolvimento a partir dos marcos registrados do projeto, da árvore do workspace (`0.1.0`, Rust `edition = "2024"`) e das verificações executadas entre **2026-11-14** e **2026-11-16 (UTC)**.
+> **Nota sobre a linha do tempo**: o repositório Git (ramo `main`, tag `v0.1.0-alpha.1`, com `.gitignore` configurando exclusão de `/target/`) foi ativado e populado cronologicamente com commits por onda de desenvolvimento a partir dos marcos registrados do projeto, da árvore do workspace (`0.1.0-alpha.1`, Rust `edition = "2024"`, licença `GPL-3.0-or-later`) e das verificações executadas entre **2026-11-14** e **2026-11-16 (UTC)**.
 
 ---
 
@@ -22,10 +22,21 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-15 | **Pós-Polimento UX & Multi-Janela** | Duplo clique, anti-flicker, navegação 2D, sanitização `\n`, janela flutuante de Propriedades em 5 abas | 41 passando |
 | 2026-11-16 | **Git, UX Sidebar & Zoom Ctrl+Scroll** | Ativação do Git (`main` + `.gitignore`), menu de contexto em favoritos/barra lateral, Propriedades via `stat_entry` e zoom `Ctrl + Scroll` no Grid | 42 passando |
 | 2026-11-16 | **Internacionalização Multi-Idiomas (Fluent)** | 6 locales `.ftl` (`pt-BR`, `en-US`, `es-ES`, `fr-FR`, `de-DE`, `it-IT`), detecção do SO (`sys-locale`), pluralização CLDR, `LocaleFormatSpec` e seletores multi-idioma | 44 passando |
+| 2026-11-16 | **Alpha 1 (`v0.1.0-alpha.1`), Sobre & GPLv3** | Aba e menu **Sobre**, versão `0.1.0-alpha.1`, troca de licença para `GPL-3.0-or-later` (`LICENSE`) e tag `v0.1.0-alpha.1` | 44 passando |
 
 ---
 
-## [0.1.0-dev] — 2026-11-16
+## [0.1.0-alpha.1] — 2026-11-16
+
+### Aba "Sobre", Versionamento `v0.1.0-alpha.1` & Licença GPLv3
+
+* **Aba e atalho contextual "Sobre"** (`crates/fm-app/src/{app.rs,views/sidebar.rs,views/modals.rs}`, `crates/fm-core/{src/i18n.rs,locales/*.ftl}`):
+  * Refatorado o modal de **Preferências** com duas abas (`modal_tab_button` compartilhado com Propriedades): **Geral** (`prefs-tab-general`) e **Sobre** (`about-tab`, `about_tab_view`).
+  * Adicionado clique direito no botão **Preferências** da barra lateral (`ContextMenuKind::PreferencesMenu` via `Message::OpenPreferencesContextMenu` e `Message::OpenAbout`), permitindo abrir diretamente **Preferências** ou **Sobre**.
+  * Aba **Sobre** exibe versão dinâmica (`concat!("v", env!("CARGO_PKG_VERSION"))` → `v0.1.0-alpha.1`), estágio *Alpha — Prévia de Desenvolvimento*, desenvolvedor (`em desenvolvimento` traduzido nos 6 idiomas), licença `GNU GPL v3.0 (GPL-3.0-or-later)`, motor `Rust · Iced 0.14 + wgpu` e botão para copiar resumo do ambiente (`about-copy-info`).
+* **Versionamento & migração para GNU GPL v3.0** (`Cargo.toml`, `Cargo.lock`, `LICENSE`, `specs/05-tech-stack-prototype.md`):
+  * `[workspace.package]` atualizado para `version = "0.1.0-alpha.1"` e `license = "GPL-3.0-or-later"`.
+  * Adicionado o texto oficial integral da **GNU General Public License v3.0** em [LICENSE](LICENSE) na raiz do projeto e atualizada a referência em `specs/05-tech-stack-prototype.md`.
 
 ### Internacionalização Multi-Idiomas (`Project Fluent`)
 

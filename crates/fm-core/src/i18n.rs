@@ -185,6 +185,18 @@ pub struct Strings {
     pub perm_read: &'static str,
     pub perm_write: &'static str,
     pub perm_execute: &'static str,
+    pub prefs_tab_general: &'static str,
+    pub about_tab: &'static str,
+    pub about_subtitle: &'static str,
+    pub about_version_label: &'static str,
+    pub about_developer_label: &'static str,
+    pub about_developer_value: &'static str,
+    pub about_stage_label: &'static str,
+    pub about_stage_alpha: &'static str,
+    pub about_license_label: &'static str,
+    pub about_stack_label: &'static str,
+    pub about_copy_info: &'static str,
+    pub about_info_copied: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -513,6 +525,18 @@ impl Strings {
         let perm_read = resolve("perm-read");
         let perm_write = resolve("perm-write");
         let perm_execute = resolve("perm-execute");
+        let prefs_tab_general = resolve("prefs-tab-general");
+        let about_tab = resolve("about-tab");
+        let about_subtitle = resolve("about-subtitle");
+        let about_version_label = resolve("about-version-label");
+        let about_developer_label = resolve("about-developer-label");
+        let about_developer_value = resolve("about-developer-value");
+        let about_stage_label = resolve("about-stage-label");
+        let about_stage_alpha = resolve("about-stage-alpha");
+        let about_license_label = resolve("about-license-label");
+        let about_stack_label = resolve("about-stack-label");
+        let about_copy_info = resolve("about-copy-info");
+        let about_info_copied = resolve("about-info-copied");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -667,6 +691,18 @@ impl Strings {
             perm_read,
             perm_write,
             perm_execute,
+            prefs_tab_general,
+            about_tab,
+            about_subtitle,
+            about_version_label,
+            about_developer_label,
+            about_developer_value,
+            about_stage_label,
+            about_stage_alpha,
+            about_license_label,
+            about_stack_label,
+            about_copy_info,
+            about_info_copied,
         }
     }
 }

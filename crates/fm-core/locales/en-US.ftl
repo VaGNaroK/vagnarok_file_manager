@@ -195,3 +195,17 @@ age-hours = { $h }h ago
 age-days = { $d }d ago
 ts-today = Today, { $time }
 ts-yesterday = Yesterday, { $time }
+
+# Preferences Tabs & About
+prefs-tab-general = General
+about-tab = About
+about-subtitle = Native high-performance file manager for Linux & Windows
+about-version-label = Version
+about-developer-label = Developer
+about-developer-value = in development
+about-stage-label = Stage
+about-stage-alpha = Alpha — Development Preview
+about-license-label = License
+about-stack-label = Engine
+about-copy-info = Copy system info
+about-info-copied = System info copied

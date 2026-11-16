@@ -195,3 +195,17 @@ age-hours = hace { $h }h
 age-days = hace { $d }d
 ts-today = Hoy, { $time }
 ts-yesterday = Ayer, { $time }
+
+# Pestañas de Preferencias y Acerca de
+prefs-tab-general = General
+about-tab = Acerca de
+about-subtitle = Gestor de archivos nativo de alto rendimiento para Linux y Windows
+about-version-label = Versión
+about-developer-label = Desarrollador
+about-developer-value = en desarrollo
+about-stage-label = Etapa
+about-stage-alpha = Alpha — Vista previa de desarrollo
+about-license-label = Licencia
+about-stack-label = Motor / Stack
+about-copy-info = Copiar información
+about-info-copied = Información copiada

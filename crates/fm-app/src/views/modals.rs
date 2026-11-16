@@ -4,7 +4,9 @@ use fm_core::{
     ConflictPolicy, DIR_FILTER_SENTINEL, FileEntry, Language, PermissionsMeta, Strings,
     ThemePreset, ViewMode, WindowDecorationsMode, format_bytes,
 };
-use fm_theme::{FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_SEMIBOLD, ThemePalette, styles};
+use fm_theme::{
+    FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_BOLD, FONT_UI_SEMIBOLD, ThemePalette, styles,
+};
 use iced::Alignment::Center;
 use iced::widget::{
     Space, button, column, container, mouse_area, row, scrollable, space, text, text_input,
@@ -19,7 +21,7 @@ use lucide_icons::iced::{
 };
 
 use crate::app::{
-    ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, PropertiesTab,
+    ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, PreferencesTab, PropertiesTab,
     PropertiesWindowState, dialog_input_id,
 };
 use crate::views::{entry_icon, sanitize_single_line};
@@ -435,55 +437,12 @@ pub fn properties_window_view<'a>(
 
     // 2. Barra de abas (Geral | Segurança | Histórico | Metadados | Permissões)
     let tab_item = |tab: PropertiesTab, label: &'a str| {
-        let active = props.active_tab == tab;
-        let underline_color = if active {
-            palette.accent_primary
-        } else {
-            Color::TRANSPARENT
-        };
-        let label_color = if active {
-            palette.text_primary
-        } else {
-            palette.text_muted
-        };
-        button(
-            column![
-                container(
-                    text(label)
-                        .size(12)
-                        .font(if active { FONT_UI_SEMIBOLD } else { FONT_UI })
-                        .color(label_color)
-                        .wrapping(text::Wrapping::None),
-                )
-                .width(Length::Fill)
-                .align_x(Center)
-                .padding([6, 4]),
-                container(Space::new().width(Length::Fill).height(2)).style(move |_| {
-                    container::Style {
-                        background: Some(Background::Color(underline_color)),
-                        ..Default::default()
-                    }
-                }),
-            ]
-            .spacing(2),
+        modal_tab_button(
+            label,
+            props.active_tab == tab,
+            palette,
+            Message::PropertiesSelectTab(win_id, tab),
         )
-        .width(Length::Fill)
-        .padding(0)
-        .style(move |_, status| {
-            let bg = match status {
-                button::Status::Hovered | button::Status::Pressed if !active => {
-                    Some(Background::Color(palette.surface_low))
-                }
-                _ => None,
-            };
-            button::Style {
-                background: bg,
-                text_color: label_color,
-                border: Border::default(),
-                ..Default::default()
-            }
-        })
-        .on_press(Message::PropertiesSelectTab(win_id, tab))
     };
 
     let tab_bar = column![
@@ -1607,24 +1566,31 @@ pub fn preferences_modal<'a>(
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
 
-    let card = container(
-        column![
-            row![
-                text(strings.prefs_title)
-                    .size(15)
-                    .font(FONT_UI_SEMIBOLD)
-                    .color(palette.text_primary),
-                space::horizontal(),
-                button(
-                    row![icon_x().size(14), text(strings.close).size(12)]
-                        .spacing(4)
-                        .align_y(Center),
-                )
-                .padding([4, 10])
-                .style(styles::pill_secondary_button(palette))
-                .on_press(Message::ClosePreferences),
-            ]
-            .align_y(Center),
+    let prefs_tabs = column![
+        row![
+            modal_tab_button(
+                strings.prefs_tab_general,
+                app.prefs_tab == PreferencesTab::General,
+                palette,
+                Message::SelectPreferencesTab(PreferencesTab::General),
+            ),
+            modal_tab_button(
+                strings.about_tab,
+                app.prefs_tab == PreferencesTab::About,
+                palette,
+                Message::SelectPreferencesTab(PreferencesTab::About),
+            ),
+        ]
+        .spacing(4),
+        container(Space::new().width(Length::Fill).height(1)).style(move |_| container::Style {
+            background: Some(Background::Color(palette.border)),
+            ..Default::default()
+        }),
+    ]
+    .spacing(0);
+
+    let tab_body: Element<'a, Message> = match app.prefs_tab {
+        PreferencesTab::General => column![
             pref_row(
                 strings.theme_label,
                 button(text(theme_name).size(12).font(FONT_MONO_BOLD))
@@ -1694,6 +1660,32 @@ pub fn preferences_modal<'a>(
                 .color(palette.text_muted),
         ]
         .spacing(10)
+        .into(),
+        PreferencesTab::About => about_tab_view(palette, strings),
+    };
+
+    let card = container(
+        column![
+            row![
+                text(strings.prefs_title)
+                    .size(15)
+                    .font(FONT_UI_SEMIBOLD)
+                    .color(palette.text_primary),
+                space::horizontal(),
+                button(
+                    row![icon_x().size(14), text(strings.close).size(12)]
+                        .spacing(4)
+                        .align_y(Center),
+                )
+                .padding([4, 10])
+                .style(styles::pill_secondary_button(palette))
+                .on_press(Message::ClosePreferences),
+            ]
+            .align_y(Center),
+            prefs_tabs,
+            tab_body,
+        ]
+        .spacing(12)
         .width(Length::Fixed(520.0)),
     )
     .padding(20)
@@ -1705,6 +1697,181 @@ pub fn preferences_modal<'a>(
         .align_x(Center)
         .align_y(Center)
         .style(move |_| styles::modal_backdrop()(&iced::Theme::Light))
+        .into()
+}
+
+/// Renders an underline-accented modal tab button shared between Preferences and Properties.
+fn modal_tab_button<'a>(
+    label: &'a str,
+    active: bool,
+    palette: ThemePalette,
+    msg: Message,
+) -> Element<'a, Message> {
+    let underline_color = if active {
+        palette.accent_primary
+    } else {
+        Color::TRANSPARENT
+    };
+    let label_color = if active {
+        palette.text_primary
+    } else {
+        palette.text_muted
+    };
+    button(
+        column![
+            container(
+                text(label)
+                    .size(12)
+                    .font(if active { FONT_UI_SEMIBOLD } else { FONT_UI })
+                    .color(label_color)
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(Length::Fill)
+            .align_x(Center)
+            .padding([6, 4]),
+            container(Space::new().width(Length::Fill).height(2)).style(move |_| {
+                container::Style {
+                    background: Some(Background::Color(underline_color)),
+                    ..Default::default()
+                }
+            }),
+        ]
+        .spacing(2),
+    )
+    .width(Length::Fill)
+    .padding(0)
+    .style(move |_, status| {
+        let bg = match status {
+            button::Status::Hovered | button::Status::Pressed if !active => {
+                Some(Background::Color(palette.surface_low))
+            }
+            _ => None,
+        };
+        button::Style {
+            background: bg,
+            text_color: label_color,
+            border: Border::default(),
+            ..Default::default()
+        }
+    })
+    .on_press(msg)
+    .into()
+}
+
+/// Renders the About tab inside the Preferences modal with version, developer status, and GPLv3 details.
+fn about_tab_view<'a>(palette: ThemePalette, strings: Strings) -> Element<'a, Message> {
+    let version_tag = concat!("v", env!("CARGO_PKG_VERSION"));
+    let copy_payload = format!(
+        "Vagnarok File Manager {version_tag} ({} / {}) · GNU GPL v3.0 (GPL-3.0-or-later)",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    let copied_notice = strings.about_info_copied.to_owned();
+
+    let hero = container(
+        row![
+            container(icon_hard_drive().size(24).color(palette.accent_primary))
+                .width(48)
+                .height(48)
+                .align_x(Center)
+                .align_y(Center)
+                .style(move |_| styles::panel_surface(
+                    palette.accent_surface,
+                    palette.accent_border,
+                    10.0
+                )),
+            column![
+                row![
+                    text("Vagnarok File Manager")
+                        .size(16)
+                        .font(FONT_UI_BOLD)
+                        .color(palette.text_primary),
+                    container(
+                        text(version_tag)
+                            .size(11)
+                            .font(FONT_MONO_BOLD)
+                            .color(palette.accent_primary),
+                    )
+                    .padding([2, 8])
+                    .style(styles::badge_container(
+                        palette.accent_surface,
+                        palette.accent_border,
+                        palette.accent_primary,
+                        9999.0,
+                    )),
+                ]
+                .spacing(8)
+                .align_y(Center),
+                text(strings.about_subtitle)
+                    .size(12)
+                    .font(FONT_UI)
+                    .color(palette.text_secondary),
+            ]
+            .spacing(4)
+            .width(Length::Fill),
+        ]
+        .spacing(12)
+        .align_y(Center),
+    )
+    .width(Length::Fill)
+    .padding(14)
+    .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0));
+
+    let meta_card = container(
+        column![
+            prop_kv_row(
+                strings.about_version_label,
+                version_tag.to_owned(),
+                true,
+                palette
+            ),
+            prop_kv_row(
+                strings.about_stage_label,
+                strings.about_stage_alpha.to_owned(),
+                false,
+                palette,
+            ),
+            prop_kv_row(
+                strings.about_developer_label,
+                strings.about_developer_value.to_owned(),
+                false,
+                palette,
+            ),
+            prop_kv_row(
+                strings.about_license_label,
+                "GNU GPL v3.0 (GPL-3.0-or-later)".to_owned(),
+                true,
+                palette,
+            ),
+            prop_kv_row(
+                strings.about_stack_label,
+                "Rust · Iced 0.14 + wgpu".to_owned(),
+                true,
+                palette,
+            ),
+        ]
+        .spacing(10),
+    )
+    .width(Length::Fill)
+    .padding(14)
+    .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0));
+
+    let actions = row![
+        space::horizontal(),
+        button(
+            row![icon_copy().size(13), text(strings.about_copy_info).size(12)]
+                .spacing(6)
+                .align_y(Center),
+        )
+        .padding([6, 14])
+        .style(styles::pill_secondary_button(palette))
+        .on_press(Message::CopyText(copy_payload, copied_notice)),
+    ]
+    .align_y(Center);
+
+    column![hero, meta_card, actions]
+        .spacing(12)
+        .width(Length::Fill)
         .into()
 }
 
@@ -2086,6 +2253,26 @@ pub fn context_menu_overlay<'a>(
                 ));
             }
         }
+        ContextMenuKind::PreferencesMenu => {
+            items = items
+                .push(ctx_item(
+                    icon_settings()
+                        .size(14)
+                        .color(palette.accent_primary)
+                        .into(),
+                    strings.preferences,
+                    palette.text_primary,
+                    Message::OpenPreferences,
+                    palette,
+                ))
+                .push(ctx_item(
+                    icon_info().size(14).color(palette.text_secondary).into(),
+                    strings.about_tab,
+                    palette.text_primary,
+                    Message::OpenAbout,
+                    palette,
+                ));
+        }
         ContextMenuKind::Background => {
             items = items
                 .push(ctx_item(
@@ -2168,6 +2355,7 @@ pub fn context_menu_overlay<'a>(
         ContextMenuKind::Background => 240.0,
         ContextMenuKind::FilterMenu => 320.0,
         ContextMenuKind::LanguageMenu => 256.0,
+        ContextMenuKind::PreferencesMenu => 84.0,
     };
     let max_x = (app.window_size.width - menu_width - 12.0).max(8.0);
     let max_y = (app.window_size.height - est_height - 12.0).max(8.0);

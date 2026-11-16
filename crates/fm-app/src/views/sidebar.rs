@@ -202,13 +202,14 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
     }
 
     let footer_actions = row![
-        sidebar_btn(
+        sidebar_btn_owned(
             icon_settings().size(16),
-            strings.preferences,
+            strings.preferences.to_owned(),
             collapsed,
             false,
             palette,
             Message::OpenPreferences,
+            Some(Message::OpenPreferencesContextMenu),
         ),
         button(icon_panel_left().size(15))
             .padding([6, 8])
@@ -240,25 +241,6 @@ fn section_header<'a>(label: &'a str, palette: ThemePalette) -> Element<'a, Mess
     )
     .padding(Padding::from([2, 10]))
     .into()
-}
-
-fn sidebar_btn<'a>(
-    icon: iced::widget::Text<'a, iced::Theme>,
-    label: &'a str,
-    collapsed: bool,
-    active: bool,
-    palette: ThemePalette,
-    msg: Message,
-) -> Element<'a, Message> {
-    sidebar_btn_owned(
-        icon,
-        label.to_owned(),
-        collapsed,
-        active,
-        palette,
-        msg,
-        None,
-    )
 }
 
 fn sidebar_btn_owned<'a>(

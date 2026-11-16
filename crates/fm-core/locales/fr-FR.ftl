@@ -195,3 +195,17 @@ age-hours = il y a { $h } h
 age-days = il y a { $d } j
 ts-today = Aujourd'hui, { $time }
 ts-yesterday = Hier, { $time }
+
+# Onglets Préférences et À propos
+prefs-tab-general = Général
+about-tab = À propos
+about-subtitle = Gestionnaire de fichiers natif haute performance pour Linux et Windows
+about-version-label = Version
+about-developer-label = Développeur
+about-developer-value = en développement
+about-stage-label = Statut
+about-stage-alpha = Alpha — Aperçu de développement
+about-license-label = Licence
+about-stack-label = Moteur / Stack
+about-copy-info = Copier les infos
+about-info-copied = Informations copiées

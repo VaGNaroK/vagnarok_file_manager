@@ -61,6 +61,14 @@ pub enum ContextMenuKind {
     NewMenu,
     FilterMenu,
     LanguageMenu,
+    PreferencesMenu,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PreferencesTab {
+    #[default]
+    General,
+    About,
 }
 
 #[derive(Debug, Clone)]
@@ -335,6 +343,9 @@ pub enum Message {
         is_favorite: bool,
     },
     OpenPreferences,
+    OpenAbout,
+    SelectPreferencesTab(PreferencesTab),
+    OpenPreferencesContextMenu,
     ClosePreferences,
     SetDefaultViewMode(ViewMode),
     ToggleGridGroupFolders,
@@ -463,6 +474,7 @@ pub struct App {
     pub deep_search_cancel: Option<CancellationToken>,
     pub active_dialog: Option<ActiveDialog>,
     pub prefs_open: bool,
+    pub prefs_tab: PreferencesTab,
     pub clipboard: Option<ClipboardTransfer>,
     pub next_job_id: u64,
     pub active_transfer: Option<JobProgress>,
@@ -578,6 +590,7 @@ impl App {
             deep_search_cancel: None,
             active_dialog: None,
             prefs_open: false,
+            prefs_tab: PreferencesTab::General,
             clipboard: None,
             next_job_id: 1,
             active_transfer: None,
@@ -1818,7 +1831,27 @@ impl App {
                 Task::none()
             }
             Message::OpenPreferences => {
+                self.context_menu = None;
+                self.prefs_tab = PreferencesTab::General;
                 self.prefs_open = true;
+                Task::none()
+            }
+            Message::OpenAbout => {
+                self.context_menu = None;
+                self.prefs_tab = PreferencesTab::About;
+                self.prefs_open = true;
+                Task::none()
+            }
+            Message::SelectPreferencesTab(tab) => {
+                self.prefs_tab = tab;
+                Task::none()
+            }
+            Message::OpenPreferencesContextMenu => {
+                self.breadcrumb_menu = None;
+                self.context_menu = Some(ContextMenuState {
+                    kind: ContextMenuKind::PreferencesMenu,
+                    position: self.cursor_position,
+                });
                 Task::none()
             }
             Message::ClosePreferences => {
