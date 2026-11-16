@@ -40,3 +40,10 @@ Antes de propor alterações ou escrever código, leia os documentos abaixo na o
 * `cargo clippy --workspace --all-targets -- -D warnings`
 * `cargo test --workspace`
 * Ao modificar código condicional de SO, validar cross-check se disponível (`cargo check --target x86_64-pc-windows-gnu` ou `x86_64-unknown-linux-gnu`) e manter testes unitários para os dois alvos.
+
+---
+
+## 4. Fluxo Git Obrigatório
+
+* **Commit após cada mudança**: Sempre que alterações válidas forem concluídas e verificadas, realize o `git commit` correspondente imediatamente (padrão Conventional Commits), exceto se o usuário solicitar explicitamente que fique sem commit.
+* **Aviso ao usuário**: Toda resposta após modificações no repositório deve informar explicitamente o hash curto, a mensagem e os arquivos do(s) commit(s) realizado(s).
