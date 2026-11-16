@@ -206,7 +206,7 @@ jobs:
       - name: Install Flatpak and Flatpak Builder
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          sudo apt-get install -y flatpak flatpak-builder appstream appstream-compose librsvg2-common desktop-file-utils
           flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub \
             org.freedesktop.Platform//25.08 \
