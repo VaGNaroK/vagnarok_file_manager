@@ -829,6 +829,7 @@ impl App {
             Message::NavigateUp => {
                 let parent = self
                     .current_tab()
+                    .filter(|t| !fm_core::is_virtual_trash_path(&t.current_path))
                     .and_then(|t| t.current_path.parent().map(PathBuf::from));
                 if let Some(p) = parent {
                     self.navigate_active_tab(p)
@@ -1213,7 +1214,9 @@ impl App {
                                 },
                             ));
 
-                            if fm_fs::archive::split_archive_path(&dir_path).is_none() {
+                            if fm_fs::archive::split_archive_path(&dir_path).is_none()
+                                && !fm_core::is_virtual_trash_path(&dir_path)
+                            {
                                 let meta_cache = self.metadata_cache.clone();
                                 let cancel_size = cancel.clone();
                                 let size_dir = dir_path.clone();
@@ -4014,6 +4017,9 @@ fn prepare_tab_for_load(tab: &mut TabState, request_id: u64) {
 }
 
 fn display_tab_title(path: &std::path::Path) -> CompactString {
+    if fm_core::is_virtual_trash_path(path) {
+        return CompactString::from("Trash");
+    }
     let raw = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())

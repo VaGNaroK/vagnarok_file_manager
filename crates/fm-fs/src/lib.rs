@@ -30,9 +30,11 @@ use std::path::{Path, PathBuf};
 
 use compact_str::CompactString;
 use directories::{BaseDirs, UserDirs};
+use fm_core::domain::FsType;
 use fm_core::{
     DirectorySnapshot, DriveInfo, EntryExtraInfo, EntryKind, FileEntry, FsError, PermissionsMeta,
-    UserPlaces, VfsProvider, VolumeSpace, compute_entry_id,
+    UserPlaces, VIRTUAL_TRASH_PATH, VfsProvider, VolumeSpace, compute_entry_id,
+    is_virtual_trash_path,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -74,7 +76,12 @@ fn resolve_trash_dir(base: &Option<BaseDirs>) -> Option<PathBuf> {
             .map(|b| b.data_local_dir().join("Trash").join("files"))
             .filter(|p| p.exists())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        let _ = base;
+        Some(PathBuf::from(VIRTUAL_TRASH_PATH))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         let _ = base;
         None
@@ -102,7 +109,9 @@ impl VfsProvider for LocalFs {
         let target = path.to_path_buf();
         tokio::task::spawn_blocking(move || {
             let started = std::time::Instant::now();
-            let result = if let Some((archive_path, inner_prefix, kind)) =
+            let result = if is_virtual_trash_path(&target) {
+                list_virtual_trash(request_id, &cancel)
+            } else if let Some((archive_path, inner_prefix, kind)) =
                 archive::split_archive_path(&target)
             {
                 archive::list_archive_dir(&archive_path, &inner_prefix, kind, request_id, &cancel)
@@ -136,6 +145,9 @@ impl VfsProvider for LocalFs {
     }
 
     async fn volume_space(&self, path: &Path) -> Result<Option<VolumeSpace>, FsError> {
+        if is_virtual_trash_path(path) {
+            return Ok(None);
+        }
         let target = path.to_path_buf();
         tokio::task::spawn_blocking(move || platform::volume_space(&target))
             .await
@@ -267,7 +279,8 @@ impl VfsProvider for LocalFs {
         }
         let targets = paths.to_vec();
         tokio::task::spawn_blocking(move || {
-            for target in &targets {
+            let remaining = purge_matching_trash_items(&targets)?;
+            for target in &remaining {
                 let meta = std::fs::symlink_metadata(target).map_err(|e| map_io_err(target, e))?;
                 if meta.is_dir() {
                     std::fs::remove_dir_all(target).map_err(|e| map_io_err(target, e))?;
@@ -487,6 +500,129 @@ pub(crate) fn scan_directory_blocking(
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
+fn list_virtual_trash(
+    request_id: u64,
+    cancel: &CancellationToken,
+) -> Result<DirectorySnapshot, FsError> {
+    if cancel.is_cancelled() {
+        return Err(FsError::Cancelled);
+    }
+    let items = trash::os_limited::list().map_err(|err| FsError::Io {
+        path: PathBuf::from(VIRTUAL_TRASH_PATH),
+        message: format!("falha ao listar lixeira: {err}"),
+    })?;
+
+    let mut entries = Vec::with_capacity(items.len());
+    for item in items {
+        if cancel.is_cancelled() {
+            return Err(FsError::Cancelled);
+        }
+        let item_path = PathBuf::from(&item.id);
+        let meta = std::fs::symlink_metadata(&item_path).ok();
+        let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
+        let size_bytes = meta.as_ref().map(|m| if is_dir { 0 } else { m.len() }).unwrap_or(0);
+        let modified_at = if item.time_deleted >= 0 {
+            Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(item.time_deleted as u64))
+        } else {
+            meta.as_ref().and_then(|m| m.modified().ok())
+        };
+        let created_at = meta.as_ref().and_then(|m| m.created().ok());
+        let name = CompactString::from(item.name.to_string_lossy().as_ref());
+        let extension = if is_dir {
+            None
+        } else {
+            Path::new(&item.name)
+                .extension()
+                .map(|e| CompactString::from(e.to_string_lossy().as_ref()))
+        };
+        let kind = if is_dir {
+            EntryKind::Directory
+        } else {
+            EntryKind::File
+        };
+        let entry_path = if item_path.as_os_str().is_empty() {
+            PathBuf::from(VIRTUAL_TRASH_PATH).join(&item.name)
+        } else {
+            item_path
+        };
+
+        entries.push(FileEntry {
+            id: compute_entry_id(&entry_path),
+            name,
+            path: entry_path,
+            kind,
+            size_bytes,
+            modified_at,
+            created_at,
+            permissions: PermissionsMeta::default(),
+            extension,
+            is_hidden: false,
+            is_symlink: false,
+            child_count: None,
+        });
+    }
+
+    Ok(DirectorySnapshot {
+        path: PathBuf::from(VIRTUAL_TRASH_PATH),
+        entries,
+        fs_type: FsType::Unknown,
+        request_id,
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn list_virtual_trash(
+    request_id: u64,
+    _cancel: &CancellationToken,
+) -> Result<DirectorySnapshot, FsError> {
+    Ok(DirectorySnapshot {
+        path: PathBuf::from(VIRTUAL_TRASH_PATH),
+        entries: Vec::new(),
+        fs_type: FsType::Unknown,
+        request_id,
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn purge_matching_trash_items(targets: &[PathBuf]) -> Result<Vec<PathBuf>, FsError> {
+    let any_trash_id = targets.iter().any(|p| {
+        let s = p.to_string_lossy();
+        s.contains("$Recycle.Bin") || s.contains("$RECYCLE.BIN") || is_virtual_trash_path(p)
+    });
+    if !any_trash_id {
+        return Ok(targets.to_vec());
+    }
+    let items = trash::os_limited::list().map_err(|err| FsError::Io {
+        path: targets.first().cloned().unwrap_or_default(),
+        message: format!("falha ao listar lixeira: {err}"),
+    })?;
+    let mut matched = Vec::new();
+    let mut matched_paths = Vec::new();
+    for item in items {
+        if let Some(p) = targets.iter().find(|p| p.as_os_str() == item.id) {
+            matched_paths.push(p.clone());
+            matched.push(item);
+        }
+    }
+    if !matched.is_empty() {
+        trash::os_limited::purge_all(matched).map_err(|err| FsError::Io {
+            path: targets.first().cloned().unwrap_or_default(),
+            message: format!("falha ao excluir da lixeira: {err}"),
+        })?;
+    }
+    Ok(targets
+        .iter()
+        .filter(|p| !matched_paths.contains(p))
+        .cloned()
+        .collect())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn purge_matching_trash_items(targets: &[PathBuf]) -> Result<Vec<PathBuf>, FsError> {
+    Ok(targets.to_vec())
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn restore_trash_items(paths: &[PathBuf]) -> Result<usize, FsError> {
     let items = trash::os_limited::list().map_err(|err| FsError::Io {
         path: paths.first().cloned().unwrap_or_default(),
@@ -498,7 +634,8 @@ fn restore_trash_items(paths: &[PathBuf]) -> Result<usize, FsError> {
         let info_stem = Path::new(&item.id).file_stem();
         let is_match = paths.iter().any(|p| {
             let fname = p.file_name();
-            fname == Some(item.name.as_os_str())
+            p.as_os_str() == item.id
+                || fname == Some(item.name.as_os_str())
                 || (info_stem.is_some() && fname == info_stem)
                 || p == &item.original_path()
         });
@@ -606,6 +743,22 @@ pub async fn stat_entry(path: PathBuf) -> Result<FileEntry, FsError> {
 }
 
 fn stat_entry_blocking(entry_path: &Path) -> Result<FileEntry, FsError> {
+    if is_virtual_trash_path(entry_path) {
+        return Ok(FileEntry {
+            id: compute_entry_id(entry_path),
+            name: CompactString::from("Trash"),
+            path: entry_path.to_path_buf(),
+            kind: EntryKind::Directory,
+            size_bytes: 0,
+            modified_at: None,
+            created_at: None,
+            permissions: PermissionsMeta::default(),
+            extension: None,
+            is_hidden: false,
+            is_symlink: false,
+            child_count: None,
+        });
+    }
     let link_meta = std::fs::symlink_metadata(entry_path).map_err(|e| map_io_err(entry_path, e))?;
     let name = entry_path
         .file_name()
@@ -825,5 +978,17 @@ mod tests {
             assert_eq!(entry.name, "sample.txt");
             assert_eq!(entry.size_bytes, 5);
         });
+    }
+
+    #[test]
+    fn resolves_trash_place_and_virtual_trash_listing() {
+        let places = user_places();
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(places.trash, Some(PathBuf::from(VIRTUAL_TRASH_PATH)));
+            assert!(is_virtual_trash_path(places.trash.as_deref().unwrap()));
+        }
+        #[cfg(not(target_os = "windows"))]
+        let _ = places;
     }
 }

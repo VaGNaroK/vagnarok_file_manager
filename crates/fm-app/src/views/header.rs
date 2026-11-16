@@ -126,7 +126,8 @@ fn navigation_row<'a>(
 ) -> Element<'a, Message> {
     let can_back = tab.is_some_and(TabState::can_go_back);
     let can_fwd = tab.is_some_and(TabState::can_go_forward);
-    let can_up = tab.is_some_and(|t| t.current_path.parent().is_some());
+    let can_up = tab
+        .is_some_and(|t| !fm_core::is_virtual_trash_path(&t.current_path) && t.current_path.parent().is_some());
 
     let mut back_btn = button(icon_arrow_left().size(15))
         .padding([5, 7])
@@ -151,7 +152,7 @@ fn navigation_row<'a>(
 
     let nav_buttons = row![back_btn, fwd_btn, up_btn].spacing(2).align_y(Center);
 
-    let breadcrumb = unified_breadcrumb(app, tab, palette);
+    let breadcrumb = unified_breadcrumb(app, tab, palette, strings);
 
     let query = tab.map(|t| t.filter_query.as_str()).unwrap_or("");
     let deep_btn = button(
@@ -242,6 +243,7 @@ fn unified_breadcrumb<'a>(
     app: &'a App,
     tab: Option<&'a TabState>,
     palette: ThemePalette,
+    strings: Strings,
 ) -> Element<'a, Message> {
     if app.path_editing {
         let placeholder = app.places.home.to_string_lossy().into_owned();
@@ -269,64 +271,83 @@ fn unified_breadcrumb<'a>(
     .align_y(Center);
 
     if let Some(tab) = tab {
-        let mut acc = PathBuf::new();
-        let components: Vec<_> = tab
-            .current_path
-            .components()
-            .filter_map(|c| match c {
-                std::path::Component::RootDir => {
-                    acc.push("/");
-                    if acc == std::path::Path::new("/") {
-                        Some(("/".to_owned(), acc.clone()))
-                    } else {
-                        None
-                    }
-                }
-                std::path::Component::Normal(part) => {
-                    acc.push(part);
-                    Some((sanitize_single_line(&part.to_string_lossy()), acc.clone()))
-                }
-                std::path::Component::Prefix(prefix) => {
-                    let s = sanitize_single_line(&prefix.as_os_str().to_string_lossy());
-                    acc.push(prefix.as_os_str());
-                    Some((s, acc.clone()))
-                }
-                _ => None,
-            })
-            .collect();
-
-        let last_idx = components.len().saturating_sub(1);
-        for (idx, (label, target)) in components.into_iter().enumerate() {
-            let is_last = idx == last_idx;
-            let txt = text(label)
+        if fm_core::is_virtual_trash_path(&tab.current_path) {
+            let txt = text(strings.trash)
                 .size(12)
-                .font(if is_last { FONT_UI_SEMIBOLD } else { FONT_UI })
-                .color(if is_last {
-                    palette.text_primary
-                } else {
-                    palette.text_secondary
-                })
+                .font(FONT_UI_SEMIBOLD)
+                .color(palette.text_primary)
                 .wrapping(text::Wrapping::None);
-            let is_menu_open = app
-                .breadcrumb_menu
-                .as_ref()
-                .is_some_and(|(open_path, _)| open_path == &target);
+            crumbs = crumbs.push(
+                icon_chevron_right()
+                    .size(12)
+                    .color(palette.text_muted),
+            );
             crumbs = crumbs.push(
                 button(txt)
                     .padding([3, 6])
                     .style(styles::ghost_button(palette, 6.0))
-                    .on_press(Message::NavigateTo(target.clone())),
+                    .on_press(Message::NavigateTo(tab.current_path.clone())),
             );
-            crumbs = crumbs.push(
-                button(icon_chevron_right().size(12).color(if is_menu_open {
-                    palette.accent_primary
-                } else {
-                    palette.text_muted
-                }))
-                .padding([3, 3])
-                .style(styles::ghost_button(palette, 4.0))
-                .on_press(Message::ToggleBreadcrumbMenu(target)),
-            );
+        } else {
+            let mut acc = PathBuf::new();
+            let components: Vec<_> = tab
+                .current_path
+                .components()
+                .filter_map(|c| match c {
+                    std::path::Component::RootDir => {
+                        acc.push("/");
+                        if acc == std::path::Path::new("/") {
+                            Some(("/".to_owned(), acc.clone()))
+                        } else {
+                            None
+                        }
+                    }
+                    std::path::Component::Normal(part) => {
+                        acc.push(part);
+                        Some((sanitize_single_line(&part.to_string_lossy()), acc.clone()))
+                    }
+                    std::path::Component::Prefix(prefix) => {
+                        let s = sanitize_single_line(&prefix.as_os_str().to_string_lossy());
+                        acc.push(prefix.as_os_str());
+                        Some((s, acc.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            let last_idx = components.len().saturating_sub(1);
+            for (idx, (label, target)) in components.into_iter().enumerate() {
+                let is_last = idx == last_idx;
+                let txt = text(label)
+                    .size(12)
+                    .font(if is_last { FONT_UI_SEMIBOLD } else { FONT_UI })
+                    .color(if is_last {
+                        palette.text_primary
+                    } else {
+                        palette.text_secondary
+                    })
+                    .wrapping(text::Wrapping::None);
+                let is_menu_open = app
+                    .breadcrumb_menu
+                    .as_ref()
+                    .is_some_and(|(open_path, _)| open_path == &target);
+                crumbs = crumbs.push(
+                    button(txt)
+                        .padding([3, 6])
+                        .style(styles::ghost_button(palette, 6.0))
+                        .on_press(Message::NavigateTo(target.clone())),
+                );
+                crumbs = crumbs.push(
+                    button(icon_chevron_right().size(12).color(if is_menu_open {
+                        palette.accent_primary
+                    } else {
+                        palette.text_muted
+                    }))
+                    .padding([3, 3])
+                    .style(styles::ghost_button(palette, 4.0))
+                    .on_press(Message::ToggleBreadcrumbMenu(target)),
+                );
+            }
         }
     }
 

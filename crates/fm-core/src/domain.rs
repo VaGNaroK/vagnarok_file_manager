@@ -19,6 +19,14 @@ pub fn compute_entry_id(path: &Path) -> EntryId {
     EntryId(hash)
 }
 
+/// Caminho virtual usado para representar a Lixeira do SO quando não há diretório único navegável (ex.: Windows Recycle Bin).
+pub const VIRTUAL_TRASH_PATH: &str = "trash://";
+
+/// Indica se `path` aponta para a raiz virtual da Lixeira.
+pub fn is_virtual_trash_path(path: &Path) -> bool {
+    path == Path::new(VIRTUAL_TRASH_PATH)
+}
+
 /// Diretórios padrão do usuário resolvidos de forma nativa (XDG no Linux / Known Folders no Windows).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UserPlaces {
