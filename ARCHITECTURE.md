@@ -37,7 +37,7 @@ A inspeção conjunta de [DESIGN.md](DESIGN.md), `code.html` e do mockup inicial
 
 ### 3.1 Interface Gráfica e Janela
 * **`iced`** (camada de UI reativa estilo Elm, renderização declarativa e tipada).
-* **`iced_wgpu` / `wgpu`** (backend gráfico acelerado por GPU via Vulkan/DX12, com fallback `tiny-skia` para ambientes headless ou GPUs antigas).
+* **`iced_wgpu` / `wgpu`** (backend gráfico acelerado por GPU via **Vulkan** / **DirectX 12**; hardware legado sem suporte a Vulkan/DX12 — como GPUs Intel HD 2000/3000 — não é suportado no momento devido a limitações visuais em drivers antigos e no renderizador por software `tiny-skia`).
 * **`window-vibrancy` / `raw-window-handle`**:
   * **Windows 11**: Mica / Acrylic nativos via DWM (`DwmSetWindowAttribute`).
   * **Linux**: Efeito blur quando suportado pelo compositor (KDE/Wayland), com degradação elegante para superfícies sólidas/translúcidas definidas nos tokens sem quebrar em WMs sem compositor.
