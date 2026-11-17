@@ -15,13 +15,81 @@ use lucide_icons::iced::{
 use crate::app::{App, Message, SidebarTarget};
 use crate::views::{sanitize_single_line, with_tooltip};
 
-pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Element<'a, Message> {
-    let collapsed = app.config.sidebar_collapsed;
-    let width = if collapsed {
-        Spacing::SIDEBAR_COLLAPSED_WIDTH
+pub const SIDEBAR_WIDTH_MIN: f32 = 180.0;
+pub const SIDEBAR_WIDTH_MAX: f32 = 480.0;
+
+pub fn clamp_sidebar_width(width: f32) -> f32 {
+    if width.is_finite() {
+        width.clamp(SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX)
     } else {
         Spacing::SIDEBAR_WIDTH
-    };
+    }
+}
+
+fn format_drive_label(drive: &fm_core::DriveInfo, strings: Strings) -> String {
+    if drive.is_mounted {
+        if let Some(space_info) = &drive.space {
+            format!("{} ({})", drive.label, format_bytes(space_info.free_bytes))
+        } else {
+            drive.label.to_string()
+        }
+    } else if let Some(total) = drive.total_bytes_hint {
+        format!(
+            "{} ({} • {})",
+            drive.label,
+            format_bytes(total),
+            strings.unmounted_label
+        )
+    } else {
+        format!("{} ({})", drive.label, strings.unmounted_label)
+    }
+}
+
+/// Calcula a largura efetiva da barra lateral: respeita o tamanho salvo pelo usuário ou ajusta ao maior disco/item.
+pub fn effective_sidebar_width(app: &App, strings: Strings) -> f32 {
+    if app.config.sidebar_collapsed {
+        return Spacing::SIDEBAR_COLLAPSED_WIDTH;
+    }
+    if let Some(custom) = app.config.sidebar_width {
+        return clamp_sidebar_width(custom);
+    }
+
+    let mut max_drive_px = 0.0_f32;
+    for drive in &app.drives {
+        let lbl = format_drive_label(drive, strings);
+        let chars = lbl.chars().count() as f32;
+        let has_action_btn = !drive.is_mounted || drive.can_unmount;
+        let chrome = if has_action_btn { 108.0 } else { 76.0 };
+        max_drive_px = max_drive_px.max(chars * 7.6 + chrome);
+    }
+
+    let quick_labels = [
+        strings.home,
+        strings.desktop,
+        strings.documents,
+        strings.downloads,
+        strings.music,
+        strings.pictures,
+        strings.videos,
+        strings.public_dir,
+        strings.templates,
+        strings.trash,
+        strings.preferences,
+    ];
+    let mut max_place_px = 0.0_f32;
+    for lbl in quick_labels {
+        max_place_px = max_place_px.max(lbl.chars().count() as f32 * 7.6 + 88.0);
+    }
+
+    max_drive_px
+        .max(max_place_px)
+        .clamp(Spacing::SIDEBAR_WIDTH, 390.0)
+        .round()
+}
+
+pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Element<'a, Message> {
+    let collapsed = app.config.sidebar_collapsed;
+    let width = effective_sidebar_width(app, strings);
 
     let quick_candidates = [
         (
@@ -198,21 +266,8 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
             };
             let label = if collapsed {
                 String::new()
-            } else if drive.is_mounted {
-                if let Some(space_info) = &drive.space {
-                    format!("{} ({})", drive.label, format_bytes(space_info.free_bytes))
-                } else {
-                    drive.label.to_string()
-                }
-            } else if let Some(total) = drive.total_bytes_hint {
-                format!(
-                    "{} ({} • {})",
-                    drive.label,
-                    format_bytes(total),
-                    strings.unmounted_label
-                )
             } else {
-                format!("{} ({})", drive.label, strings.unmounted_label)
+                format_drive_label(drive, strings)
             };
             let active = drive.is_mounted
                 && app
@@ -261,7 +316,7 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
                         tooltip::Position::Right,
                         palette,
                     );
-                    row![container(btn).width(Length::Fill), unmount_btn]
+                    row![container(btn).width(Length::Fill).clip(true), unmount_btn]
                         .spacing(2)
                         .align_y(Center)
                         .into()
@@ -276,7 +331,7 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
                             tooltip::Position::Right,
                             palette,
                         );
-                        row![container(btn).width(Length::Fill), mount_btn]
+                        row![container(btn).width(Length::Fill).clip(true), mount_btn]
                             .spacing(2)
                             .align_y(Center)
                             .into()
@@ -447,10 +502,14 @@ fn sidebar_btn_owned<'a>(
     } else {
         row![
             icon,
-            text(label)
-                .size(13)
-                .font(if active { FONT_UI_SEMIBOLD } else { FONT_UI })
-                .wrapping(text::Wrapping::None),
+            container(
+                text(label)
+                    .size(13)
+                    .font(if active { FONT_UI_SEMIBOLD } else { FONT_UI })
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(Length::Fill)
+            .clip(true),
         ]
         .spacing(8)
         .align_y(Center)
@@ -466,5 +525,40 @@ fn sidebar_btn_owned<'a>(
         mouse_area(btn).on_right_press(ctx_msg).into()
     } else {
         btn.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use compact_str::CompactString;
+    use fm_core::{DriveInfo, DriveKind};
+    use std::path::PathBuf;
+
+    #[test]
+    fn clamps_sidebar_width_within_allowed_bounds() {
+        assert_eq!(clamp_sidebar_width(120.0), SIDEBAR_WIDTH_MIN);
+        assert_eq!(clamp_sidebar_width(640.0), SIDEBAR_WIDTH_MAX);
+        assert_eq!(clamp_sidebar_width(305.0), 305.0);
+        assert_eq!(clamp_sidebar_width(f32::NAN), Spacing::SIDEBAR_WIDTH);
+    }
+
+    #[test]
+    fn formats_unmounted_drive_label_with_capacity_and_status() {
+        let strings = Strings::for_language(fm_core::Language::PtBr);
+        let drive = DriveInfo {
+            label: CompactString::new("JOGOS"),
+            mount_path: PathBuf::new(),
+            device_path: Some(PathBuf::from("/dev/sda1")),
+            fs_type: Some(CompactString::new("ntfs")),
+            kind: DriveKind::SecondaryDisk,
+            is_mounted: false,
+            can_unmount: false,
+            total_bytes_hint: Some(480_102_055_936),
+            space: None,
+        };
+        let label = format_drive_label(&drive, strings);
+        assert!(label.contains("JOGOS"));
+        assert!(label.contains(strings.unmounted_label));
     }
 }

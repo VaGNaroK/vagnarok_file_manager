@@ -83,6 +83,7 @@ mod tests {
             show_hero_card: false,
             show_inspector: true,
             sidebar_collapsed: true,
+            sidebar_width: Some(312.0),
             window_decorations: WindowDecorationsMode::IntegratedCsd,
             default_view_mode: ViewMode::Columns,
             grid_group_folders: false,
@@ -101,6 +102,7 @@ mod tests {
         assert!(!loaded.show_hero_card);
         assert!(loaded.show_inspector);
         assert!(loaded.sidebar_collapsed);
+        assert_eq!(loaded.sidebar_width, Some(312.0));
         assert_eq!(
             loaded.window_decorations,
             WindowDecorationsMode::IntegratedCsd
@@ -126,6 +128,7 @@ favorites = []
         let parsed: AppConfig = toml::from_str(legacy_toml).expect("legacy config parses");
         assert_eq!(parsed.theme, ThemePreset::AetherLight);
         assert!(!parsed.theme_customized);
+        assert_eq!(parsed.sidebar_width, None);
         assert!(parsed.grid_group_folders);
         assert!(parsed.dirs_first);
     }

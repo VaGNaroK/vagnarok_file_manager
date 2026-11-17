@@ -400,6 +400,8 @@ pub struct AppConfig {
     pub show_hero_card: bool,
     pub show_inspector: bool,
     pub sidebar_collapsed: bool,
+    #[serde(default)]
+    pub sidebar_width: Option<f32>,
     pub window_decorations: WindowDecorationsMode,
     #[serde(default)]
     pub default_view_mode: ViewMode,
@@ -423,6 +425,7 @@ impl Default for AppConfig {
             show_hero_card: true,
             show_inspector: false,
             sidebar_collapsed: false,
+            sidebar_width: None,
             window_decorations: WindowDecorationsMode::NativeWm,
             default_view_mode: ViewMode::Grid,
             grid_group_folders: true,

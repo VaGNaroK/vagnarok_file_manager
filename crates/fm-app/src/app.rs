@@ -451,6 +451,8 @@ pub enum Message {
     StartColumnResize(usize),
     StartGridResize,
     StartColumnsPanelResize,
+    StartSidebarResize,
+    ResetSidebarWidth,
     EndColumnResize(window::Id),
     StepGridCardWidth(f32),
     ResetGridCardWidth,
@@ -512,6 +514,7 @@ pub struct App {
     pub resizing_grid: Option<(f32, f32)>,
     pub columns_panel_width: f32,
     pub resizing_columns_panel: Option<(f32, f32)>,
+    pub resizing_sidebar: Option<(f32, f32)>,
     pub deep_search_open: bool,
     pub deep_search_query: String,
     pub deep_search_loading: bool,
@@ -632,6 +635,7 @@ impl App {
             resizing_grid: None,
             columns_panel_width: 280.0,
             resizing_columns_panel: None,
+            resizing_sidebar: None,
             deep_search_open: false,
             deep_search_query: String::new(),
             deep_search_loading: false,
@@ -2562,13 +2566,27 @@ impl App {
                     Some((self.cursor_position.x, self.columns_panel_width));
                 Task::none()
             }
+            Message::StartSidebarResize => {
+                let current_w = views::sidebar::effective_sidebar_width(self, self.strings());
+                self.resizing_sidebar = Some((self.cursor_position.x, current_w));
+                Task::none()
+            }
+            Message::ResetSidebarWidth => {
+                self.resizing_sidebar = None;
+                self.config.sidebar_width = None;
+                self.persist_config_task()
+            }
             Message::EndColumnResize(window_id) => {
                 if window_id != self.main_window_id {
                     return Task::none();
                 }
                 self.resizing_col = None;
                 self.resizing_columns_panel = None;
-                if self.resizing_grid.take().is_some() {
+                let mut should_persist = self.resizing_grid.take().is_some();
+                if self.resizing_sidebar.take().is_some() {
+                    should_persist = true;
+                }
+                if should_persist {
                     return self.persist_config_task();
                 }
                 Task::none()
@@ -2647,6 +2665,11 @@ impl App {
                 }
                 if let Some((start_x, initial_w)) = self.resizing_columns_panel {
                     self.columns_panel_width = (initial_w + (pos.x - start_x)).clamp(200.0, 480.0);
+                }
+                if let Some((start_x, initial_w)) = self.resizing_sidebar {
+                    self.config.sidebar_width = Some(views::sidebar::clamp_sidebar_width(
+                        initial_w + (pos.x - start_x),
+                    ));
                 }
                 Task::none()
             }
@@ -2836,10 +2859,45 @@ impl App {
         }
         let tab = self.current_tab();
 
+        let sidebar_divider: Element<'_, Message> = if self.config.sidebar_collapsed {
+            container(iced::widget::Space::new().width(1).height(Length::Fill))
+                .style(fm_theme::styles::divider_line(palette))
+                .into()
+        } else {
+            let line_color = if self.resizing_sidebar.is_some() {
+                palette.accent_primary
+            } else {
+                palette.border
+            };
+            let line_width = if self.resizing_sidebar.is_some() {
+                2.0
+            } else {
+                1.0
+            };
+            iced::widget::mouse_area(
+                container(
+                    container(
+                        iced::widget::Space::new()
+                            .width(line_width)
+                            .height(Length::Fill),
+                    )
+                    .style(move |_| {
+                        fm_theme::styles::panel_surface(line_color, iced::Color::TRANSPARENT, 0.0)
+                    }),
+                )
+                .width(Length::Fixed(6.0))
+                .height(Length::Fill)
+                .align_x(iced::Alignment::Center),
+            )
+            .interaction(mouse::Interaction::ResizingHorizontally)
+            .on_press(Message::StartSidebarResize)
+            .on_right_press(Message::ResetSidebarWidth)
+            .into()
+        };
+
         let body_row = row![
             views::sidebar::view(self, palette, strings),
-            container(iced::widget::Space::new().width(1).height(Length::Fill))
-                .style(fm_theme::styles::divider_line(palette)),
+            sidebar_divider,
             views::canvas::view(self, tab, palette, strings),
             views::inspector::drawer(self, tab, palette, strings),
         ]
@@ -4083,9 +4141,9 @@ impl App {
             return measured.max(200.0);
         }
         let sidebar = if self.config.sidebar_collapsed {
-            0.0
+            Spacing::SIDEBAR_COLLAPSED_WIDTH
         } else {
-            Spacing::SIDEBAR_WIDTH
+            views::sidebar::effective_sidebar_width(self, self.strings())
         };
         let inspector = if self.config.show_inspector {
             Spacing::INSPECTOR_WIDTH
