@@ -420,6 +420,7 @@ pub enum Message {
         window_id: window::Id,
         size: Size,
     },
+    MonitorSizeReady(Option<Size>),
     WindowClosed(window::Id),
     FileDropped {
         window_id: window::Id,
@@ -552,8 +553,10 @@ impl App {
         tab_cancels.insert(TabId(1), cancel1.clone());
         tab_cancels.insert(TabId(2), cancel2.clone());
 
+        let initial_size = Size::new(1120.0, 660.0);
         let (main_window_id, open_main_task) = window::open(window::Settings {
-            size: Size::new(1320.0, 860.0),
+            size: initial_size,
+            min_size: Some(Size::new(760.0, 500.0)),
             position: window::Position::Centered,
             decorations: config.window_decorations == WindowDecorationsMode::NativeWm,
             ..window::Settings::default()
@@ -614,7 +617,7 @@ impl App {
             quicklook_open: false,
             current_modifiers: keyboard::Modifiers::empty(),
             cursor_position: Point::new(240.0, 140.0),
-            window_size: Size::new(1320.0, 860.0),
+            window_size: initial_size,
             context_menu: None,
             pending_dropped_paths: Vec::new(),
             drop_batch_id: 0,
@@ -667,10 +670,14 @@ impl App {
         let load1 = spawn_list_task(Arc::clone(&vfs), TabId(1), tab1_path, 1, cancel1);
         let load2 = spawn_list_task(vfs, TabId(2), tab2_path, 2, cancel2);
 
+        let monitor_fit_task = open_main_task
+            .then(window::monitor_size)
+            .map(Message::MonitorSizeReady);
+
         (
             app,
             Task::batch([
-                open_main_task.discard(),
+                monitor_fit_task,
                 auto_theme_task,
                 drives_task,
                 disk_cache_task,
@@ -2480,6 +2487,18 @@ impl App {
                 }
                 Task::none()
             }
+            Message::MonitorSizeReady(Some(mon)) => {
+                let fitted = fit_window_size_to_monitor(mon);
+                self.window_size = fitted;
+                self.canvas_viewport_width = None;
+                let x = ((mon.width - fitted.width) * 0.5).max(8.0);
+                let y = ((mon.height - 48.0 - fitted.height) * 0.5).max(16.0);
+                Task::batch([
+                    window::resize(self.main_window_id, fitted),
+                    window::move_to(self.main_window_id, iced::Point::new(x, y)),
+                ])
+            }
+            Message::MonitorSizeReady(None) => Task::none(),
             Message::WindowClosed(window_id) => {
                 if window_id == self.main_window_id {
                     for (_, mut props) in self.properties_windows.drain() {
@@ -4170,6 +4189,14 @@ fn apply_modifier_key_release(
     modifiers
 }
 
+fn fit_window_size_to_monitor(mon: Size) -> Size {
+    let max_w = (mon.width - 24.0).max(760.0);
+    let max_h = (mon.height - 96.0).max(500.0);
+    let width = (mon.width * 0.86).clamp(760.0, 1320.0).min(max_w);
+    let height = (mon.height * 0.82).clamp(500.0, 860.0).min(max_h);
+    Size::new(width.round(), height.round())
+}
+
 fn wheel_zoom_delta(delta: mouse::ScrollDelta) -> f32 {
     match delta {
         mouse::ScrollDelta::Lines { y, .. } => y * 16.0,
@@ -4179,8 +4206,19 @@ fn wheel_zoom_delta(delta: mouse::ScrollDelta) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::wheel_zoom_delta;
+    use super::{fit_window_size_to_monitor, wheel_zoom_delta};
+    use iced::Size;
     use iced::mouse::ScrollDelta;
+
+    #[test]
+    fn fits_window_size_to_common_monitors() {
+        let hd = fit_window_size_to_monitor(Size::new(1366.0, 768.0));
+        assert!(hd.width <= 1342.0 && hd.width >= 1100.0);
+        assert!(hd.height <= 672.0 && hd.height >= 500.0);
+
+        let fhd = fit_window_size_to_monitor(Size::new(1920.0, 1080.0));
+        assert_eq!(fhd, Size::new(1320.0, 860.0));
+    }
 
     #[test]
     fn wheel_zoom_delta_maps_lines_and_pixels() {
