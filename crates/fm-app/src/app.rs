@@ -335,6 +335,8 @@ pub enum Message {
     DiskCacheReady(Option<Arc<DiskThumbnailCache>>),
     OpenTerminal,
     TerminalOpened(Result<(), FsError>),
+    OpenAsRoot(PathBuf),
+    OpenAsRootFinished(Result<(), FsError>),
     ToggleBreadcrumbMenu(PathBuf),
     CloseBreadcrumbMenu,
     BreadcrumbMenuLoaded {
@@ -542,6 +544,7 @@ pub struct App {
     pub drives: Vec<DriveInfo>,
     pub home_subdirs: Vec<PathBuf>,
     pub sidebar_home_expanded: bool,
+    pub is_elevated: bool,
     pub active_sidebar: Option<SidebarTarget>,
     pub path_editing: bool,
     pub path_draft: String,
@@ -573,10 +576,11 @@ impl App {
             config.language = Language::detect_system();
         }
 
-        let tab1_path = places
-            .documents
-            .clone()
-            .filter(|p| p.exists())
+        let cli_initial = std::env::args_os()
+            .nth(1)
+            .and_then(|arg| resolve_cli_initial_dir(&arg));
+        let tab1_path = cli_initial
+            .or_else(|| places.documents.clone().filter(|p| p.exists()))
             .unwrap_or_else(|| places.home.clone());
         let tab2_path = std::env::current_dir()
             .ok()
@@ -663,6 +667,7 @@ impl App {
             drives: Vec::new(),
             home_subdirs: Vec::new(),
             sidebar_home_expanded: false,
+            is_elevated: fm_fs::is_elevated_session(),
             active_sidebar: Some(SidebarTarget::Documents),
             path_editing: false,
             path_draft: String::new(),
@@ -1716,6 +1721,16 @@ impl App {
                 )
             }
             Message::TerminalOpened(res) => {
+                if let Err(err) = res {
+                    self.status_notice = Some(err.to_string());
+                }
+                Task::none()
+            }
+            Message::OpenAsRoot(path) => {
+                self.context_menu = None;
+                Task::perform(fm_fs::open_as_root(path), Message::OpenAsRootFinished)
+            }
+            Message::OpenAsRootFinished(res) => {
                 if let Err(err) = res {
                     self.status_notice = Some(err.to_string());
                 }
@@ -3880,6 +3895,29 @@ impl App {
         key: keyboard::Key,
         modifiers: keyboard::Modifiers,
     ) -> Task<Message> {
+        let is_ctrl_q = matches!(
+            key.as_ref(),
+            keyboard::Key::Character(c) if c.eq_ignore_ascii_case("q") && modifiers.control()
+        );
+        if is_ctrl_q {
+            if self.properties_windows.contains_key(&window_id) {
+                return self.update(Message::ClosePropertiesWindow(window_id));
+            }
+            if self.prefs_open {
+                return self.update(Message::ClosePreferences);
+            }
+            if self.deep_search_open {
+                return self.update(Message::CloseDeepSearch);
+            }
+            if self.active_dialog.is_some() {
+                return self.update(Message::CloseDialog);
+            }
+            if self.quicklook_open {
+                return self.update(Message::CloseQuickLook);
+            }
+            return self.update(Message::WindowClose);
+        }
+
         if self.properties_windows.contains_key(&window_id) {
             if matches!(key.as_ref(), keyboard::Key::Named(Named::Escape)) {
                 return self.update(Message::ClosePropertiesWindow(window_id));
@@ -4476,11 +4514,67 @@ fn wheel_zoom_delta(delta: mouse::ScrollDelta) -> f32 {
     }
 }
 
+fn resolve_cli_initial_dir(arg: &std::ffi::OsStr) -> Option<PathBuf> {
+    let raw = arg.to_string_lossy();
+    let candidate = if let Some(rest) = raw.strip_prefix("file://") {
+        let decoded = percent_decode_uri_path(rest);
+        #[cfg(target_os = "windows")]
+        let normalized = decoded.strip_prefix('/').unwrap_or(&decoded).to_owned();
+        #[cfg(not(target_os = "windows"))]
+        let normalized = decoded;
+        PathBuf::from(normalized)
+    } else {
+        PathBuf::from(arg)
+    };
+    if candidate.is_dir() {
+        Some(candidate)
+    } else if candidate.exists() {
+        candidate.parent().filter(|p| p.is_dir()).map(PathBuf::from)
+    } else {
+        None
+    }
+}
+
+fn percent_decode_uri_path(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(hex_str) = std::str::from_utf8(&bytes[i + 1..i + 3])
+            && let Ok(val) = u8::from_str_radix(hex_str, 16)
+        {
+            out.push(val);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{fit_window_size_to_monitor, wheel_zoom_delta};
+    use super::{
+        fit_window_size_to_monitor, percent_decode_uri_path, resolve_cli_initial_dir,
+        wheel_zoom_delta,
+    };
     use iced::Size;
     use iced::mouse::ScrollDelta;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn resolves_cli_directory_and_file_uri() {
+        let tmp = std::env::temp_dir();
+        assert_eq!(resolve_cli_initial_dir(tmp.as_os_str()), Some(tmp.clone()));
+        assert_eq!(
+            percent_decode_uri_path("/tmp/My%20Folder"),
+            "/tmp/My Folder"
+        );
+        assert!(resolve_cli_initial_dir(OsStr::new("/nonexistent_vagnarok_dir_xyz")).is_none());
+    }
 
     #[test]
     fn fits_window_size_to_common_monitors() {

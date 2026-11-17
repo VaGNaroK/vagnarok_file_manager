@@ -258,3 +258,5 @@ unmount-drive = Desmontar
 unmounted-label = Desmontado
 refresh-drives = Atualizar unidades
 tip-expand-home = Expandir ou recolher pastas de Início
+open-as-root = Abrir como root
+root-mode-badge = Modo Root (Privilégios elevados)

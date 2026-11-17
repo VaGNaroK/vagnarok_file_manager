@@ -17,7 +17,7 @@ use lucide_icons::iced::{
     icon_arrow_up_from_line, icon_check, icon_check_square, icon_clipboard_copy,
     icon_clipboard_paste, icon_copy, icon_external_link, icon_eye, icon_file_plus, icon_file_text,
     icon_filter, icon_folder, icon_folder_plus, icon_hard_drive, icon_info, icon_lock, icon_pencil,
-    icon_plug, icon_rotate_ccw, icon_scissors, icon_settings, icon_shield_check,
+    icon_plug, icon_rotate_ccw, icon_scissors, icon_settings, icon_shield_alert, icon_shield_check,
     icon_sliders_horizontal, icon_star_off, icon_terminal, icon_trash_2, icon_x,
 };
 
@@ -2171,6 +2171,20 @@ pub fn context_menu_overlay<'a>(
                     Message::OpenInNewTab(path.clone()),
                     palette,
                 ));
+                if !fm_core::is_virtual_trash_path(path)
+                    && fm_fs::archive::split_archive_path(path).is_none()
+                {
+                    items = items.push(ctx_item(
+                        icon_shield_alert()
+                            .size(14)
+                            .color(palette.status_warning)
+                            .into(),
+                        strings.open_as_root,
+                        palette.text_primary,
+                        Message::OpenAsRoot(path.clone()),
+                        palette,
+                    ));
+                }
             } else {
                 items = items.push(ctx_item(
                     icon_eye().size(14).color(palette.text_secondary).into(),
@@ -2280,7 +2294,20 @@ pub fn context_menu_overlay<'a>(
                     palette.text_primary,
                     Message::OpenInNewTab(path.clone()),
                     palette,
-                ))
+                ));
+            if !fm_core::is_virtual_trash_path(path) {
+                items = items.push(ctx_item(
+                    icon_shield_alert()
+                        .size(14)
+                        .color(palette.status_warning)
+                        .into(),
+                    strings.open_as_root,
+                    palette.text_primary,
+                    Message::OpenAsRoot(path.clone()),
+                    palette,
+                ));
+            }
+            items = items
                 .push(ctx_item(
                     icon_clipboard_copy()
                         .size(14)
@@ -2332,6 +2359,16 @@ pub fn context_menu_overlay<'a>(
                         strings.open_in_new_tab,
                         palette.text_primary,
                         Message::OpenInNewTab(mount_path.clone()),
+                        palette,
+                    ))
+                    .push(ctx_item(
+                        icon_shield_alert()
+                            .size(14)
+                            .color(palette.status_warning)
+                            .into(),
+                        strings.open_as_root,
+                        palette.text_primary,
+                        Message::OpenAsRoot(mount_path.clone()),
                         palette,
                     ))
                     .push(ctx_item(
@@ -2548,6 +2585,20 @@ pub fn context_menu_overlay<'a>(
                 palette,
             ));
             if let Some(tab) = app.current_tab() {
+                if !fm_core::is_virtual_trash_path(&tab.current_path)
+                    && fm_fs::archive::split_archive_path(&tab.current_path).is_none()
+                {
+                    items = items.push(ctx_item(
+                        icon_shield_alert()
+                            .size(14)
+                            .color(palette.status_warning)
+                            .into(),
+                        strings.open_as_root,
+                        palette.text_primary,
+                        Message::OpenAsRoot(tab.current_path.clone()),
+                        palette,
+                    ));
+                }
                 items = items.push(ctx_divider(palette)).push(ctx_item(
                     icon_info().size(14).color(palette.accent_primary).into(),
                     strings.properties,
@@ -2561,12 +2612,18 @@ pub fn context_menu_overlay<'a>(
 
     let est_height = match &menu.kind {
         ContextMenuKind::NewMenu => 84.0,
-        ContextMenuKind::Entry { .. } => 340.0,
+        ContextMenuKind::Entry { is_dir, .. } => {
+            if *is_dir {
+                376.0
+            } else {
+                340.0
+            }
+        }
         ContextMenuKind::SidebarPlace { is_favorite, .. } => {
             if *is_favorite {
-                196.0
+                232.0
             } else {
-                156.0
+                192.0
             }
         }
         ContextMenuKind::Drive {
@@ -2577,12 +2634,12 @@ pub fn context_menu_overlay<'a>(
             if !*is_mounted {
                 48.0
             } else if *can_unmount {
-                196.0
+                232.0
             } else {
-                156.0
+                192.0
             }
         }
-        ContextMenuKind::Background => 284.0,
+        ContextMenuKind::Background => 320.0,
         ContextMenuKind::FilterMenu => 320.0,
         ContextMenuKind::LanguageMenu => 256.0,
         ContextMenuKind::PreferencesMenu => 84.0,

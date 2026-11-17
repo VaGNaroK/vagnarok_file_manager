@@ -660,6 +660,76 @@ pub fn unmount_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> R
     })
 }
 
+pub fn is_elevated_session() -> bool {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .is_some_and(|raw| parse_euid_root_from_proc_status(&raw))
+}
+
+fn parse_euid_root_from_proc_status(raw: &str) -> bool {
+    for line in raw.lines() {
+        if let Some(rest) = line.strip_prefix("Uid:") {
+            let mut cols = rest.split_whitespace();
+            let _ruid = cols.next();
+            if let Some(euid) = cols.next() {
+                return euid == "0";
+            }
+        }
+    }
+    false
+}
+
+/// Abre nova janela do gerenciador de arquivos com privilégios root via Polkit (`pkexec`), preservando sessão gráfica.
+pub fn open_as_root(path: &Path) -> Result<(), FsError> {
+    let target_dir = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    let exe = std::env::current_exe().map_err(|e| map_io_err(target_dir, e))?;
+
+    if is_elevated_session() {
+        Command::new(&exe)
+            .arg(target_dir)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| map_io_err(target_dir, e))?;
+        return Ok(());
+    }
+
+    let mut cmd = host_command("pkexec");
+    cmd.arg("/usr/bin/env");
+
+    if let Some(display) = std::env::var_os("DISPLAY") {
+        cmd.arg(format!("DISPLAY={}", display.to_string_lossy()));
+        if let Some(xauth) = std::env::var_os("XAUTHORITY") {
+            cmd.arg(format!("XAUTHORITY={}", xauth.to_string_lossy()));
+        } else if let Some(home) = std::env::var_os("HOME") {
+            let default_xauth = PathBuf::from(home).join(".Xauthority");
+            if default_xauth.exists() {
+                cmd.arg(format!("XAUTHORITY={}", default_xauth.to_string_lossy()));
+            }
+        }
+    } else if let Some(wayland) = std::env::var_os("WAYLAND_DISPLAY") {
+        cmd.arg(format!("WAYLAND_DISPLAY={}", wayland.to_string_lossy()));
+        if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+            cmd.arg(format!("XDG_RUNTIME_DIR={}", runtime_dir.to_string_lossy()));
+        }
+    }
+
+    for var in ["LANG", "LC_ALL"] {
+        if let Some(val) = std::env::var_os(var) {
+            cmd.arg(format!("{var}={}", val.to_string_lossy()));
+        }
+    }
+
+    cmd.arg(&exe).arg(target_dir);
+    cmd.spawn().map(|_| ()).map_err(|e| FsError::Io {
+        path: target_dir.to_path_buf(),
+        message: format!("falha ao iniciar pkexec: {e}"),
+    })
+}
+
 fn find_mount_point_for_device(device_path: &Path) -> Option<PathBuf> {
     let target_canon = std::fs::canonicalize(device_path).ok();
     for dev in read_lsblk_devices() {
@@ -913,5 +983,13 @@ mod tests {
         assert!(parsed.mountpoint.is_none());
         assert!(parsed.hotplug);
         assert_eq!(parsed.dev_type, "part");
+    }
+
+    #[test]
+    fn detects_root_euid_from_proc_status() {
+        let root_status = "Name:\tvagnarok\nUid:\t1000\t0\t0\t0\n";
+        let user_status = "Name:\tvagnarok\nUid:\t1000\t1000\t1000\t1000\n";
+        assert!(parse_euid_root_from_proc_status(root_status));
+        assert!(!parse_euid_root_from_proc_status(user_status));
     }
 }

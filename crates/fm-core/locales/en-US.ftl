@@ -258,3 +258,5 @@ unmount-drive = Unmount
 unmounted-label = Unmounted
 refresh-drives = Refresh drives
 tip-expand-home = Expand or collapse Home folders
+open-as-root = Open as root
+root-mode-badge = Root Mode (Elevated privileges)

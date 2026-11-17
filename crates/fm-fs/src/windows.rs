@@ -462,6 +462,38 @@ pub fn unmount_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> R
     }
 }
 
+pub fn is_elevated_session() -> bool {
+    false
+}
+
+/// Abre nova janela elevada via UAC (`ShellExecuteExW` com verbo `runas`).
+pub fn open_as_root(path: &Path) -> Result<(), FsError> {
+    let target_dir = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    let exe = std::env::current_exe().map_err(|e| map_io_err(target_dir, e))?;
+    let verb_w = to_str_wide("runas");
+    let exe_w = to_long_wide(&exe);
+    let param_str = format!("\"{}\"", target_dir.to_string_lossy());
+    let params_w = to_str_wide(&param_str);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_FLAG_NO_UI,
+        hwnd: HWND::default(),
+        lpVerb: PCWSTR(verb_w.as_ptr()),
+        lpFile: PCWSTR(exe_w.as_ptr()),
+        lpParameters: PCWSTR(params_w.as_ptr()),
+        lpDirectory: PCWSTR::null(),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+
+    // SAFETY: `info`, `verb_w`, `exe_w` e `params_w` permanecem vivos na stack durante `ShellExecuteExW`.
+    unsafe { ShellExecuteExW(&raw mut info) }.map_err(|e| map_io_err(target_dir, win_err_to_io(e)))
+}
+
 fn query_volume_info(root: &Path) -> (Option<CompactString>, Option<CompactString>) {
     let wide = to_wide(root);
     let mut vol_name_buf = [0u16; 260];

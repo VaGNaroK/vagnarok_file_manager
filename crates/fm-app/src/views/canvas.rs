@@ -20,7 +20,8 @@ use iced::{Color, ContentFit, Element, Event, Length, Padding, Rectangle, Size, 
 use lucide_icons::iced::{
     icon_arrow_up_down, icon_chevron_right, icon_clipboard_paste, icon_copy, icon_eye,
     icon_eye_off, icon_filter, icon_folder_tree, icon_info, icon_minus, icon_pencil, icon_plus,
-    icon_rotate_ccw, icon_scissors, icon_star, icon_terminal, icon_trash_2, icon_x,
+    icon_rotate_ccw, icon_scissors, icon_shield_alert, icon_star, icon_terminal, icon_trash_2,
+    icon_x,
 };
 
 use crate::app::{
@@ -178,6 +179,32 @@ fn action_bar<'a>(
     ]
     .spacing(10)
     .align_y(Center);
+
+    if app.is_elevated {
+        left_info = left_info.push(
+            container(
+                row![
+                    icon_shield_alert().size(12).color(palette.status_error),
+                    text(strings.root_mode_badge)
+                        .size(11)
+                        .font(FONT_UI_SEMIBOLD)
+                        .color(palette.status_error),
+                ]
+                .spacing(6)
+                .align_y(Center),
+            )
+            .padding([3, 10])
+            .style(styles::badge_container(
+                Color {
+                    a: 0.12,
+                    ..palette.status_error
+                },
+                palette.status_error,
+                palette.status_error,
+                9999.0,
+            )),
+        );
+    }
 
     if let Some(branch) = &tab.telemetry.git_branch {
         left_info = left_info.push(

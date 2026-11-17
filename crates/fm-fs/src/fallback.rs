@@ -73,3 +73,14 @@ pub fn unmount_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> R
         message: "desmontagem de discos não suportada nesta plataforma".to_owned(),
     })
 }
+
+pub fn is_elevated_session() -> bool {
+    false
+}
+
+pub fn open_as_root(path: &Path) -> Result<(), FsError> {
+    Err(FsError::Io {
+        path: path.to_path_buf(),
+        message: "elevação de privilégios não suportada nesta plataforma".to_owned(),
+    })
+}

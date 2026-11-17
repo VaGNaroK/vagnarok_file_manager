@@ -156,6 +156,22 @@ pub async fn unmount_drive(
     })?
 }
 
+/// Indica se o processo atual está executando com privilégios elevados (UID 0 / root no Linux).
+pub fn is_elevated_session() -> bool {
+    platform::is_elevated_session()
+}
+
+/// Abre uma nova instância elevada do gerenciador de arquivos apontando para `path` (`pkexec` no Linux / `runas` no Windows).
+pub async fn open_as_root(path: PathBuf) -> Result<(), FsError> {
+    let err_path = path.clone();
+    tokio::task::spawn_blocking(move || platform::open_as_root(&path))
+        .await
+        .map_err(|err| FsError::Io {
+            path: err_path,
+            message: err.to_string(),
+        })?
+}
+
 fn resolve_trash_dir(base: &Option<BaseDirs>) -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     {

@@ -258,3 +258,5 @@ unmount-drive = Aushängen
 unmounted-label = Ausgehängt
 refresh-drives = Laufwerke aktualisieren
 tip-expand-home = Ordner im Benutzerverzeichnis ein- oder ausklappen
+open-as-root = Als Root öffnen
+root-mode-badge = Root-Modus (Erhöhte Rechte)

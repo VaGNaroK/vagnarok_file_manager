@@ -236,6 +236,8 @@ pub struct Strings {
     pub unmounted_label: &'static str,
     pub refresh_drives: &'static str,
     pub tip_expand_home: &'static str,
+    pub open_as_root: &'static str,
+    pub root_mode_badge: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -634,6 +636,8 @@ impl Strings {
         let unmounted_label = resolve("unmounted-label");
         let refresh_drives = resolve("refresh-drives");
         let tip_expand_home = resolve("tip-expand-home");
+        let open_as_root = resolve("open-as-root");
+        let root_mode_badge = resolve("root-mode-badge");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -839,6 +843,8 @@ impl Strings {
             unmounted_label,
             refresh_drives,
             tip_expand_home,
+            open_as_root,
+            root_mode_badge,
         }
     }
 }
