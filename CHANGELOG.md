@@ -26,8 +26,28 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-16 | **Alpha 2 (`v0.1.0-alpha.2`), Empacotamento & CI/CD** | Dropdown de idiomas, pipeline `.deb`/Flatpak/Inno Setup + ZIP portátil, `winresource`, correções de testes no Windows e `README.md` | 44 passando (Linux) |
 | 2026-11-16 | **Alpha 3 (`v0.1.0-alpha.3`), Polimento Windows & Lixeira** | Lixeira virtual no Windows (`trash://`) com restauração, remoção do CMD em release, correção de controles duplicados e limpeza do mockup `code.html` | 45 unitários |
 | 2026-11-16 | **Alpha 4 (`v0.1.0-alpha.4`), Paridade de Atalhos & Janela no Windows** | Zoom `Ctrl + Scroll` no Windows, rastreamento de modificadores via `KeyPressed`/`KeyReleased`, alternância ao vivo de decorações da janela e `rustfmt` | 45 unitários |
+| 2026-11-16 | **Alpha 5 (`v0.1.0-alpha.5`), Barra Lateral Estilo Nemo, Discos & Propriedades** | Cards compactos no Grid, `Propriedades` no fundo do diretório (conteúdo + espaço livre), `PageUp`/`PageDown`, `Ctrl+Q`, tooltips localizados, barra lateral estilo Nemo redimensionável, montar/desmontar discos e `Abrir como root` no Linux | 51 unitários |
 
 ---
+
+## [0.1.0-alpha.5] — 2026-11-16
+
+### Adicionado
+- **Grid compacto e Propriedades do diretório**:
+  - Cards do Grid compactados para deixar espaço livre clicável atrás dos itens em pastas cheias.
+  - Opção **Propriedades** no menu de contexto do plano de fundo do diretório, além de exibição de **Conteúdo** (contagem recursiva e cache `redb`) e **Espaço livre** do volume.
+- **Atalhos e CLI**:
+  - `PageUp` / `PageDown` para rolagem rápida (85% da altura visível) no canvas.
+  - `Ctrl+Q` para fechar janelas modais (como Propriedades) ou encerrar o aplicativo.
+  - Suporte a caminho inicial ou URI `file://` passado por linha de comando ao abrir o aplicativo.
+- **Tooltips estilizados e localizados**:
+  - Tooltips integrados ao tema (`ObsidianFlow` / `AetherLight`) em botões de cabeçalho, barra de ferramentas do canvas e barra lateral nas 6 traduções (`pt-BR`, `en-US`, `es-ES`, `fr-FR`, `de-DE`, `it-IT`).
+- **Barra lateral estilo Nemo e gerenciamento de unidades**:
+  - Seção de Acesso Rápido com subpastas expansíveis de `Início` e pastas `Música`, `Vídeos`, `Público` e `Modelos`.
+  - Divisor vertical arrastável entre a barra lateral e o conteúdo, com persistência da largura customizada em `AppConfig` (`sidebar_width`), ajuste automático mínimo ao nome dos discos e recorte de texto (`.clip(true)`) sem sobreposição.
+  - Descoberta de partições/unidades (`lsblk` + `/proc/mounts` no Linux) e ações de montar/desmontar discos (`udisksctl`/`gio` no Linux e ejeção de mídia removível no Windows).
+- **Abrir como root (Linux)**:
+  - Opção **Abrir como root** no menu de contexto de diretórios via `pkexec` (restrita exclusivamente ao Linux via `fm_fs::supports_open_as_root()`) e selo visual quando rodando em sessão elevada.
 
 ## [0.1.0-alpha.4] — 2026-11-16
 
