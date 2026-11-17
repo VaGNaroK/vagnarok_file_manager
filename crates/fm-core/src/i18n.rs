@@ -197,6 +197,35 @@ pub struct Strings {
     pub about_stack_label: &'static str,
     pub about_copy_info: &'static str,
     pub about_info_copied: &'static str,
+    pub prop_contents_label: &'static str,
+    pub prop_free_space_label: &'static str,
+    pub tip_new_tab: &'static str,
+    pub tip_close_tab: &'static str,
+    pub tip_language: &'static str,
+    pub tip_theme: &'static str,
+    pub tip_back: &'static str,
+    pub tip_forward: &'static str,
+    pub tip_up: &'static str,
+    pub tip_home: &'static str,
+    pub tip_edit_path: &'static str,
+    pub tip_deep_search: &'static str,
+    pub tip_view_grid: &'static str,
+    pub tip_view_list: &'static str,
+    pub tip_view_columns: &'static str,
+    pub tip_new_item: &'static str,
+    pub tip_group_folders: &'static str,
+    pub tip_zoom_out: &'static str,
+    pub tip_zoom_reset: &'static str,
+    pub tip_zoom_in: &'static str,
+    pub tip_sort: &'static str,
+    pub tip_sort_dir: &'static str,
+    pub tip_filter: &'static str,
+    pub tip_hidden: &'static str,
+    pub tip_terminal: &'static str,
+    pub tip_favorite: &'static str,
+    pub tip_inspector: &'static str,
+    pub tip_preferences: &'static str,
+    pub tip_toggle_sidebar: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -244,7 +273,26 @@ impl Strings {
     pub fn format_items_count(self, count: usize) -> String {
         let mut args = FluentArgs::new();
         args.set("count", count as i64);
-        self.format_msg("items-count", Some(&args))
+        let formatted = self.format_msg("items-count", Some(&args));
+        if count >= 1000 {
+            let grouped = self.format_grouped(count as u64);
+            formatted.replacen(&count.to_string(), grouped.as_str(), 1)
+        } else {
+            formatted
+        }
+    }
+
+    /// Formata contagem de itens ocultos (`"1 oculto"` / `"2.783 ocultos"`).
+    pub fn format_hidden_items_count(self, count: u64) -> String {
+        let mut args = FluentArgs::new();
+        args.set("count", count as i64);
+        let formatted = self.format_msg("hidden-items-count", Some(&args));
+        if count >= 1000 {
+            let grouped = self.format_grouped(count);
+            formatted.replacen(&count.to_string(), grouped.as_str(), 1)
+        } else {
+            formatted
+        }
     }
 
     /// Formata contagem de pastas usando regras plurais CLDR do Fluent.
@@ -537,6 +585,35 @@ impl Strings {
         let about_stack_label = resolve("about-stack-label");
         let about_copy_info = resolve("about-copy-info");
         let about_info_copied = resolve("about-info-copied");
+        let prop_contents_label = resolve("prop-contents-label");
+        let prop_free_space_label = resolve("prop-free-space-label");
+        let tip_new_tab = resolve("tip-new-tab");
+        let tip_close_tab = resolve("tip-close-tab");
+        let tip_language = resolve("tip-language");
+        let tip_theme = resolve("tip-theme");
+        let tip_back = resolve("tip-back");
+        let tip_forward = resolve("tip-forward");
+        let tip_up = resolve("tip-up");
+        let tip_home = resolve("tip-home");
+        let tip_edit_path = resolve("tip-edit-path");
+        let tip_deep_search = resolve("tip-deep-search");
+        let tip_view_grid = resolve("tip-view-grid");
+        let tip_view_list = resolve("tip-view-list");
+        let tip_view_columns = resolve("tip-view-columns");
+        let tip_new_item = resolve("tip-new-item");
+        let tip_group_folders = resolve("tip-group-folders");
+        let tip_zoom_out = resolve("tip-zoom-out");
+        let tip_zoom_reset = resolve("tip-zoom-reset");
+        let tip_zoom_in = resolve("tip-zoom-in");
+        let tip_sort = resolve("tip-sort");
+        let tip_sort_dir = resolve("tip-sort-dir");
+        let tip_filter = resolve("tip-filter");
+        let tip_hidden = resolve("tip-hidden");
+        let tip_terminal = resolve("tip-terminal");
+        let tip_favorite = resolve("tip-favorite");
+        let tip_inspector = resolve("tip-inspector");
+        let tip_preferences = resolve("tip-preferences");
+        let tip_toggle_sidebar = resolve("tip-toggle-sidebar");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -703,6 +780,35 @@ impl Strings {
             about_stack_label,
             about_copy_info,
             about_info_copied,
+            prop_contents_label,
+            prop_free_space_label,
+            tip_new_tab,
+            tip_close_tab,
+            tip_language,
+            tip_theme,
+            tip_back,
+            tip_forward,
+            tip_up,
+            tip_home,
+            tip_edit_path,
+            tip_deep_search,
+            tip_view_grid,
+            tip_view_list,
+            tip_view_columns,
+            tip_new_item,
+            tip_group_folders,
+            tip_zoom_out,
+            tip_zoom_reset,
+            tip_zoom_in,
+            tip_sort,
+            tip_sort_dir,
+            tip_filter,
+            tip_hidden,
+            tip_terminal,
+            tip_favorite,
+            tip_inspector,
+            tip_preferences,
+            tip_toggle_sidebar,
         }
     }
 }

@@ -209,3 +209,40 @@ about-license-label = Licencia
 about-stack-label = Motor / Stack
 about-copy-info = Copiar información
 about-info-copied = Información copiada
+
+# Propiedades de carpeta (contenido y espacio en disco)
+prop-contents-label = Contenido
+prop-free-space-label = Espacio libre
+hidden-items-count = { $count ->
+    [one] 1 oculto
+   *[other] { $count } ocultos
+}
+
+# Sugerencias (Tooltips)
+tip-new-tab = Abrir nueva pestaña (Ctrl+T)
+tip-close-tab = Cerrar pestaña (Ctrl+W)
+tip-language = Cambiar idioma de la interfaz
+tip-theme = Alternar tema claro/oscuro
+tip-back = Ir atrás (Alt+←)
+tip-forward = Ir adelante (Alt+→)
+tip-up = Subir a la carpeta superior (Alt+↑)
+tip-home = Ir a la carpeta de Inicio
+tip-edit-path = Editar ruta directamente (Ctrl+L)
+tip-deep-search = Buscar recursivamente en subcarpetas (Ctrl+Shift+F)
+tip-view-grid = Vista en Cuadrícula
+tip-view-list = Vista en Tabla de Detalles
+tip-view-columns = Vista en Columnas (Miller)
+tip-new-item = Crear nueva carpeta o archivo
+tip-group-folders = Agrupar carpetas antes que archivos
+tip-zoom-out = Reducir tamaño de tarjetas (Ctrl+-)
+tip-zoom-reset = Restablecer tamaño predeterminado (Ctrl+0)
+tip-zoom-in = Aumentar tamaño de tarjetas (Ctrl++)
+tip-sort = Cambiar criterio de orden (Nombre, Tamaño, Tipo, Modificado)
+tip-sort-dir = Cambiar orden ascendente o descendente
+tip-filter = Filtrar elementos por carpeta o extensión
+tip-hidden = Mostrar u ocultar archivos ocultos (Ctrl+H)
+tip-terminal = Abrir terminal en esta carpeta (Ctrl+Shift+T)
+tip-favorite = Fijar o quitar carpeta de favoritos
+tip-inspector = Mostrar u ocultar panel Inspector (Alt+I)
+tip-preferences = Abrir Preferencias (clic derecho para menú rápido)
+tip-toggle-sidebar = Contraer o expandir barra lateral (Ctrl+B)

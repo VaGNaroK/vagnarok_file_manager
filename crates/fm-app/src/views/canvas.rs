@@ -14,7 +14,7 @@ use iced::keyboard;
 use iced::mouse;
 use iced::widget::{
     Space, button, column, container, image, mouse_area, responsive, row, scrollable, space, stack,
-    text,
+    text, tooltip,
 };
 use iced::{Color, ContentFit, Element, Event, Length, Padding, Rectangle, Size, Vector};
 use lucide_icons::iced::{
@@ -32,7 +32,7 @@ use crate::views::virtualized::{
     build_tab_grid_bands, clamp_grid_card_width, compute_band_window_with_row_height,
     compute_fixed_window, grid_card_height, grid_columns_for_width,
 };
-use crate::views::{entry_icon, sanitize_single_line};
+use crate::views::{entry_icon, sanitize_single_line, with_tooltip};
 
 pub fn view<'a>(
     app: &'a App,
@@ -220,17 +220,22 @@ fn action_bar<'a>(
         SortDirection::Descending => "↓",
     };
 
-    let new_btn = button(
-        row![
-            icon_plus().size(14),
-            text(strings.new_item).size(12).font(FONT_UI_SEMIBOLD)
-        ]
-        .spacing(4)
-        .align_y(Center),
-    )
-    .padding([6, 14])
-    .style(styles::pill_primary_button(palette))
-    .on_press(Message::OpenNewMenu);
+    let new_btn = with_tooltip(
+        button(
+            row![
+                icon_plus().size(14),
+                text(strings.new_item).size(12).font(FONT_UI_SEMIBOLD)
+            ]
+            .spacing(4)
+            .align_y(Center),
+        )
+        .padding([6, 14])
+        .style(styles::pill_primary_button(palette))
+        .on_press(Message::OpenNewMenu),
+        strings.tip_new_item,
+        tooltip::Position::Bottom,
+        palette,
+    );
 
     let is_in_trash = app
         .places
@@ -275,32 +280,44 @@ fn action_bar<'a>(
     }
     if sel_count > 0 {
         ops_row = ops_row
-            .push(
+            .push(with_tooltip(
                 button(icon_copy().size(14).color(palette.text_primary))
                     .padding([6, 8])
                     .style(styles::pill_secondary_button(palette))
                     .on_press(Message::CopySelected),
-            )
-            .push(
+                strings.copy,
+                tooltip::Position::Bottom,
+                palette,
+            ))
+            .push(with_tooltip(
                 button(icon_scissors().size(14).color(palette.text_primary))
                     .padding([6, 8])
                     .style(styles::pill_secondary_button(palette))
                     .on_press(Message::CutSelected),
-            );
+                strings.cut,
+                tooltip::Position::Bottom,
+                palette,
+            ));
         if sel_count == 1 {
-            ops_row = ops_row.push(
+            ops_row = ops_row.push(with_tooltip(
                 button(icon_pencil().size(14).color(palette.text_primary))
                     .padding([6, 8])
                     .style(styles::pill_secondary_button(palette))
                     .on_press(Message::OpenRenameDialog),
-            );
+                strings.rename,
+                tooltip::Position::Bottom,
+                palette,
+            ));
         }
-        ops_row = ops_row.push(
+        ops_row = ops_row.push(with_tooltip(
             button(icon_trash_2().size(14).color(palette.status_error))
                 .padding([6, 8])
                 .style(styles::pill_secondary_button(palette))
                 .on_press(Message::RequestDelete(false)),
-        );
+            strings.move_to_trash,
+            tooltip::Position::Bottom,
+            palette,
+        ));
     }
 
     if let Some(clip) = &app.clipboard {
@@ -325,31 +342,46 @@ fn action_bar<'a>(
     }
 
     let is_fav = app.config.favorites.contains(&tab.current_path);
-    let fav_btn = button(icon_star().size(15).color(if is_fav {
-        palette.accent_tertiary
-    } else {
-        palette.text_secondary
-    }))
-    .padding([6, 8])
-    .style(styles::ghost_button(palette, 9999.0))
-    .on_press(Message::ToggleFavoriteActive);
+    let fav_btn = with_tooltip(
+        button(icon_star().size(15).color(if is_fav {
+            palette.accent_tertiary
+        } else {
+            palette.text_secondary
+        }))
+        .padding([6, 8])
+        .style(styles::ghost_button(palette, 9999.0))
+        .on_press(Message::ToggleFavoriteActive),
+        strings.tip_favorite,
+        tooltip::Position::Bottom,
+        palette,
+    );
 
-    let sort_btn = button(
-        row![
-            icon_arrow_up_down().size(13),
-            text(format!("{}: {sort_name}", strings.sort)).size(12),
-        ]
-        .spacing(6)
-        .align_y(Center),
-    )
-    .padding([6, 12])
-    .style(styles::pill_secondary_button(palette))
-    .on_press(Message::CycleSortField);
-
-    let sort_dir_btn = button(text(dir_arrow).size(12).font(FONT_MONO_BOLD))
-        .padding([6, 10])
+    let sort_btn = with_tooltip(
+        button(
+            row![
+                icon_arrow_up_down().size(13),
+                text(format!("{}: {sort_name}", strings.sort)).size(12),
+            ]
+            .spacing(6)
+            .align_y(Center),
+        )
+        .padding([6, 12])
         .style(styles::pill_secondary_button(palette))
-        .on_press(Message::ToggleSortDirection);
+        .on_press(Message::CycleSortField),
+        strings.tip_sort,
+        tooltip::Position::Bottom,
+        palette,
+    );
+
+    let sort_dir_btn = with_tooltip(
+        button(text(dir_arrow).size(12).font(FONT_MONO_BOLD))
+            .padding([6, 10])
+            .style(styles::pill_secondary_button(palette))
+            .on_press(Message::ToggleSortDirection),
+        strings.tip_sort_dir,
+        tooltip::Position::Bottom,
+        palette,
+    );
 
     let filter_label = match tab.extension_filter.as_deref() {
         None => strings.filter_ext.to_owned(),
@@ -359,94 +391,134 @@ fn action_bar<'a>(
         Some(ext) => format!("{}: .{ext}", strings.filter_ext),
     };
     let filter_active = tab.extension_filter.is_some();
-    let filter_btn = button(
-        row![
-            icon_filter().size(13).color(if filter_active {
-                palette.accent_primary
-            } else {
-                palette.text_secondary
-            }),
-            text(filter_label).size(12).color(if filter_active {
-                palette.accent_primary
-            } else {
-                palette.text_primary
-            }),
-        ]
-        .spacing(5)
-        .align_y(Center),
-    )
-    .padding([6, 12])
-    .style(styles::pill_secondary_button(palette))
-    .on_press(Message::OpenFilterMenu);
+    let filter_btn = with_tooltip(
+        button(
+            row![
+                icon_filter().size(13).color(if filter_active {
+                    palette.accent_primary
+                } else {
+                    palette.text_secondary
+                }),
+                text(filter_label).size(12).color(if filter_active {
+                    palette.accent_primary
+                } else {
+                    palette.text_primary
+                }),
+            ]
+            .spacing(5)
+            .align_y(Center),
+        )
+        .padding([6, 12])
+        .style(styles::pill_secondary_button(palette))
+        .on_press(Message::OpenFilterMenu),
+        strings.tip_filter,
+        tooltip::Position::Bottom,
+        palette,
+    );
 
     let hidden_icon = if tab.show_hidden {
         icon_eye().size(13)
     } else {
         icon_eye_off().size(13)
     };
-    let hidden_btn = button(
-        row![hidden_icon, text(strings.hidden).size(12)]
-            .spacing(6)
+    let hidden_btn = with_tooltip(
+        button(
+            row![hidden_icon, text(strings.hidden).size(12)]
+                .spacing(6)
+                .align_y(Center),
+        )
+        .padding([6, 12])
+        .style(styles::pill_secondary_button(palette))
+        .on_press(Message::ToggleHidden),
+        strings.tip_hidden,
+        tooltip::Position::Bottom,
+        palette,
+    );
+
+    let terminal_btn = with_tooltip(
+        button(
+            row![
+                icon_terminal().size(13),
+                text(strings.open_terminal).size(12),
+            ]
+            .spacing(5)
             .align_y(Center),
-    )
-    .padding([6, 12])
-    .style(styles::pill_secondary_button(palette))
-    .on_press(Message::ToggleHidden);
+        )
+        .padding([6, 10])
+        .style(styles::pill_secondary_button(palette))
+        .on_press(Message::OpenTerminal),
+        strings.tip_terminal,
+        tooltip::Position::Bottom,
+        palette,
+    );
 
-    let terminal_btn = button(
-        row![
-            icon_terminal().size(13),
-            text(strings.open_terminal).size(12),
-        ]
-        .spacing(5)
-        .align_y(Center),
-    )
-    .padding([6, 10])
-    .style(styles::pill_secondary_button(palette))
-    .on_press(Message::OpenTerminal);
-
-    let info_btn = button(icon_info().size(16).color(if app.config.show_inspector {
-        palette.accent_primary
-    } else {
-        palette.text_secondary
-    }))
-    .padding([6, 8])
-    .style(styles::ghost_button(palette, 9999.0))
-    .on_press(Message::ToggleInspector);
+    let info_btn = with_tooltip(
+        button(icon_info().size(16).color(if app.config.show_inspector {
+            palette.accent_primary
+        } else {
+            palette.text_secondary
+        }))
+        .padding([6, 8])
+        .style(styles::ghost_button(palette, 9999.0))
+        .on_press(Message::ToggleInspector),
+        strings.tip_inspector,
+        tooltip::Position::Bottom,
+        palette,
+    );
 
     let mut toolbar_right = row![new_btn, ops_row].spacing(8).align_y(Center);
 
     if tab.view_mode == ViewMode::Grid {
         let card_px = clamp_grid_card_width(app.config.grid_card_width).round() as u32;
         let group_active = app.config.grid_group_folders;
-        let group_btn = button(icon_folder_tree().size(13).color(if group_active {
-            palette.accent_primary
-        } else {
-            palette.text_secondary
-        }))
-        .padding([6, 8])
-        .style(styles::pill_secondary_button(palette))
-        .on_press(Message::ToggleGridGroupFolders);
+        let group_btn = with_tooltip(
+            button(icon_folder_tree().size(13).color(if group_active {
+                palette.accent_primary
+            } else {
+                palette.text_secondary
+            }))
+            .padding([6, 8])
+            .style(styles::pill_secondary_button(palette))
+            .on_press(Message::ToggleGridGroupFolders),
+            strings.tip_group_folders,
+            tooltip::Position::Bottom,
+            palette,
+        );
 
         let size_controls = container(
             row![
-                button(icon_minus().size(12).color(palette.text_primary))
-                    .padding([4, 6])
+                with_tooltip(
+                    button(icon_minus().size(12).color(palette.text_primary))
+                        .padding([4, 6])
+                        .style(styles::ghost_button(palette, 6.0))
+                        .on_press(Message::StepGridCardWidth(-16.0)),
+                    strings.tip_zoom_out,
+                    tooltip::Position::Bottom,
+                    palette,
+                ),
+                with_tooltip(
+                    button(
+                        text(format!("{card_px}px"))
+                            .size(11)
+                            .font(FONT_MONO)
+                            .color(palette.text_secondary),
+                    )
+                    .padding([3, 6])
                     .style(styles::ghost_button(palette, 6.0))
-                    .on_press(Message::StepGridCardWidth(-16.0)),
-                button(
-                    text(format!("{card_px}px"))
-                        .size(11)
-                        .font(FONT_MONO)
-                        .color(palette.text_secondary),
-                )
-                .padding([3, 6])
-                .style(styles::ghost_button(palette, 6.0))
-                .on_press(Message::ResetGridCardWidth),
-                button(icon_plus().size(12).color(palette.text_primary))
-                    .padding([4, 6])
-                    .style(styles::ghost_button(palette, 6.0))
-                    .on_press(Message::StepGridCardWidth(16.0)),
+                    .on_press(Message::ResetGridCardWidth),
+                    strings.tip_zoom_reset,
+                    tooltip::Position::Bottom,
+                    palette,
+                ),
+                with_tooltip(
+                    button(icon_plus().size(12).color(palette.text_primary))
+                        .padding([4, 6])
+                        .style(styles::ghost_button(palette, 6.0))
+                        .on_press(Message::StepGridCardWidth(16.0)),
+                    strings.tip_zoom_in,
+                    tooltip::Position::Bottom,
+                    palette,
+                ),
             ]
             .spacing(2)
             .align_y(Center),
@@ -681,8 +753,9 @@ fn grid_view<'a>(
     let viewport_h = app.canvas_viewport_height;
     let card_width = clamp_grid_card_width(app.config.grid_card_width);
     let card_height = grid_card_height(card_width);
-    let preview_box = ((card_width - 32.0) * 0.58).round().clamp(44.0, 128.0);
-    let label_chars = ((card_width - 16.0) / 7.2).round().clamp(12.0, 34.0) as usize;
+    let box_width = (card_width - 14.0).max(88.0);
+    let preview_box = ((box_width - 22.0) * 0.50).round().clamp(40.0, 108.0);
+    let label_chars = ((box_width - 14.0) / 7.2).round().clamp(11.0, 32.0) as usize;
 
     responsive(move |size| {
         let fit_cols = grid_columns_for_width(size.width, card_width);
@@ -761,6 +834,8 @@ fn grid_view<'a>(
         if win.bottom_spacer > 0.0 {
             list = list.push(Space::new().height(win.bottom_spacer));
         }
+        // Garante área vazia clicável ao final do grid mesmo quando a pasta preenche toda a largura.
+        list = list.push(Space::new().height(48.0));
 
         let centered_canvas = container(list).width(Length::Fill).align_x(Center);
 
@@ -821,7 +896,7 @@ fn grid_item_card<'a>(
             .content_fit(ContentFit::Contain)
             .into()
     } else {
-        let icon_px = (preview_box * 0.56).clamp(26.0, 68.0);
+        let icon_px = (preview_box * 0.68).clamp(28.0, 72.0);
         let (icon_widget, _color) = entry_icon(entry, palette, icon_px);
         let mut icon_box_col = column![icon_widget].align_x(Center);
         if let Some(badge) = &entry.mime_badge {
@@ -896,6 +971,8 @@ fn grid_item_card<'a>(
         .into()
     };
 
+    let box_width = (card_width - 14.0).max(88.0);
+
     let card_content = column![
         container(preview_widget)
             .width(preview_box)
@@ -909,20 +986,20 @@ fn grid_item_card<'a>(
             palette.text_secondary
         }),
     ]
-    .spacing(4)
+    .spacing(3)
     .align_x(Center)
     .width(Length::Fill);
 
     let card_btn = button(card_content)
-        .width(Length::Fixed(card_width))
+        .width(Length::Fixed(box_width))
         .height(Length::Fixed(card_height))
-        .padding([8, 6])
-        .style(styles::entry_card_button(palette, selected, 14.0))
+        .padding([5, 6])
+        .style(styles::entry_card_button(palette, selected, 10.0))
         .on_press(Message::SelectEntry { index, modifiers });
 
     let card_area = mouse_area(card_btn).on_right_press(Message::OpenEntryContextMenu(index));
 
-    let grip_visual = container(Space::new().width(3).height(18)).style(move |_| {
+    let grip_visual = container(Space::new().width(3).height(16)).style(move |_| {
         styles::panel_surface(
             if selected {
                 palette.accent_border
@@ -937,27 +1014,34 @@ fn grid_item_card<'a>(
         mouse_area(
             container(grip_visual)
                 .width(10)
-                .height(28)
+                .height(24)
                 .align_x(Center)
                 .align_y(Center),
         )
         .interaction(mouse::Interaction::ResizingHorizontally)
         .on_press(Message::StartGridResize),
     )
-    .width(Length::Fixed(card_width))
+    .width(Length::Fixed(box_width))
     .height(Length::Fixed(card_height))
     .padding(Padding {
         top: 0.0,
         right: 2.0,
-        bottom: 6.0,
+        bottom: 4.0,
         left: 0.0,
     })
     .align_x(Alignment::End)
     .align_y(Alignment::End);
 
-    stack![card_area, resize_grip]
+    let compact_card = stack![card_area, resize_grip]
+        .width(Length::Fixed(box_width))
+        .height(Length::Fixed(card_height));
+
+    // Mantém espaçamento lateral livre na célula para permitir clique direito no fundo atrás dos cards.
+    container(compact_card)
         .width(Length::Fixed(card_width))
         .height(Length::Fixed(card_height))
+        .align_x(Center)
+        .align_y(Center)
         .into()
 }
 
@@ -1182,6 +1266,7 @@ fn detail_table_view<'a>(
     if win.bottom_spacer > 0.0 {
         rows = rows.push(Space::new().height(win.bottom_spacer));
     }
+    rows = rows.push(Space::new().height(48.0));
 
     let scroll = scrollable(rows)
         .id(canvas_scroll_id())

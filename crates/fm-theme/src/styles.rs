@@ -367,3 +367,21 @@ pub fn dropdown_menu_style(p: ThemePalette) -> impl Fn(&Theme) -> menu::Style {
         },
     }
 }
+
+pub fn tooltip_container(p: ThemePalette) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(p.surface_lowest)),
+        text_color: Some(p.text_primary),
+        border: Border {
+            color: p.border_strong,
+            width: 1.0,
+            radius: Radius::from(8.0),
+        },
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.16),
+            offset: Vector::new(0.0, 4.0),
+            blur_radius: 12.0,
+        },
+        ..Default::default()
+    }
+}

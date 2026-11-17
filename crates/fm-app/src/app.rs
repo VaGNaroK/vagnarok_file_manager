@@ -92,6 +92,7 @@ pub struct PropertiesWindowState {
     pub entry: FileEntry,
     pub telemetry: Option<SelectedFileTelemetry>,
     pub recursive_size: Option<RecursiveSize>,
+    pub volume_space: Option<VolumeSpace>,
     pub size_loading: bool,
     pub extra: Option<EntryExtraInfo>,
     pub active_tab: PropertiesTab,
@@ -365,6 +366,11 @@ pub enum Message {
         window_id: window::Id,
         path: PathBuf,
         size: Option<RecursiveSize>,
+    },
+    PropertiesVolumeSpaceReady {
+        window_id: window::Id,
+        path: PathBuf,
+        space: Option<VolumeSpace>,
     },
     PropertiesExtraInfoReady {
         window_id: window::Id,
@@ -2050,6 +2056,18 @@ impl App {
                 }
                 Task::none()
             }
+            Message::PropertiesVolumeSpaceReady {
+                window_id,
+                path,
+                space,
+            } => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && props.entry.path == path
+                {
+                    props.volume_space = space;
+                }
+                Task::none()
+            }
             Message::PropertiesTelemetryReady {
                 window_id,
                 path,
@@ -2763,6 +2781,12 @@ impl App {
         let telemetry = Some(existing_telemetry.unwrap_or_else(|| basic_file_telemetry(&entry)));
         let size_loading = entry.kind.is_dir_like() && !is_archive;
 
+        let initial_volume_space = self.current_tab().and_then(|t| {
+            (t.current_path == entry.path)
+                .then_some(t.telemetry.volume_space.clone())
+                .flatten()
+        });
+
         #[cfg(target_os = "windows")]
         let (win_id, open_task) = (self.main_window_id, Task::<window::Id>::none());
 
@@ -2778,6 +2802,22 @@ impl App {
 
         let win_cancel = CancellationToken::new();
         let mut tasks = vec![open_task.discard()];
+
+        if !is_archive && initial_volume_space.is_none() {
+            let vfs = Arc::clone(&self.vfs);
+            let vpath = entry.path.clone();
+            tasks.push(Task::perform(
+                async move {
+                    let space = vfs.volume_space(&vpath).await.ok().flatten();
+                    (vpath, space)
+                },
+                move |(path, space)| Message::PropertiesVolumeSpaceReady {
+                    window_id: win_id,
+                    path,
+                    space,
+                },
+            ));
+        }
 
         if size_loading {
             let cancel = win_cancel.clone();
@@ -2890,6 +2930,7 @@ impl App {
                 entry,
                 telemetry,
                 recursive_size: None,
+                volume_space: initial_volume_space,
                 size_loading,
                 extra: None,
                 active_tab: PropertiesTab::General,
@@ -3730,6 +3771,14 @@ impl App {
             }
             keyboard::Key::Character("0") if modifiers.control() => {
                 self.update(Message::ResetGridCardWidth)
+            }
+            keyboard::Key::Named(Named::PageDown) if !self.quicklook_open => {
+                let page = (self.canvas_viewport_height * 0.85).max(200.0);
+                operation::scroll_by(canvas_scroll_id(), AbsoluteOffset { x: 0.0, y: page })
+            }
+            keyboard::Key::Named(Named::PageUp) if !self.quicklook_open => {
+                let page = (self.canvas_viewport_height * 0.85).max(200.0);
+                operation::scroll_by(canvas_scroll_id(), AbsoluteOffset { x: 0.0, y: -page })
             }
             keyboard::Key::Named(Named::ArrowDown) => self.navigate_selection_arrow(0, 1),
             keyboard::Key::Named(Named::ArrowUp) => self.navigate_selection_arrow(0, -1),

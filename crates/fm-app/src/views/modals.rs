@@ -668,7 +668,13 @@ fn properties_general_tab<'a>(
             let prefix = if sz.truncated { ">" } else { "" };
             let short = format!("{prefix}{}", format_bytes(sz.total_bytes));
             let exact = strings.format_exact_bytes(sz.total_bytes);
-            (short, exact, size_bar_ratio(sz.total_bytes))
+            let ratio = props
+                .volume_space
+                .as_ref()
+                .filter(|vs| vs.total_bytes > 0)
+                .map(|vs| (sz.total_bytes as f64 / vs.total_bytes as f64).clamp(0.02, 1.0) as f32)
+                .unwrap_or_else(|| size_bar_ratio(sz.total_bytes));
+            (short, exact, ratio)
         } else {
             ("—".to_owned(), String::new(), 0.0)
         }
@@ -826,15 +832,102 @@ fn properties_general_tab<'a>(
     .align_y(Center)
     .width(Length::FillPortion(1));
 
-    let meta_grid = container(
-        column![
-            row![col_kind, col_system].spacing(20).align_y(Center),
-            row![col_path, col_size].spacing(20).align_y(Center),
+    let mut meta_rows = vec![
+        row![col_kind, col_system]
+            .spacing(20)
+            .align_y(Center)
+            .into(),
+        row![col_path, col_size].spacing(20).align_y(Center).into(),
+    ];
+
+    if is_dir {
+        let contents_text = if props.size_loading {
+            strings.prop_calculating.to_owned()
+        } else if let Some(sz) = props.recursive_size {
+            let prefix = if sz.truncated { ">" } else { "" };
+            let total_txt = strings.format_items_count(sz.item_count as usize);
+            if sz.hidden_count > 0 {
+                format!(
+                    "{prefix}{total_txt} ({})",
+                    strings.format_hidden_items_count(sz.hidden_count)
+                )
+            } else {
+                format!("{prefix}{total_txt}")
+            }
+        } else if let Some(cnt) = entry.child_count {
+            strings.format_items_count(cnt as usize)
+        } else {
+            "—".to_owned()
+        };
+
+        let free_text = props
+            .volume_space
+            .as_ref()
+            .map(|vs| {
+                format!(
+                    "{} {} {} ({})",
+                    format_bytes(vs.free_bytes),
+                    strings.free_of,
+                    format_bytes(vs.total_bytes),
+                    sanitize_single_line(&vs.label)
+                )
+            })
+            .unwrap_or_else(|| "—".to_owned());
+
+        let col_contents = row![
+            icon_folder().size(16).color(palette.text_muted),
+            column![
+                text(strings.prop_contents_label)
+                    .size(11)
+                    .font(FONT_UI)
+                    .color(palette.text_muted),
+                text(contents_text)
+                    .size(12)
+                    .font(FONT_UI_SEMIBOLD)
+                    .color(palette.text_primary)
+                    .wrapping(text::Wrapping::None),
+            ]
+            .spacing(2)
+            .width(Length::Fill),
         ]
-        .spacing(14),
-    )
-    .width(Length::Fill)
-    .padding([4, 6]);
+        .spacing(10)
+        .align_y(Center)
+        .width(Length::FillPortion(1));
+
+        let col_free = row![
+            icon_hard_drive().size(16).color(palette.text_muted),
+            container(
+                column![
+                    text(strings.prop_free_space_label)
+                        .size(11)
+                        .font(FONT_UI)
+                        .color(palette.text_muted),
+                    text(free_text)
+                        .size(12)
+                        .font(FONT_UI_SEMIBOLD)
+                        .color(palette.text_primary)
+                        .wrapping(text::Wrapping::None),
+                ]
+                .spacing(2),
+            )
+            .width(Length::Fill)
+            .clip(true),
+        ]
+        .spacing(10)
+        .align_y(Center)
+        .width(Length::FillPortion(1));
+
+        meta_rows.push(
+            row![col_contents, col_free]
+                .spacing(20)
+                .align_y(Center)
+                .into(),
+        );
+    }
+
+    let meta_grid = container(column(meta_rows).spacing(14))
+        .width(Length::Fill)
+        .padding([4, 6]);
 
     // Linha do tempo de timestamps (3 nós verticais)
     let created_val = entry
@@ -2385,6 +2478,15 @@ pub fn context_menu_overlay<'a>(
                 Message::OpenTerminal,
                 palette,
             ));
+            if let Some(tab) = app.current_tab() {
+                items = items.push(ctx_divider(palette)).push(ctx_item(
+                    icon_info().size(14).color(palette.accent_primary).into(),
+                    strings.properties,
+                    palette.text_primary,
+                    Message::OpenProperties(tab.current_path.clone()),
+                    palette,
+                ));
+            }
         }
     }
 
@@ -2398,7 +2500,7 @@ pub fn context_menu_overlay<'a>(
                 156.0
             }
         }
-        ContextMenuKind::Background => 240.0,
+        ContextMenuKind::Background => 284.0,
         ContextMenuKind::FilterMenu => 320.0,
         ContextMenuKind::LanguageMenu => 256.0,
         ContextMenuKind::PreferencesMenu => 84.0,

@@ -209,3 +209,40 @@ about-license-label = Lizenz
 about-stack-label = Engine / Stack
 about-copy-info = Systeminfos kopieren
 about-info-copied = Systeminfos kopiert
+
+# Ordnereigenschaften (Inhalt & Speicherplatz)
+prop-contents-label = Inhalt
+prop-free-space-label = Freier Speicher
+hidden-items-count = { $count ->
+    [one] 1 versteckt
+   *[other] { $count } versteckt
+}
+
+# Tooltips
+tip-new-tab = Neuen Tab öffnen (Ctrl+T)
+tip-close-tab = Tab schließen (Ctrl+W)
+tip-language = Oberflächensprache ändern
+tip-theme = Zwischen hellem und dunklem Design wechseln
+tip-back = Zurück (Alt+←)
+tip-forward = Vorwärts (Alt+→)
+tip-up = Übergeordneter Ordner (Alt+↑)
+tip-home = Zum Benutzerordner wechseln
+tip-edit-path = Pfad direkt bearbeiten (Ctrl+L)
+tip-deep-search = Rekursiv in Unterordnern suchen (Ctrl+Shift+F)
+tip-view-grid = Rasteransicht
+tip-view-list = Detailtabellenansicht
+tip-view-columns = Spaltenansicht (Miller)
+tip-new-item = Neuen Ordner oder neue Datei erstellen
+tip-group-folders = Ordner im Raster vor Dateien gruppieren
+tip-zoom-out = Kachelgröße verkleinern (Ctrl+-)
+tip-zoom-reset = Standardgröße wiederherstellen (Ctrl+0)
+tip-zoom-in = Kachelgröße vergrößern (Ctrl++)
+tip-sort = Sortierkriterium wechseln (Name, Größe, Typ, Geändert)
+tip-sort-dir = Auf- oder absteigende Sortierung wechseln
+tip-filter = Elemente nach Ordner oder Erweiterung filtern
+tip-hidden = Versteckte Dateien ein- oder ausblenden (Ctrl+H)
+tip-terminal = Terminal in diesem Ordner öffnen (Ctrl+Shift+T)
+tip-favorite = Ordner an Favoriten anheften oder lösen
+tip-inspector = Inspektor-Bereich ein- oder ausblenden (Alt+I)
+tip-preferences = Einstellungen öffnen (Rechtsklick für Schnellmenü)
+tip-toggle-sidebar = Seitenleiste ein- oder ausklappen (Ctrl+B)

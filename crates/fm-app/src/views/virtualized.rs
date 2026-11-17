@@ -7,8 +7,8 @@ pub const DETAIL_ROW_SPACING: f32 = 4.0;
 pub const DETAIL_ROW_STEP: f32 = DETAIL_ROW_HEIGHT + DETAIL_ROW_SPACING;
 
 pub const GRID_HEADER_HEIGHT: f32 = 24.0;
-pub const GRID_BAND_SPACING: f32 = 12.0;
-pub const GRID_GAP: f32 = 12.0;
+pub const GRID_BAND_SPACING: f32 = 16.0;
+pub const GRID_GAP: f32 = 18.0;
 pub const GRID_CARD_WIDTH_MIN: f32 = 104.0;
 pub const GRID_CARD_WIDTH_MAX: f32 = 260.0;
 pub const GRID_CARD_WIDTH_DEFAULT: f32 = 140.0;
@@ -22,14 +22,14 @@ pub fn clamp_grid_card_width(width: f32) -> f32 {
 }
 
 pub fn grid_card_height(card_width: f32) -> f32 {
-    (clamp_grid_card_width(card_width) * 0.96)
+    (clamp_grid_card_width(card_width) * 0.78)
         .round()
-        .clamp(112.0, 240.0)
+        .clamp(96.0, 196.0)
 }
 
 pub fn grid_columns_for_width(available_width: f32, card_width: f32) -> usize {
     let w = clamp_grid_card_width(card_width);
-    let usable = (available_width - 8.0).max(w);
+    let usable = (available_width - 28.0).max(w);
     (((usable + GRID_GAP) / (w + GRID_GAP)).floor() as usize).max(1)
 }
 
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn grid_columns_scale_with_card_width_and_viewport() {
         assert_eq!(grid_columns_for_width(900.0, 140.0), 5);
-        assert_eq!(grid_columns_for_width(1400.0, 140.0), 9);
+        assert_eq!(grid_columns_for_width(1400.0, 140.0), 8);
         assert_eq!(grid_columns_for_width(900.0, 220.0), 3);
     }
 }

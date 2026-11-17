@@ -170,6 +170,8 @@ pub struct VolumeSpace {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RecursiveSize {
     pub total_bytes: u64,
+    pub item_count: u64,
+    pub hidden_count: u64,
     pub truncated: bool,
 }
 

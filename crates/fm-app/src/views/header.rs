@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use fm_core::{Strings, TabState, ThemePreset, ViewMode, WindowDecorationsMode};
 use fm_theme::{FONT_MONO, FONT_UI, FONT_UI_SEMIBOLD, Spacing, ThemePalette, styles};
 use iced::Alignment::Center;
-use iced::widget::{Space, button, container, mouse_area, row, space, text, text_input};
+use iced::widget::{Space, button, container, mouse_area, row, space, text, text_input, tooltip};
 use iced::{Element, Length, Padding};
 use lucide_icons::iced::{
     icon_arrow_left, icon_arrow_right, icon_arrow_up, icon_chevron_right, icon_columns_3,
@@ -12,7 +12,7 @@ use lucide_icons::iced::{
 };
 
 use crate::app::{App, Message, path_input_id, search_input_id};
-use crate::views::sanitize_single_line;
+use crate::views::{sanitize_single_line, with_tooltip};
 
 pub fn view<'a>(
     app: &'a App,
@@ -20,7 +20,7 @@ pub fn view<'a>(
     palette: ThemePalette,
     strings: Strings,
 ) -> Element<'a, Message> {
-    let top_row = tab_strip_row(app, palette);
+    let top_row = tab_strip_row(app, palette, strings);
     let nav_row = navigation_row(app, tab, palette, strings);
 
     container(
@@ -40,16 +40,25 @@ pub fn view<'a>(
     .into()
 }
 
-fn tab_strip_row<'a>(app: &'a App, palette: ThemePalette) -> Element<'a, Message> {
+fn tab_strip_row<'a>(
+    app: &'a App,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
     let mut tabs_row = row![].spacing(4).align_y(Center);
 
     for t in &app.tabs {
         let is_active = t.id == app.active_tab;
         let tab_id = t.id;
-        let close_btn = button(icon_x().size(12).color(palette.text_muted))
-            .padding([2, 4])
-            .style(styles::ghost_button(palette, 4.0))
-            .on_press(Message::TabClose(tab_id));
+        let close_btn = with_tooltip(
+            button(icon_x().size(12).color(palette.text_muted))
+                .padding([2, 4])
+                .style(styles::ghost_button(palette, 4.0))
+                .on_press(Message::TabClose(tab_id)),
+            strings.tip_close_tab,
+            tooltip::Position::Bottom,
+            palette,
+        );
 
         let label = text(sanitize_single_line(t.title.as_str()))
             .size(12)
@@ -64,26 +73,41 @@ fn tab_strip_row<'a>(app: &'a App, palette: ThemePalette) -> Element<'a, Message
         tabs_row = tabs_row.push(mouse_area(tab_btn).on_middle_press(Message::TabClose(tab_id)));
     }
 
-    let add_tab_btn = button(icon_plus().size(14))
-        .padding([5, 7])
-        .style(styles::ghost_button(palette, 8.0))
-        .on_press(Message::TabNew);
+    let add_tab_btn = with_tooltip(
+        button(icon_plus().size(14))
+            .padding([5, 7])
+            .style(styles::ghost_button(palette, 8.0))
+            .on_press(Message::TabNew),
+        strings.tip_new_tab,
+        tooltip::Position::Bottom,
+        palette,
+    );
     tabs_row = tabs_row.push(add_tab_btn);
 
     let theme_icon = match app.config.theme {
         ThemePreset::AetherLight => icon_moon().size(14),
         ThemePreset::ObsidianFlow => icon_sun().size(14),
     };
-    let theme_btn = button(theme_icon)
-        .padding([5, 8])
-        .style(styles::ghost_button(palette, 8.0))
-        .on_press(Message::ToggleTheme);
+    let theme_btn = with_tooltip(
+        button(theme_icon)
+            .padding([5, 8])
+            .style(styles::ghost_button(palette, 8.0))
+            .on_press(Message::ToggleTheme),
+        strings.tip_theme,
+        tooltip::Position::Bottom,
+        palette,
+    );
 
     let lang_label = app.config.language.short_code();
-    let lang_btn = button(text(lang_label).size(11).font(FONT_MONO))
-        .padding([4, 8])
-        .style(styles::ghost_button(palette, 8.0))
-        .on_press(Message::OpenLanguageMenu);
+    let lang_btn = with_tooltip(
+        button(text(lang_label).size(11).font(FONT_MONO))
+            .padding([4, 8])
+            .style(styles::ghost_button(palette, 8.0))
+            .on_press(Message::OpenLanguageMenu),
+        strings.tip_language,
+        tooltip::Position::Bottom,
+        palette,
+    );
 
     let mut right_controls = row![lang_btn, theme_btn].spacing(4).align_y(Center);
 
@@ -151,20 +175,41 @@ fn navigation_row<'a>(
         up_btn = up_btn.on_press(Message::NavigateUp);
     }
 
-    let nav_buttons = row![back_btn, fwd_btn, up_btn].spacing(2).align_y(Center);
+    let nav_buttons = row![
+        with_tooltip(
+            back_btn,
+            strings.tip_back,
+            tooltip::Position::Bottom,
+            palette
+        ),
+        with_tooltip(
+            fwd_btn,
+            strings.tip_forward,
+            tooltip::Position::Bottom,
+            palette
+        ),
+        with_tooltip(up_btn, strings.tip_up, tooltip::Position::Bottom, palette),
+    ]
+    .spacing(2)
+    .align_y(Center);
 
     let breadcrumb = unified_breadcrumb(app, tab, palette, strings);
 
     let query = tab.map(|t| t.filter_query.as_str()).unwrap_or("");
-    let deep_btn = button(
-        text(strings.deep_search)
-            .size(10)
-            .font(FONT_MONO)
-            .color(palette.accent_primary),
-    )
-    .padding([2, 6])
-    .style(styles::ghost_button(palette, 6.0))
-    .on_press(Message::OpenDeepSearch);
+    let deep_btn = with_tooltip(
+        button(
+            text(strings.deep_search)
+                .size(10)
+                .font(FONT_MONO)
+                .color(palette.accent_primary),
+        )
+        .padding([2, 6])
+        .style(styles::ghost_button(palette, 6.0))
+        .on_press(Message::OpenDeepSearch),
+        strings.tip_deep_search,
+        tooltip::Position::Bottom,
+        palette,
+    );
 
     let search_box = container(
         row![
@@ -201,23 +246,38 @@ fn navigation_row<'a>(
     let current_mode = tab.map(|t| t.view_mode).unwrap_or(ViewMode::Grid);
     let view_switcher = container(
         row![
-            view_mode_btn(
-                icon_layout_grid().size(14),
-                ViewMode::Grid,
-                current_mode,
-                palette
+            with_tooltip(
+                view_mode_btn(
+                    icon_layout_grid().size(14),
+                    ViewMode::Grid,
+                    current_mode,
+                    palette
+                ),
+                strings.tip_view_grid,
+                tooltip::Position::Bottom,
+                palette,
             ),
-            view_mode_btn(
-                icon_list().size(14),
-                ViewMode::DetailTable,
-                current_mode,
-                palette
+            with_tooltip(
+                view_mode_btn(
+                    icon_list().size(14),
+                    ViewMode::DetailTable,
+                    current_mode,
+                    palette
+                ),
+                strings.tip_view_list,
+                tooltip::Position::Bottom,
+                palette,
             ),
-            view_mode_btn(
-                icon_columns_3().size(14),
-                ViewMode::Columns,
-                current_mode,
-                palette
+            with_tooltip(
+                view_mode_btn(
+                    icon_columns_3().size(14),
+                    ViewMode::Columns,
+                    current_mode,
+                    palette
+                ),
+                strings.tip_view_columns,
+                tooltip::Position::Bottom,
+                palette,
             ),
         ]
         .spacing(2)
@@ -262,12 +322,15 @@ fn unified_breadcrumb<'a>(
         .into();
     }
 
-    let mut crumbs = row![
+    let mut crumbs = row![with_tooltip(
         button(icon_home().size(14).color(palette.accent_primary))
             .padding([3, 5])
             .style(styles::ghost_button(palette, 6.0))
             .on_press(Message::NavigateTo(app.places.home.clone())),
-    ]
+        strings.tip_home,
+        tooltip::Position::Bottom,
+        palette,
+    )]
     .spacing(2)
     .align_y(Center);
 
@@ -348,15 +411,20 @@ fn unified_breadcrumb<'a>(
         }
     }
 
-    let edit_hint_btn = button(
-        text("Ctrl+L")
-            .size(10)
-            .font(FONT_MONO)
-            .color(palette.text_muted),
-    )
-    .padding([2, 6])
-    .style(styles::ghost_button(palette, 6.0))
-    .on_press(Message::TogglePathEdit);
+    let edit_hint_btn = with_tooltip(
+        button(
+            text("Ctrl+L")
+                .size(10)
+                .font(FONT_MONO)
+                .color(palette.text_muted),
+        )
+        .padding([2, 6])
+        .style(styles::ghost_button(palette, 6.0))
+        .on_press(Message::TogglePathEdit),
+        strings.tip_edit_path,
+        tooltip::Position::Bottom,
+        palette,
+    );
 
     container(row![crumbs, edit_hint_btn].spacing(6).align_y(Center))
         .padding([2, 8])

@@ -7,9 +7,9 @@ pub mod sidebar;
 pub mod virtualized;
 
 use fm_core::FileEntry;
-use fm_theme::ThemePalette;
-use iced::Color;
-use iced::widget::Text;
+use fm_theme::{FONT_UI, ThemePalette, styles};
+use iced::widget::{Text, container, text, tooltip};
+use iced::{Color, Element};
 use lucide_icons::iced::{
     icon_file_archive, icon_file_code, icon_file_json, icon_file_text, icon_folder, icon_image,
     icon_terminal,
@@ -94,6 +94,25 @@ pub fn sanitize_single_line(raw: &str) -> String {
         }
     }
     out.trim().to_owned()
+}
+
+/// Envolve um controle de interface com tooltip estilizado pelo tema ativo.
+pub fn with_tooltip<'a, M: 'a>(
+    content: impl Into<Element<'a, M>>,
+    tip: &'a str,
+    position: tooltip::Position,
+    palette: ThemePalette,
+) -> Element<'a, M> {
+    tooltip(
+        content,
+        container(text(tip).size(11).font(FONT_UI).color(palette.text_primary)).padding([5, 9]),
+        position,
+    )
+    .delay(std::time::Duration::from_millis(450))
+    .gap(6.0)
+    .padding(0.0)
+    .style(styles::tooltip_container(palette))
+    .into()
 }
 
 #[cfg(test)]

@@ -103,6 +103,8 @@ pub async fn compute_folder_size_cached(
 
         let start = Instant::now();
         let mut total_bytes = 0u64;
+        let mut item_count = 0u64;
+        let mut hidden_count = 0u64;
         let mut visited = 0usize;
         let mut truncated = false;
         let mut stack = vec![(dir_path.clone(), 0u32)];
@@ -138,6 +140,10 @@ pub async fn compute_folder_size_cached(
                 if ft.is_symlink() {
                     continue;
                 }
+                item_count += 1;
+                if is_hidden_dir_entry(&entry) {
+                    hidden_count += 1;
+                }
                 if ft.is_dir() {
                     if depth < MAX_RECURSIVE_DEPTH {
                         stack.push((entry.path(), depth + 1));
@@ -157,6 +163,8 @@ pub async fn compute_folder_size_cached(
 
         let res = RecursiveSize {
             total_bytes,
+            item_count,
+            hidden_count,
             truncated,
         };
         if let Some(c) = &cache
@@ -169,6 +177,21 @@ pub async fn compute_folder_size_cached(
     .await
     .ok()
     .flatten()
+}
+
+fn is_hidden_dir_entry(entry: &std::fs::DirEntry) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        entry
+            .metadata()
+            .is_ok_and(|m| (m.file_attributes() & FILE_ATTRIBUTE_HIDDEN) != 0)
+    }
+    #[cfg(not(windows))]
+    {
+        entry.file_name().as_encoded_bytes().starts_with(b".")
+    }
 }
 
 #[cfg(test)]
@@ -197,6 +220,8 @@ mod tests {
             ))
             .expect("recursive size computed");
         assert_eq!(computed.total_bytes, 350);
+        assert_eq!(computed.item_count, 3);
+        assert_eq!(computed.hidden_count, 0);
         assert!(!computed.truncated);
 
         let cancelled = CancellationToken::new();

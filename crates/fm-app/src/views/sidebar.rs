@@ -1,7 +1,9 @@
 use fm_core::{DriveKind, Strings, format_bytes};
 use fm_theme::{FONT_MONO, FONT_UI, FONT_UI_SEMIBOLD, Spacing, ThemePalette, styles};
 use iced::Alignment::Center;
-use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, space, text};
+use iced::widget::{
+    Space, button, column, container, mouse_area, row, scrollable, space, text, tooltip,
+};
 use iced::{Element, Length, Padding};
 use lucide_icons::iced::{
     icon_database, icon_download, icon_folder, icon_hard_drive, icon_home, icon_image,
@@ -9,7 +11,7 @@ use lucide_icons::iced::{
 };
 
 use crate::app::{App, Message, SidebarTarget};
-use crate::views::sanitize_single_line;
+use crate::views::{sanitize_single_line, with_tooltip};
 
 pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Element<'a, Message> {
     let collapsed = app.config.sidebar_collapsed;
@@ -202,19 +204,29 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
     }
 
     let footer_actions = row![
-        sidebar_btn_owned(
-            icon_settings().size(16),
-            strings.preferences.to_owned(),
-            collapsed,
-            false,
+        with_tooltip(
+            sidebar_btn_owned(
+                icon_settings().size(16),
+                strings.preferences.to_owned(),
+                collapsed,
+                false,
+                palette,
+                Message::OpenPreferences,
+                Some(Message::OpenPreferencesContextMenu),
+            ),
+            strings.tip_preferences,
+            tooltip::Position::Top,
             palette,
-            Message::OpenPreferences,
-            Some(Message::OpenPreferencesContextMenu),
         ),
-        button(icon_panel_left().size(15))
-            .padding([6, 8])
-            .style(styles::ghost_button(palette, 8.0))
-            .on_press(Message::ToggleSidebar),
+        with_tooltip(
+            button(icon_panel_left().size(15))
+                .padding([6, 8])
+                .style(styles::ghost_button(palette, 8.0))
+                .on_press(Message::ToggleSidebar),
+            strings.tip_toggle_sidebar,
+            tooltip::Position::Top,
+            palette,
+        ),
     ]
     .spacing(4)
     .align_y(Center);

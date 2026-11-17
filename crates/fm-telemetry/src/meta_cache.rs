@@ -124,22 +124,28 @@ impl DiskMetadataCache {
         let table = read_txn.open_table(DIR_SIZE_TABLE).ok()?;
         let guard = table.get(key.as_slice()).ok()??;
         let bytes = guard.value();
-        if bytes.len() != 9 {
+        if bytes.len() != 25 {
             return None;
         }
-        let total_bytes = u64::from_le_bytes(bytes[..8].try_into().ok()?);
-        let truncated = bytes[8] != 0;
+        let total_bytes = u64::from_le_bytes(bytes[0..8].try_into().ok()?);
+        let item_count = u64::from_le_bytes(bytes[8..16].try_into().ok()?);
+        let hidden_count = u64::from_le_bytes(bytes[16..24].try_into().ok()?);
+        let truncated = bytes[24] != 0;
         Some(RecursiveSize {
             total_bytes,
+            item_count,
+            hidden_count,
             truncated,
         })
     }
 
     pub fn put_dir_size(&self, path: &Path, modified_nanos: u128, val: RecursiveSize) {
         let key = encode_file_key(path, 1, modified_nanos);
-        let mut payload = [0u8; 9];
-        payload[..8].copy_from_slice(&val.total_bytes.to_le_bytes());
-        payload[8] = u8::from(val.truncated);
+        let mut payload = [0u8; 25];
+        payload[0..8].copy_from_slice(&val.total_bytes.to_le_bytes());
+        payload[8..16].copy_from_slice(&val.item_count.to_le_bytes());
+        payload[16..24].copy_from_slice(&val.hidden_count.to_le_bytes());
+        payload[24] = u8::from(val.truncated);
         let Ok(write_txn) = self.db.begin_write() else {
             return;
         };
@@ -199,6 +205,8 @@ mod tests {
 
         let rsize = RecursiveSize {
             total_bytes: 987_654_321,
+            item_count: 142,
+            hidden_count: 7,
             truncated: true,
         };
         cache.put_dir_size(folder, 123_456, rsize);

@@ -209,3 +209,40 @@ about-license-label = License
 about-stack-label = Engine
 about-copy-info = Copy system info
 about-info-copied = System info copied
+
+# Folder properties (contents & disk space)
+prop-contents-label = Contents
+prop-free-space-label = Free space
+hidden-items-count = { $count ->
+    [one] 1 hidden
+   *[other] { $count } hidden
+}
+
+# Tooltips
+tip-new-tab = Open new tab (Ctrl+T)
+tip-close-tab = Close tab (Ctrl+W)
+tip-language = Change interface language
+tip-theme = Toggle light/dark theme
+tip-back = Go back (Alt+←)
+tip-forward = Go forward (Alt+→)
+tip-up = Go to parent folder (Alt+↑)
+tip-home = Go to Home folder
+tip-edit-path = Edit path directly (Ctrl+L)
+tip-deep-search = Search recursively in subfolders (Ctrl+Shift+F)
+tip-view-grid = Grid view
+tip-view-list = Detail Table view
+tip-view-columns = Miller Columns view
+tip-new-item = Create new folder or file
+tip-group-folders = Group folders before files in Grid
+tip-zoom-out = Decrease card size (Ctrl+-)
+tip-zoom-reset = Reset default card size (Ctrl+0)
+tip-zoom-in = Increase card size (Ctrl++)
+tip-sort = Cycle sort field (Name, Size, Type, Modified)
+tip-sort-dir = Toggle ascending or descending order
+tip-filter = Filter items by folder or extension
+tip-hidden = Show or hide hidden files (Ctrl+H)
+tip-terminal = Open terminal in this folder (Ctrl+Shift+T)
+tip-favorite = Pin or unpin folder from favorites
+tip-inspector = Show or hide Inspector panel (Alt+I)
+tip-preferences = Open Preferences (right-click for quick menu)
+tip-toggle-sidebar = Collapse or expand sidebar (Ctrl+B)
