@@ -6,8 +6,10 @@ use iced::widget::{
 };
 use iced::{Element, Length, Padding};
 use lucide_icons::iced::{
-    icon_database, icon_download, icon_folder, icon_hard_drive, icon_home, icon_image,
-    icon_monitor, icon_panel_left, icon_settings, icon_star, icon_terminal, icon_trash_2,
+    icon_arrow_up_from_line, icon_chevron_down, icon_chevron_right, icon_database, icon_download,
+    icon_file_text, icon_folder, icon_hard_drive, icon_home, icon_image, icon_monitor, icon_music,
+    icon_panel_left, icon_plug, icon_refresh_cw, icon_settings, icon_star, icon_trash_2,
+    icon_video,
 };
 
 use crate::app::{App, Message, SidebarTarget};
@@ -23,30 +25,36 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
 
     let quick_candidates = [
         (
-            SidebarTarget::Documents,
-            strings.documents,
-            icon_folder().size(16),
-        ),
-        (SidebarTarget::Home, strings.home, icon_home().size(16)),
-        (
             SidebarTarget::Desktop,
             strings.desktop,
             icon_monitor().size(16),
+        ),
+        (
+            SidebarTarget::Documents,
+            strings.documents,
+            icon_folder().size(16),
         ),
         (
             SidebarTarget::Downloads,
             strings.downloads,
             icon_download().size(16),
         ),
+        (SidebarTarget::Music, strings.music, icon_music().size(16)),
         (
             SidebarTarget::Pictures,
             strings.pictures,
             icon_image().size(16),
         ),
+        (SidebarTarget::Videos, strings.videos, icon_video().size(16)),
         (
-            SidebarTarget::CodeDev,
-            strings.code_dev,
-            icon_terminal().size(16),
+            SidebarTarget::PublicDir,
+            strings.public_dir,
+            icon_folder().size(16),
+        ),
+        (
+            SidebarTarget::Templates,
+            strings.templates,
+            icon_file_text().size(16),
         ),
     ];
 
@@ -57,6 +65,83 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
     }
 
     let mut quick_col = column![].spacing(2);
+    let home_path = app.places.home.clone();
+    let home_active = app
+        .current_tab()
+        .is_some_and(|t| t.current_path == home_path);
+    let home_btn = sidebar_btn_owned(
+        icon_home().size(16),
+        strings.home.to_owned(),
+        collapsed,
+        home_active,
+        palette,
+        Message::SelectSidebar(SidebarTarget::Home),
+        Some(Message::OpenSidebarContextMenu {
+            path: home_path,
+            is_favorite: false,
+        }),
+    );
+
+    if collapsed {
+        quick_col = quick_col.push(home_btn);
+    } else {
+        let expand_icon = if app.sidebar_home_expanded {
+            icon_chevron_down().size(13).color(palette.text_muted)
+        } else {
+            icon_chevron_right().size(13).color(palette.text_muted)
+        };
+        let expand_btn = with_tooltip(
+            button(expand_icon)
+                .padding([5, 5])
+                .style(styles::ghost_button(palette, 6.0))
+                .on_press(Message::ToggleSidebarHomeExpanded),
+            strings.tip_expand_home,
+            tooltip::Position::Right,
+            palette,
+        );
+        quick_col = quick_col.push(
+            row![expand_btn, container(home_btn).width(Length::Fill)]
+                .spacing(2)
+                .align_y(Center),
+        );
+
+        if app.sidebar_home_expanded {
+            for sub_path in &app.home_subdirs {
+                let raw_name = sub_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| sub_path.to_string_lossy().into_owned());
+                let label = sanitize_single_line(&raw_name);
+                let sub_active = app
+                    .current_tab()
+                    .is_some_and(|t| &t.current_path == sub_path);
+                let sub_btn = sidebar_btn_owned(
+                    icon_folder().size(14),
+                    label,
+                    false,
+                    sub_active,
+                    palette,
+                    Message::NavigateTo(sub_path.clone()),
+                    Some(Message::OpenSidebarContextMenu {
+                        path: sub_path.clone(),
+                        is_favorite: false,
+                    }),
+                );
+                quick_col = quick_col.push(
+                    container(sub_btn)
+                        .padding(Padding {
+                            top: 0.0,
+                            right: 0.0,
+                            bottom: 0.0,
+                            left: 18.0,
+                        })
+                        .width(Length::Fill),
+                );
+            }
+        }
+    }
+
     for (target, label, icon) in quick_candidates {
         if let Some(resolved) = target.resolve_path(&app.places) {
             let active = app
@@ -80,39 +165,130 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
 
     if !app.drives.is_empty() {
         if !collapsed {
-            sections = sections.push(section_header(strings.drives, palette));
+            let refresh_btn = with_tooltip(
+                button(icon_refresh_cw().size(12).color(palette.text_muted))
+                    .padding([2, 5])
+                    .style(styles::ghost_button(palette, 6.0))
+                    .on_press(Message::RefreshDrives),
+                strings.refresh_drives,
+                tooltip::Position::Right,
+                palette,
+            );
+            sections = sections.push(
+                row![
+                    section_header(strings.drives, palette),
+                    space::horizontal(),
+                    refresh_btn
+                ]
+                .align_y(Center)
+                .width(Length::Fill),
+            );
         }
 
         let mut drives_col = column![].spacing(4);
         for drive in &app.drives {
-            let icon = match drive.kind {
+            let base_icon = match drive.kind {
                 DriveKind::InternalSsd => icon_hard_drive().size(16),
                 _ => icon_database().size(16),
             };
+            let icon = if drive.is_mounted {
+                base_icon
+            } else {
+                base_icon.color(palette.text_muted)
+            };
             let label = if collapsed {
                 String::new()
-            } else if let Some(space_info) = &drive.space {
-                format!("{} ({})", drive.label, format_bytes(space_info.free_bytes))
+            } else if drive.is_mounted {
+                if let Some(space_info) = &drive.space {
+                    format!("{} ({})", drive.label, format_bytes(space_info.free_bytes))
+                } else {
+                    drive.label.to_string()
+                }
+            } else if let Some(total) = drive.total_bytes_hint {
+                format!(
+                    "{} ({} • {})",
+                    drive.label,
+                    format_bytes(total),
+                    strings.unmounted_label
+                )
             } else {
-                drive.label.to_string()
+                format!("{} ({})", drive.label, strings.unmounted_label)
             };
-            let active = app
-                .current_tab()
-                .is_some_and(|t| t.current_path == drive.mount_path);
+            let active = drive.is_mounted
+                && app
+                    .current_tab()
+                    .is_some_and(|t| t.current_path == drive.mount_path);
+            let primary_msg = if drive.is_mounted {
+                Message::SelectDrive(drive.mount_path.clone())
+            } else if let Some(dev) = &drive.device_path {
+                Message::MountAndOpenDrive(dev.clone())
+            } else {
+                Message::RefreshDrives
+            };
+            let ctx_msg = Message::OpenDriveContextMenu {
+                label: drive.label.to_string(),
+                mount_path: drive.mount_path.clone(),
+                device_path: drive.device_path.clone(),
+                is_mounted: drive.is_mounted,
+                can_unmount: drive.can_unmount,
+            };
             let btn = sidebar_btn_owned(
                 icon,
                 label,
                 collapsed,
                 active,
                 palette,
-                Message::SelectDrive(drive.mount_path.clone()),
-                Some(Message::OpenSidebarContextMenu {
-                    path: drive.mount_path.clone(),
-                    is_favorite: false,
-                }),
+                primary_msg,
+                Some(ctx_msg),
             );
 
+            let row_widget: Element<'a, Message> =
+                if !collapsed && drive.is_mounted && drive.can_unmount {
+                    let unmount_btn = with_tooltip(
+                        button(
+                            icon_arrow_up_from_line()
+                                .size(13)
+                                .color(palette.text_secondary),
+                        )
+                        .padding([5, 6])
+                        .style(styles::ghost_button(palette, 6.0))
+                        .on_press(Message::UnmountDrive {
+                            device_path: drive.device_path.clone(),
+                            mount_path: Some(drive.mount_path.clone()),
+                            label: drive.label.to_string(),
+                        }),
+                        strings.unmount_drive,
+                        tooltip::Position::Right,
+                        palette,
+                    );
+                    row![container(btn).width(Length::Fill), unmount_btn]
+                        .spacing(2)
+                        .align_y(Center)
+                        .into()
+                } else if !collapsed && !drive.is_mounted {
+                    if let Some(dev) = &drive.device_path {
+                        let mount_btn = with_tooltip(
+                            button(icon_plug().size(13).color(palette.accent_primary))
+                                .padding([5, 6])
+                                .style(styles::ghost_button(palette, 6.0))
+                                .on_press(Message::MountAndOpenDrive(dev.clone())),
+                            strings.mount_drive,
+                            tooltip::Position::Right,
+                            palette,
+                        );
+                        row![container(btn).width(Length::Fill), mount_btn]
+                            .spacing(2)
+                            .align_y(Center)
+                            .into()
+                    } else {
+                        btn
+                    }
+                } else {
+                    btn
+                };
+
             if !collapsed
+                && drive.is_mounted
                 && let Some(space_info) = &drive.space
                 && space_info.total_bytes > 0
             {
@@ -144,9 +320,9 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
                 )
                 .padding(Padding::from([0, 10]));
 
-                drives_col = drives_col.push(column![btn, bar].spacing(2));
+                drives_col = drives_col.push(column![row_widget, bar].spacing(2));
             } else {
-                drives_col = drives_col.push(btn);
+                drives_col = drives_col.push(row_widget);
             }
         }
         sections = sections.push(drives_col);

@@ -54,18 +54,106 @@ pub fn user_places() -> UserPlaces {
         home,
         desktop: user
             .as_ref()
-            .and_then(|u| u.desktop_dir().map(Path::to_path_buf)),
+            .and_then(|u| u.desktop_dir().map(Path::to_path_buf))
+            .filter(|p| p.exists()),
         documents: user
             .as_ref()
-            .and_then(|u| u.document_dir().map(Path::to_path_buf)),
+            .and_then(|u| u.document_dir().map(Path::to_path_buf))
+            .filter(|p| p.exists()),
         downloads: user
             .as_ref()
-            .and_then(|u| u.download_dir().map(Path::to_path_buf)),
+            .and_then(|u| u.download_dir().map(Path::to_path_buf))
+            .filter(|p| p.exists()),
+        music: user
+            .as_ref()
+            .and_then(|u| u.audio_dir().map(Path::to_path_buf))
+            .filter(|p| p.exists()),
         pictures: user
             .as_ref()
-            .and_then(|u| u.picture_dir().map(Path::to_path_buf)),
+            .and_then(|u| u.picture_dir().map(Path::to_path_buf))
+            .filter(|p| p.exists()),
+        videos: user
+            .as_ref()
+            .and_then(|u| u.video_dir().map(Path::to_path_buf))
+            .filter(|p| p.exists()),
+        public_dir: user
+            .as_ref()
+            .and_then(|u| u.public_dir().map(Path::to_path_buf))
+            .filter(|p| p.exists()),
+        templates: user
+            .as_ref()
+            .and_then(|u| u.template_dir().map(Path::to_path_buf))
+            .filter(|p| p.exists()),
         trash,
     }
+}
+
+/// Lista subpastas não ocultas diretamente dentro do diretório pessoal (`home`) para a barra lateral.
+pub async fn list_home_subdirs(home: PathBuf) -> Vec<PathBuf> {
+    tokio::task::spawn_blocking(move || {
+        let Ok(iter) = std::fs::read_dir(&home) else {
+            return Vec::new();
+        };
+        let mut dirs: Vec<PathBuf> = iter
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name();
+                let name_lossy = name.to_string_lossy();
+                if name_lossy.starts_with('.') {
+                    return None;
+                }
+                let is_dir = entry
+                    .file_type()
+                    .map(|ft| ft.is_dir() || (ft.is_symlink() && entry.path().is_dir()))
+                    .unwrap_or(false);
+                is_dir.then(|| entry.path())
+            })
+            .collect();
+        dirs.sort_by(|a, b| {
+            let na = a
+                .file_name()
+                .map(|s| s.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let nb = b
+                .file_name()
+                .map(|s| s.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            na.cmp(&nb)
+        });
+        dirs
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Monta uma unidade/partição em background e retorna o caminho de montagem resultante.
+pub async fn mount_drive(device_path: PathBuf) -> Result<PathBuf, FsError> {
+    let err_path = device_path.clone();
+    tokio::task::spawn_blocking(move || platform::mount_drive(&device_path))
+        .await
+        .map_err(|err| FsError::Io {
+            path: err_path,
+            message: err.to_string(),
+        })?
+}
+
+/// Desmonta ou ejeta uma unidade/ponto de montagem em background.
+pub async fn unmount_drive(
+    device_path: Option<PathBuf>,
+    mount_path: Option<PathBuf>,
+) -> Result<(), FsError> {
+    let err_path = mount_path
+        .clone()
+        .or_else(|| device_path.clone())
+        .unwrap_or_default();
+    tokio::task::spawn_blocking(move || {
+        platform::unmount_drive(device_path.as_deref(), mount_path.as_deref())
+    })
+    .await
+    .map_err(|err| FsError::Io {
+        path: err_path,
+        message: err.to_string(),
+    })?
 }
 
 fn resolve_trash_dir(base: &Option<BaseDirs>) -> Option<PathBuf> {

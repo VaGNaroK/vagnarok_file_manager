@@ -14,11 +14,11 @@ use iced::widget::{
 };
 use iced::{Background, Border, Color, Element, Length, Padding, border::Radius, window};
 use lucide_icons::iced::{
-    icon_check, icon_check_square, icon_clipboard_copy, icon_clipboard_paste, icon_copy,
-    icon_external_link, icon_eye, icon_file_plus, icon_file_text, icon_filter, icon_folder,
-    icon_folder_plus, icon_hard_drive, icon_info, icon_lock, icon_pencil, icon_rotate_ccw,
-    icon_scissors, icon_settings, icon_shield_check, icon_sliders_horizontal, icon_star_off,
-    icon_terminal, icon_trash_2, icon_x,
+    icon_arrow_up_from_line, icon_check, icon_check_square, icon_clipboard_copy,
+    icon_clipboard_paste, icon_copy, icon_external_link, icon_eye, icon_file_plus, icon_file_text,
+    icon_filter, icon_folder, icon_folder_plus, icon_hard_drive, icon_info, icon_lock, icon_pencil,
+    icon_plug, icon_rotate_ccw, icon_scissors, icon_settings, icon_shield_check,
+    icon_sliders_horizontal, icon_star_off, icon_terminal, icon_trash_2, icon_x,
 };
 
 use crate::app::{
@@ -2308,6 +2308,75 @@ pub fn context_menu_overlay<'a>(
                 ));
             }
         }
+        ContextMenuKind::Drive {
+            label,
+            mount_path,
+            device_path,
+            is_mounted,
+            can_unmount,
+        } => {
+            if *is_mounted {
+                items = items
+                    .push(ctx_item(
+                        icon_external_link()
+                            .size(14)
+                            .color(palette.accent_primary)
+                            .into(),
+                        strings.open_item,
+                        palette.text_primary,
+                        Message::NavigateTo(mount_path.clone()),
+                        palette,
+                    ))
+                    .push(ctx_item(
+                        icon_folder().size(14).color(palette.accent_primary).into(),
+                        strings.open_in_new_tab,
+                        palette.text_primary,
+                        Message::OpenInNewTab(mount_path.clone()),
+                        palette,
+                    ))
+                    .push(ctx_item(
+                        icon_clipboard_copy()
+                            .size(14)
+                            .color(palette.text_secondary)
+                            .into(),
+                        strings.copy_path,
+                        palette.text_primary,
+                        Message::CopyPath(mount_path.clone()),
+                        palette,
+                    ))
+                    .push(ctx_item(
+                        icon_info().size(14).color(palette.text_secondary).into(),
+                        strings.properties,
+                        palette.text_primary,
+                        Message::OpenProperties(mount_path.clone()),
+                        palette,
+                    ));
+                if *can_unmount {
+                    items = items.push(ctx_divider(palette)).push(ctx_item(
+                        icon_arrow_up_from_line()
+                            .size(14)
+                            .color(palette.status_warning)
+                            .into(),
+                        strings.unmount_drive,
+                        palette.text_primary,
+                        Message::UnmountDrive {
+                            device_path: device_path.clone(),
+                            mount_path: Some(mount_path.clone()),
+                            label: label.clone(),
+                        },
+                        palette,
+                    ));
+                }
+            } else if let Some(dev) = device_path {
+                items = items.push(ctx_item(
+                    icon_plug().size(14).color(palette.accent_primary).into(),
+                    strings.mount_drive,
+                    palette.text_primary,
+                    Message::MountAndOpenDrive(dev.clone()),
+                    palette,
+                ));
+            }
+        }
         ContextMenuKind::FilterMenu => {
             if let Some(tab) = app.current_tab() {
                 let active_ext = tab.extension_filter.as_deref();
@@ -2495,6 +2564,19 @@ pub fn context_menu_overlay<'a>(
         ContextMenuKind::Entry { .. } => 340.0,
         ContextMenuKind::SidebarPlace { is_favorite, .. } => {
             if *is_favorite {
+                196.0
+            } else {
+                156.0
+            }
+        }
+        ContextMenuKind::Drive {
+            is_mounted,
+            can_unmount,
+            ..
+        } => {
+            if !*is_mounted {
+                48.0
+            } else if *can_unmount {
                 196.0
             } else {
                 156.0

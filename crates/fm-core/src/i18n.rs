@@ -226,6 +226,16 @@ pub struct Strings {
     pub tip_inspector: &'static str,
     pub tip_preferences: &'static str,
     pub tip_toggle_sidebar: &'static str,
+    pub music: &'static str,
+    pub videos: &'static str,
+    pub public_dir: &'static str,
+    pub templates: &'static str,
+    pub filesystem_root: &'static str,
+    pub mount_drive: &'static str,
+    pub unmount_drive: &'static str,
+    pub unmounted_label: &'static str,
+    pub refresh_drives: &'static str,
+    pub tip_expand_home: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -614,6 +624,16 @@ impl Strings {
         let tip_inspector = resolve("tip-inspector");
         let tip_preferences = resolve("tip-preferences");
         let tip_toggle_sidebar = resolve("tip-toggle-sidebar");
+        let music = resolve("music");
+        let videos = resolve("videos");
+        let public_dir = resolve("public-dir");
+        let templates = resolve("templates");
+        let filesystem_root = resolve("filesystem-root");
+        let mount_drive = resolve("mount-drive");
+        let unmount_drive = resolve("unmount-drive");
+        let unmounted_label = resolve("unmounted-label");
+        let refresh_drives = resolve("refresh-drives");
+        let tip_expand_home = resolve("tip-expand-home");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -809,6 +829,16 @@ impl Strings {
             tip_inspector,
             tip_preferences,
             tip_toggle_sidebar,
+            music,
+            videos,
+            public_dir,
+            templates,
+            filesystem_root,
+            mount_drive,
+            unmount_drive,
+            unmounted_label,
+            refresh_drives,
+            tip_expand_home,
         }
     }
 }

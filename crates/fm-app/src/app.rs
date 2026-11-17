@@ -57,6 +57,13 @@ pub enum ContextMenuKind {
         path: PathBuf,
         is_favorite: bool,
     },
+    Drive {
+        label: String,
+        mount_path: PathBuf,
+        device_path: Option<PathBuf>,
+        is_mounted: bool,
+        can_unmount: bool,
+    },
     Background,
     NewMenu,
     FilterMenu,
@@ -169,24 +176,30 @@ pub fn thumbnail_key_for_entry(entry: &FileEntry) -> ThumbnailKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarTarget {
-    Documents,
     Home,
     Desktop,
+    Documents,
     Downloads,
+    Music,
     Pictures,
-    CodeDev,
+    Videos,
+    PublicDir,
+    Templates,
     Trash,
 }
 
 impl SidebarTarget {
     pub fn resolve_path(self, places: &UserPlaces) -> Option<PathBuf> {
         match self {
-            Self::Documents => places.documents.clone(),
             Self::Home => Some(places.home.clone()),
             Self::Desktop => places.desktop.clone(),
+            Self::Documents => places.documents.clone(),
             Self::Downloads => places.downloads.clone(),
+            Self::Music => places.music.clone(),
             Self::Pictures => places.pictures.clone(),
-            Self::CodeDev => std::env::current_dir().ok(),
+            Self::Videos => places.videos.clone(),
+            Self::PublicDir => places.public_dir.clone(),
+            Self::Templates => places.templates.clone(),
             Self::Trash => places.trash.clone(),
         }
     }
@@ -205,7 +218,32 @@ pub enum Message {
     NavigateUp,
     RefreshActiveTab,
     SelectSidebar(SidebarTarget),
+    ToggleSidebarHomeExpanded,
+    HomeSubdirsLoaded(Vec<PathBuf>),
     SelectDrive(PathBuf),
+    RefreshDrives,
+    MountAndOpenDrive(PathBuf),
+    DriveMounted {
+        device_path: PathBuf,
+        result: Result<PathBuf, FsError>,
+    },
+    UnmountDrive {
+        device_path: Option<PathBuf>,
+        mount_path: Option<PathBuf>,
+        label: String,
+    },
+    DriveUnmounted {
+        mount_path: Option<PathBuf>,
+        label: String,
+        result: Result<(), FsError>,
+    },
+    OpenDriveContextMenu {
+        label: String,
+        mount_path: PathBuf,
+        device_path: Option<PathBuf>,
+        is_mounted: bool,
+        can_unmount: bool,
+    },
     SelectEntry {
         index: usize,
         modifiers: SelectionModifiers,
@@ -499,6 +537,8 @@ pub struct App {
     pub quicklook_extension: String,
     pub quicklook_image: Option<(PathBuf, image::Handle)>,
     pub drives: Vec<DriveInfo>,
+    pub home_subdirs: Vec<PathBuf>,
+    pub sidebar_home_expanded: bool,
     pub active_sidebar: Option<SidebarTarget>,
     pub path_editing: bool,
     pub path_draft: String,
@@ -617,6 +657,8 @@ impl App {
             quicklook_extension: String::new(),
             quicklook_image: None,
             drives: Vec::new(),
+            home_subdirs: Vec::new(),
+            sidebar_home_expanded: false,
             active_sidebar: Some(SidebarTarget::Documents),
             path_editing: false,
             path_draft: String::new(),
@@ -652,6 +694,10 @@ impl App {
                 Message::DrivesLoaded,
             )
         };
+        let home_subdirs_task = Task::perform(
+            fm_fs::list_home_subdirs(app.places.home.clone()),
+            Message::HomeSubdirsLoaded,
+        );
         let disk_cache_task = Task::perform(
             async {
                 tokio::task::spawn_blocking(DiskThumbnailCache::open_default)
@@ -686,6 +732,7 @@ impl App {
                 monitor_fit_task,
                 auto_theme_task,
                 drives_task,
+                home_subdirs_task,
                 disk_cache_task,
                 meta_cache_task,
                 vibrancy_task,
@@ -873,9 +920,127 @@ impl App {
                     Task::none()
                 }
             }
+            Message::ToggleSidebarHomeExpanded => {
+                self.sidebar_home_expanded = !self.sidebar_home_expanded;
+                if self.sidebar_home_expanded {
+                    Task::perform(
+                        fm_fs::list_home_subdirs(self.places.home.clone()),
+                        Message::HomeSubdirsLoaded,
+                    )
+                } else {
+                    Task::none()
+                }
+            }
+            Message::HomeSubdirsLoaded(dirs) => {
+                self.home_subdirs = dirs;
+                Task::none()
+            }
             Message::SelectDrive(path) => {
                 self.active_sidebar = None;
                 self.navigate_active_tab(path)
+            }
+            Message::RefreshDrives => {
+                let vfs = Arc::clone(&self.vfs);
+                Task::perform(
+                    async move { vfs.list_drives().await },
+                    Message::DrivesLoaded,
+                )
+            }
+            Message::MountAndOpenDrive(device_path) => {
+                self.context_menu = None;
+                let dev_for_cb = device_path.clone();
+                Task::perform(fm_fs::mount_drive(device_path), move |result| {
+                    Message::DriveMounted {
+                        device_path: dev_for_cb,
+                        result,
+                    }
+                })
+            }
+            Message::DriveMounted {
+                device_path,
+                result,
+            } => {
+                let refresh_task = self.update(Message::RefreshDrives);
+                match result {
+                    Ok(mount_path) => {
+                        self.status_notice = Some(format!(
+                            "{}: {}",
+                            self.strings().mount_drive,
+                            mount_path.to_string_lossy()
+                        ));
+                        let nav_task = self.navigate_active_tab(mount_path);
+                        Task::batch([refresh_task, nav_task])
+                    }
+                    Err(err) => {
+                        let _ = device_path;
+                        self.status_notice = Some(err.to_string());
+                        refresh_task
+                    }
+                }
+            }
+            Message::UnmountDrive {
+                device_path,
+                mount_path,
+                label,
+            } => {
+                self.context_menu = None;
+                let mp_for_cb = mount_path.clone();
+                let label_for_cb = label.clone();
+                Task::perform(
+                    fm_fs::unmount_drive(device_path, mount_path),
+                    move |result| Message::DriveUnmounted {
+                        mount_path: mp_for_cb,
+                        label: label_for_cb,
+                        result,
+                    },
+                )
+            }
+            Message::DriveUnmounted {
+                mount_path,
+                label,
+                result,
+            } => {
+                let refresh_task = self.update(Message::RefreshDrives);
+                match result {
+                    Ok(()) => {
+                        self.status_notice =
+                            Some(format!("{}: {label}", self.strings().unmount_drive));
+                        let nav_task = if let Some(mp) = mount_path
+                            && self
+                                .current_tab()
+                                .is_some_and(|t| t.current_path.starts_with(&mp))
+                        {
+                            self.navigate_active_tab(self.places.home.clone())
+                        } else {
+                            Task::none()
+                        };
+                        Task::batch([refresh_task, nav_task])
+                    }
+                    Err(err) => {
+                        self.status_notice = Some(err.to_string());
+                        refresh_task
+                    }
+                }
+            }
+            Message::OpenDriveContextMenu {
+                label,
+                mount_path,
+                device_path,
+                is_mounted,
+                can_unmount,
+            } => {
+                self.breadcrumb_menu = None;
+                self.context_menu = Some(ContextMenuState {
+                    kind: ContextMenuKind::Drive {
+                        label,
+                        mount_path,
+                        device_path,
+                        is_mounted,
+                        can_unmount,
+                    },
+                    position: self.cursor_position,
+                });
+                Task::none()
             }
             Message::SelectEntry { index, modifiers } => {
                 self.context_menu = None;

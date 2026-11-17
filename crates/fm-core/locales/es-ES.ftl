@@ -246,3 +246,15 @@ tip-favorite = Fijar o quitar carpeta de favoritos
 tip-inspector = Mostrar u ocultar panel Inspector (Alt+I)
 tip-preferences = Abrir Preferencias (clic derecho para menú rápido)
 tip-toggle-sidebar = Contraer o expandir barra lateral (Ctrl+B)
+
+# Lugares de usuario y montaje de discos
+music = Música
+videos = Vídeos
+public-dir = Público
+templates = Plantillas
+filesystem-root = Sistema de archivos
+mount-drive = Montar
+unmount-drive = Desmontar
+unmounted-label = Desmontado
+refresh-drives = Actualizar unidades
+tip-expand-home = Expandir o contraer carpetas de Inicio

@@ -246,3 +246,15 @@ tip-favorite = Pin or unpin folder from favorites
 tip-inspector = Show or hide Inspector panel (Alt+I)
 tip-preferences = Open Preferences (right-click for quick menu)
 tip-toggle-sidebar = Collapse or expand sidebar (Ctrl+B)
+
+# User places & drive mounting
+music = Music
+videos = Videos
+public-dir = Public
+templates = Templates
+filesystem-root = File System
+mount-drive = Mount
+unmount-drive = Unmount
+unmounted-label = Unmounted
+refresh-drives = Refresh drives
+tip-expand-home = Expand or collapse Home folders

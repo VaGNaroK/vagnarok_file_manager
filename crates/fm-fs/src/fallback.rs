@@ -56,3 +56,20 @@ pub fn fs_type_for_path(_path: &Path) -> Option<CompactString> {
 pub fn list_drives() -> Vec<DriveInfo> {
     Vec::new()
 }
+
+pub fn mount_drive(device_path: &Path) -> Result<std::path::PathBuf, FsError> {
+    Err(FsError::Io {
+        path: device_path.to_path_buf(),
+        message: "montagem de discos não suportada nesta plataforma".to_owned(),
+    })
+}
+
+pub fn unmount_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> Result<(), FsError> {
+    Err(FsError::Io {
+        path: mount_path
+            .or(device_path)
+            .unwrap_or_else(|| Path::new("/"))
+            .to_path_buf(),
+        message: "desmontagem de discos não suportada nesta plataforma".to_owned(),
+    })
+}

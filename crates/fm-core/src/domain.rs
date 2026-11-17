@@ -34,7 +34,11 @@ pub struct UserPlaces {
     pub desktop: Option<PathBuf>,
     pub documents: Option<PathBuf>,
     pub downloads: Option<PathBuf>,
+    pub music: Option<PathBuf>,
     pub pictures: Option<PathBuf>,
+    pub videos: Option<PathBuf>,
+    pub public_dir: Option<PathBuf>,
+    pub templates: Option<PathBuf>,
     pub trash: Option<PathBuf>,
 }
 
@@ -216,8 +220,12 @@ pub enum DriveKind {
 pub struct DriveInfo {
     pub label: CompactString,
     pub mount_path: PathBuf,
+    pub device_path: Option<PathBuf>,
     pub fs_type: Option<CompactString>,
     pub kind: DriveKind,
+    pub is_mounted: bool,
+    pub can_unmount: bool,
+    pub total_bytes_hint: Option<u64>,
     pub space: Option<VolumeSpace>,
 }
 

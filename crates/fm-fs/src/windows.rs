@@ -411,8 +411,12 @@ pub fn list_drives() -> Vec<DriveInfo> {
         drives.push(DriveInfo {
             label: display,
             mount_path,
+            device_path: None,
             fs_type,
             kind,
+            is_mounted: true,
+            can_unmount: drive_type == DRIVE_REMOVABLE,
+            total_bytes_hint: space.as_ref().map(|s| s.total_bytes),
             space,
         });
         idx += 1;
@@ -420,6 +424,42 @@ pub fn list_drives() -> Vec<DriveInfo> {
     }
 
     drives
+}
+
+pub fn mount_drive(device_path: &Path) -> Result<PathBuf, FsError> {
+    Err(FsError::Io {
+        path: device_path.to_path_buf(),
+        message: "montagem manual de partições por caminho não é suportada diretamente no Windows"
+            .to_owned(),
+    })
+}
+
+pub fn unmount_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> Result<(), FsError> {
+    let target = mount_path
+        .or(device_path)
+        .unwrap_or_else(|| Path::new("C:\\"));
+    let drive_root = target.to_string_lossy();
+    let trimmed = drive_root.trim_end_matches('\\');
+    let script = format!(
+        "(New-Object -ComObject Shell.Application).Namespace(17).ParseName('{trimmed}\\').InvokeVerb('Eject')"
+    );
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .map_err(|e| map_io_err(target, e))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(FsError::Io {
+            path: target.to_path_buf(),
+            message: if stderr.is_empty() {
+                "não foi possível ejetar a unidade removível".to_owned()
+            } else {
+                stderr
+            },
+        })
+    }
 }
 
 fn query_volume_info(root: &Path) -> (Option<CompactString>, Option<CompactString>) {

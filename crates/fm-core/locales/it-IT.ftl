@@ -246,3 +246,15 @@ tip-favorite = Aggiungi o rimuovi cartella dai preferiti
 tip-inspector = Mostra o nascondi pannello Ispettore (Alt+I)
 tip-preferences = Apri Preferenze (clic destro per menu rapido)
 tip-toggle-sidebar = Comprimi o espandi barra laterale (Ctrl+B)
+
+# Risorse utente e montaggio dischi
+music = Musica
+videos = Video
+public-dir = Pubblici
+templates = Modelli
+filesystem-root = File system
+mount-drive = Monta
+unmount-drive = Smonta
+unmounted-label = Smontato
+refresh-drives = Aggiorna unità
+tip-expand-home = Espandi o comprimi cartelle della Home

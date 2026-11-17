@@ -246,3 +246,15 @@ tip-favorite = Ordner an Favoriten anheften oder lösen
 tip-inspector = Inspektor-Bereich ein- oder ausblenden (Alt+I)
 tip-preferences = Einstellungen öffnen (Rechtsklick für Schnellmenü)
 tip-toggle-sidebar = Seitenleiste ein- oder ausklappen (Ctrl+B)
+
+# Benutzerorte & Laufwerke ein-/aushängen
+music = Musik
+videos = Videos
+public-dir = Öffentlich
+templates = Vorlagen
+filesystem-root = Dateisystem
+mount-drive = Einhängen
+unmount-drive = Aushängen
+unmounted-label = Ausgehängt
+refresh-drives = Laufwerke aktualisieren
+tip-expand-home = Ordner im Benutzerverzeichnis ein- oder ausklappen
