@@ -156,6 +156,11 @@ pub async fn unmount_drive(
     })?
 }
 
+/// Indica se a plataforma atual suporta a ação "Abrir como root" no menu de contexto.
+pub fn supports_open_as_root() -> bool {
+    platform::supports_open_as_root()
+}
+
 /// Indica se o processo atual está executando com privilégios elevados (UID 0 / root no Linux).
 pub fn is_elevated_session() -> bool {
     platform::is_elevated_session()

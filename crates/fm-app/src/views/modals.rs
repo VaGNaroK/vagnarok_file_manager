@@ -2121,6 +2121,7 @@ pub fn context_menu_overlay<'a>(
 ) -> Element<'a, Message> {
     let menu_width = 230.0_f32;
     let has_clipboard = app.clipboard.is_some();
+    let show_open_as_root = fm_fs::supports_open_as_root();
 
     let mut items = column![].spacing(2).width(Length::Fill);
 
@@ -2171,7 +2172,8 @@ pub fn context_menu_overlay<'a>(
                     Message::OpenInNewTab(path.clone()),
                     palette,
                 ));
-                if !fm_core::is_virtual_trash_path(path)
+                if show_open_as_root
+                    && !fm_core::is_virtual_trash_path(path)
                     && fm_fs::archive::split_archive_path(path).is_none()
                 {
                     items = items.push(ctx_item(
@@ -2295,7 +2297,7 @@ pub fn context_menu_overlay<'a>(
                     Message::OpenInNewTab(path.clone()),
                     palette,
                 ));
-            if !fm_core::is_virtual_trash_path(path) {
+            if show_open_as_root && !fm_core::is_virtual_trash_path(path) {
                 items = items.push(ctx_item(
                     icon_shield_alert()
                         .size(14)
@@ -2360,8 +2362,9 @@ pub fn context_menu_overlay<'a>(
                         palette.text_primary,
                         Message::OpenInNewTab(mount_path.clone()),
                         palette,
-                    ))
-                    .push(ctx_item(
+                    ));
+                if show_open_as_root {
+                    items = items.push(ctx_item(
                         icon_shield_alert()
                             .size(14)
                             .color(palette.status_warning)
@@ -2370,7 +2373,9 @@ pub fn context_menu_overlay<'a>(
                         palette.text_primary,
                         Message::OpenAsRoot(mount_path.clone()),
                         palette,
-                    ))
+                    ));
+                }
+                items = items
                     .push(ctx_item(
                         icon_clipboard_copy()
                             .size(14)
@@ -2585,7 +2590,8 @@ pub fn context_menu_overlay<'a>(
                 palette,
             ));
             if let Some(tab) = app.current_tab() {
-                if !fm_core::is_virtual_trash_path(&tab.current_path)
+                if show_open_as_root
+                    && !fm_core::is_virtual_trash_path(&tab.current_path)
                     && fm_fs::archive::split_archive_path(&tab.current_path).is_none()
                 {
                     items = items.push(ctx_item(
@@ -2610,20 +2616,21 @@ pub fn context_menu_overlay<'a>(
         }
     }
 
+    let root_extra = if show_open_as_root { 36.0 } else { 0.0 };
     let est_height = match &menu.kind {
         ContextMenuKind::NewMenu => 84.0,
         ContextMenuKind::Entry { is_dir, .. } => {
             if *is_dir {
-                376.0
+                340.0 + root_extra
             } else {
                 340.0
             }
         }
         ContextMenuKind::SidebarPlace { is_favorite, .. } => {
             if *is_favorite {
-                232.0
+                196.0 + root_extra
             } else {
-                192.0
+                156.0 + root_extra
             }
         }
         ContextMenuKind::Drive {
@@ -2634,12 +2641,12 @@ pub fn context_menu_overlay<'a>(
             if !*is_mounted {
                 48.0
             } else if *can_unmount {
-                232.0
+                196.0 + root_extra
             } else {
-                192.0
+                156.0 + root_extra
             }
         }
-        ContextMenuKind::Background => 320.0,
+        ContextMenuKind::Background => 284.0 + root_extra,
         ContextMenuKind::FilterMenu => 320.0,
         ContextMenuKind::LanguageMenu => 256.0,
         ContextMenuKind::PreferencesMenu => 84.0,

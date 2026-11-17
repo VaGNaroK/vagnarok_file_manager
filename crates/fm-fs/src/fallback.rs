@@ -74,6 +74,10 @@ pub fn unmount_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> R
     })
 }
 
+pub fn supports_open_as_root() -> bool {
+    false
+}
+
 pub fn is_elevated_session() -> bool {
     false
 }
