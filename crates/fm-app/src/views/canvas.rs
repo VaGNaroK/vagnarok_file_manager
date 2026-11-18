@@ -7,7 +7,7 @@ use fm_theme::{
 };
 use iced::Alignment::{self, Center};
 use iced::advanced::layout;
-use iced::advanced::renderer;
+use iced::advanced::renderer::{self, Renderer as _};
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, overlay};
 use iced::keyboard;
@@ -16,7 +16,10 @@ use iced::widget::{
     Space, button, column, container, image, mouse_area, responsive, row, scrollable, space, stack,
     text, tooltip,
 };
-use iced::{Color, ContentFit, Element, Event, Length, Padding, Rectangle, Size, Vector};
+use iced::{
+    Background, Border, Color, ContentFit, Element, Event, Length, Padding, Point, Rectangle, Size,
+    Vector,
+};
 use lucide_icons::iced::{
     icon_arrow_up_down, icon_chevron_right, icon_clipboard_paste, icon_copy, icon_eye,
     icon_eye_off, icon_filter, icon_folder_tree, icon_info, icon_minus, icon_pencil, icon_plus,
@@ -29,9 +32,10 @@ use crate::app::{
 };
 use crate::views::modals::format_transfer_summary;
 use crate::views::virtualized::{
-    DETAIL_ROW_HEIGHT, DETAIL_ROW_STEP, GRID_BAND_SPACING, GRID_GAP, GridBand,
-    build_tab_grid_bands, clamp_grid_card_width, compute_band_window_with_row_height,
-    compute_fixed_window, grid_card_height, grid_columns_for_width,
+    ContentRect, DETAIL_LIST_SIDE_PADDING, DETAIL_ROW_HEIGHT, DETAIL_ROW_STEP, GRID_BAND_SPACING,
+    GRID_GAP, GridBand, build_tab_grid_bands, clamp_grid_card_width,
+    compute_band_window_with_row_height, compute_fixed_window, grid_card_height,
+    grid_columns_for_width,
 };
 use crate::views::{entry_icon, sanitize_single_line, with_tooltip};
 
@@ -866,7 +870,7 @@ fn grid_view<'a>(
 
         let centered_canvas = container(list).width(Length::Fill).align_x(Center);
 
-        scrollable(centered_canvas)
+        let scroll = scrollable(centered_canvas)
             .id(canvas_scroll_id())
             .width(Length::Fill)
             .height(Length::Fill)
@@ -874,8 +878,8 @@ fn grid_view<'a>(
                 offset_y: vp.absolute_offset().y,
                 viewport_height: vp.bounds().height,
                 viewport_width: vp.bounds().width,
-            })
-            .into()
+            });
+        wrap_marquee(app, scroll.into(), palette)
     })
     .into()
 }
@@ -1295,7 +1299,11 @@ fn detail_table_view<'a>(
     }
     rows = rows.push(Space::new().height(48.0));
 
-    let scroll = scrollable(rows)
+    let padded_rows = container(rows)
+        .width(Length::Fill)
+        .padding(Padding::from([0.0, DETAIL_LIST_SIDE_PADDING]));
+
+    let scroll = scrollable(padded_rows)
         .id(canvas_scroll_id())
         .height(Length::Fill)
         .on_scroll(|vp| Message::CanvasScrolled {
@@ -1304,7 +1312,7 @@ fn detail_table_view<'a>(
             viewport_width: vp.bounds().width,
         });
 
-    column![sticky_header, scroll]
+    column![sticky_header, wrap_marquee(app, scroll.into(), palette)]
         .spacing(6)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -1494,20 +1502,20 @@ fn columns_view<'a>(
         active_col = active_col.push(Space::new().height(win.bottom_spacer));
     }
 
-    let col2 = container(
-        scrollable(active_col)
-            .id(canvas_scroll_id())
-            .height(Length::Fill)
-            .on_scroll(|vp| Message::CanvasScrolled {
-                offset_y: vp.absolute_offset().y,
-                viewport_height: vp.bounds().height,
-                viewport_width: vp.bounds().width,
-            }),
-    )
-    .width(Length::Fixed(app.columns_panel_width))
-    .height(Length::Fill)
-    .padding(12)
-    .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
+    let col2_scroll = scrollable(active_col)
+        .id(canvas_scroll_id())
+        .height(Length::Fill)
+        .on_scroll(|vp| Message::CanvasScrolled {
+            offset_y: vp.absolute_offset().y,
+            viewport_height: vp.bounds().height,
+            viewport_width: vp.bounds().width,
+        });
+
+    let col2 = container(wrap_marquee(app, col2_scroll.into(), palette))
+        .width(Length::Fixed(app.columns_panel_width))
+        .height(Length::Fill)
+        .padding(12)
+        .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
 
     let col_divider = mouse_area(
         container(
@@ -1839,6 +1847,327 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for CtrlWheelZoom<'_,
         viewport: &Rectangle,
         renderer: &iced::Renderer,
     ) -> mouse::Interaction {
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &iced::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
+
+fn wrap_marquee<'a>(
+    app: &'a App,
+    content: Element<'a, Message>,
+    palette: ThemePalette,
+) -> Element<'a, Message> {
+    let enabled = app.active_dialog.is_none()
+        && app.context_menu.is_none()
+        && app.breadcrumb_menu.is_none()
+        && !app.quicklook_open
+        && !app.prefs_open
+        && !app.deep_search_open;
+    Element::new(MarqueeSelect {
+        content,
+        enabled,
+        scroll_y: app.canvas_scroll_y,
+        accent: palette.accent_primary,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MarqueeDrag {
+    anchor_screen: Point,
+    anchor_content_x: f32,
+    anchor_content_y: f32,
+    current_content_x: f32,
+    current_content_y: f32,
+    additive: bool,
+    activated: bool,
+}
+
+#[derive(Default)]
+struct MarqueeState {
+    drag: Option<MarqueeDrag>,
+    ctrl_held: bool,
+    shift_held: bool,
+}
+
+/// Wrapper que captura arraste com botão esquerdo em área vazia do canvas para seleção em caixa (marquee).
+struct MarqueeSelect<'a> {
+    content: Element<'a, Message>,
+    enabled: bool,
+    scroll_y: f32,
+    accent: Color,
+}
+
+impl Widget<Message, iced::Theme, iced::Renderer> for MarqueeSelect<'_> {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<MarqueeState>()
+    }
+
+    fn state(&self) -> tree::State {
+        tree::State::new(MarqueeState::default())
+    }
+
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content));
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+
+        let state = tree.state.downcast_ref::<MarqueeState>();
+        if let Some(drag) = state.drag
+            && drag.activated
+        {
+            let bounds = layout.bounds();
+            let x0 = bounds.x + drag.anchor_content_x;
+            let x1 = bounds.x + drag.current_content_x;
+            let y0 = bounds.y + drag.anchor_content_y - self.scroll_y;
+            let y1 = bounds.y + drag.current_content_y - self.scroll_y;
+            let raw_rect = Rectangle {
+                x: x0.min(x1),
+                y: y0.min(y1),
+                width: (x1 - x0).abs().max(1.0),
+                height: (y1 - y0).abs().max(1.0),
+            };
+            if let Some(visible_rect) = raw_rect.intersection(&bounds) {
+                renderer.with_layer(bounds, |renderer| {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: visible_rect,
+                            border: Border {
+                                color: self.accent,
+                                width: 1.5,
+                                radius: 2.0.into(),
+                            },
+                            ..renderer::Quad::default()
+                        },
+                        Background::Color(Color {
+                            a: 0.14,
+                            ..self.accent
+                        }),
+                    );
+                });
+            }
+        }
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.content
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        let state = tree.state.downcast_mut::<MarqueeState>();
+        match event {
+            Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) => {
+                state.ctrl_held = mods.control();
+                state.shift_held = mods.shift();
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                if matches!(key, keyboard::Key::Named(keyboard::key::Named::Control))
+                    || modifiers.control()
+                {
+                    state.ctrl_held = true;
+                }
+                if matches!(key, keyboard::Key::Named(keyboard::key::Named::Shift))
+                    || modifiers.shift()
+                {
+                    state.shift_held = true;
+                }
+            }
+            Event::Keyboard(keyboard::Event::KeyReleased { key, modifiers, .. }) => {
+                state.ctrl_held =
+                    if matches!(key, keyboard::Key::Named(keyboard::key::Named::Control)) {
+                        false
+                    } else {
+                        modifiers.control()
+                    };
+                state.shift_held =
+                    if matches!(key, keyboard::Key::Named(keyboard::key::Named::Shift)) {
+                        false
+                    } else {
+                        modifiers.shift()
+                    };
+            }
+            Event::Window(iced::window::Event::Unfocused) => {
+                state.ctrl_held = false;
+                state.shift_held = false;
+                state.drag = None;
+            }
+            _ => {}
+        }
+
+        let was_captured = shell.is_event_captured();
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+        let child_captured = !was_captured && shell.is_event_captured();
+
+        if !self.enabled {
+            state.drag = None;
+            return;
+        }
+
+        let bounds = layout.bounds();
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                if !child_captured
+                    && !shell.is_event_captured()
+                    && let Some(pos) = cursor.position_over(bounds)
+                {
+                    let content_x = (pos.x - bounds.x).clamp(0.0, bounds.width);
+                    let content_y = ((pos.y - bounds.y) + self.scroll_y).max(0.0);
+                    state.drag = Some(MarqueeDrag {
+                        anchor_screen: pos,
+                        anchor_content_x: content_x,
+                        anchor_content_y: content_y,
+                        current_content_x: content_x,
+                        current_content_y: content_y,
+                        additive: state.ctrl_held || state.shift_held,
+                        activated: false,
+                    });
+                    shell.capture_event();
+                }
+            }
+            Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                if let Some(drag) = state.drag.as_mut() {
+                    let content_x = (position.x - bounds.x).clamp(0.0, bounds.width);
+                    let content_y = ((position.y - bounds.y) + self.scroll_y).max(0.0);
+                    drag.current_content_x = content_x;
+                    drag.current_content_y = content_y;
+                    let dist = (position.x - drag.anchor_screen.x)
+                        .hypot(position.y - drag.anchor_screen.y);
+                    if drag.activated || dist >= 4.0 {
+                        let is_initial = !drag.activated;
+                        drag.activated = true;
+                        let rect = ContentRect::from_points(
+                            drag.anchor_content_x,
+                            drag.anchor_content_y,
+                            drag.current_content_x,
+                            drag.current_content_y,
+                        );
+                        shell.publish(Message::MarqueeSelect {
+                            rect,
+                            viewport_width: bounds.width,
+                            additive: drag.additive,
+                            is_initial,
+                        });
+                        shell.request_redraw();
+                    }
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if let Some(drag) = state.drag.take() {
+                    if drag.activated {
+                        shell.publish(Message::MarqueeFinished);
+                    } else if !drag.additive {
+                        shell.publish(Message::ClearSelection);
+                    }
+                    shell.request_redraw();
+                    shell.capture_event();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        let state = tree.state.downcast_ref::<MarqueeState>();
+        if state.drag.is_some_and(|d| d.activated) {
+            return mouse::Interaction::Crosshair;
+        }
         self.content.as_widget().mouse_interaction(
             &tree.children[0],
             layout,

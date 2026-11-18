@@ -248,6 +248,14 @@ pub enum Message {
         index: usize,
         modifiers: SelectionModifiers,
     },
+    ClearSelection,
+    MarqueeSelect {
+        rect: views::virtualized::ContentRect,
+        viewport_width: f32,
+        additive: bool,
+        is_initial: bool,
+    },
+    MarqueeFinished,
     SelectAll,
     ActivateEntry(usize),
     SetViewMode(ViewMode),
@@ -533,6 +541,7 @@ pub struct App {
     pub active_transfer: Option<JobProgress>,
     pub transfer_cancel: Option<CancellationToken>,
     pub pending_select_path: Option<PathBuf>,
+    pub marquee_base_selection: HashSet<EntryId>,
     pub metadata_cache: Option<Arc<DiskMetadataCache>>,
     pub disk_thumbnail_cache: Option<Arc<DiskThumbnailCache>>,
     pub thumbnail_cache: ThumbnailCache,
@@ -657,6 +666,7 @@ impl App {
             active_transfer: None,
             transfer_cancel: None,
             pending_select_path: None,
+            marquee_base_selection: HashSet::new(),
             metadata_cache: None,
             disk_thumbnail_cache: None,
             thumbnail_cache: ThumbnailCache::default(),
@@ -1082,6 +1092,88 @@ impl App {
                     tab.selected_telemetry = single_entry.as_ref().map(basic_file_telemetry);
                 }
                 self.dispatch_selection_side_effects(single_entry.as_ref())
+            }
+            Message::ClearSelection => {
+                self.context_menu = None;
+                self.last_entry_click = None;
+                self.marquee_base_selection.clear();
+                if let Some(tab) = self.current_tab_mut() {
+                    tab.selection.clear();
+                    tab.selected_telemetry = None;
+                }
+                Task::none()
+            }
+            Message::MarqueeSelect {
+                rect,
+                viewport_width,
+                additive,
+                is_initial,
+            } => {
+                self.context_menu = None;
+                self.last_entry_click = None;
+                let strings = self.strings();
+                let card_width = self.config.grid_card_width;
+                let group_folders = self.config.grid_group_folders;
+                if is_initial {
+                    self.marquee_base_selection = if additive {
+                        self.current_tab()
+                            .map(|t| t.selection.selected_ids.clone())
+                            .unwrap_or_default()
+                    } else {
+                        HashSet::new()
+                    };
+                }
+                let base_selection = self.marquee_base_selection.clone();
+                if let Some(tab) = self.current_tab_mut() {
+                    let hits = match tab.view_mode {
+                        ViewMode::Grid => views::virtualized::grid_marquee_hits(
+                            &tab.visible_entries,
+                            viewport_width,
+                            card_width,
+                            group_folders,
+                            strings,
+                            rect,
+                        ),
+                        ViewMode::DetailTable => views::virtualized::list_marquee_hits(
+                            tab.visible_entries.len(),
+                            viewport_width,
+                            views::virtualized::DETAIL_LIST_SIDE_PADDING,
+                            rect,
+                        ),
+                        ViewMode::Columns => views::virtualized::list_marquee_hits(
+                            tab.visible_entries.len(),
+                            viewport_width,
+                            0.0,
+                            rect,
+                        ),
+                    };
+
+                    tab.selection.selected_ids = base_selection;
+                    for &idx in &hits {
+                        if let Some(entry) = tab.visible_entries.get(idx) {
+                            tab.selection.selected_ids.insert(entry.id);
+                        }
+                    }
+                    if let (Some(&first), Some(&last)) = (hits.first(), hits.last()) {
+                        if tab.selection.anchor.is_none() || !additive {
+                            tab.selection.anchor = Some(first);
+                        }
+                        tab.selection.focused = Some(last);
+                    } else if !additive {
+                        tab.selection.anchor = None;
+                        tab.selection.focused = None;
+                    }
+                    let single = tab.selection.single_selected(&tab.visible_entries).cloned();
+                    tab.selected_telemetry = single.as_ref().map(basic_file_telemetry);
+                }
+                Task::none()
+            }
+            Message::MarqueeFinished => {
+                self.marquee_base_selection.clear();
+                let single = self
+                    .current_tab()
+                    .and_then(|t| t.selection.single_selected(&t.visible_entries).cloned());
+                self.dispatch_selection_side_effects(single.as_ref())
             }
             Message::SelectAll => {
                 self.context_menu = None;

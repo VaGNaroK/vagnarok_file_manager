@@ -5,6 +5,30 @@ use fm_core::{FileEntry, Strings};
 pub const DETAIL_ROW_HEIGHT: f32 = 34.0;
 pub const DETAIL_ROW_SPACING: f32 = 4.0;
 pub const DETAIL_ROW_STEP: f32 = DETAIL_ROW_HEIGHT + DETAIL_ROW_SPACING;
+pub const DETAIL_LIST_SIDE_PADDING: f32 = 8.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ContentRect {
+    pub min_x: f32,
+    pub min_y: f32,
+    pub max_x: f32,
+    pub max_y: f32,
+}
+
+impl ContentRect {
+    pub fn from_points(a_x: f32, a_y: f32, b_x: f32, b_y: f32) -> Self {
+        Self {
+            min_x: a_x.min(b_x),
+            min_y: a_y.min(b_y),
+            max_x: a_x.max(b_x),
+            max_y: a_y.max(b_y),
+        }
+    }
+
+    pub fn intersects(self, x0: f32, y0: f32, x1: f32, y1: f32) -> bool {
+        self.max_x >= x0 && self.min_x <= x1 && self.max_y >= y0 && self.min_y <= y1
+    }
+}
 
 pub const GRID_HEADER_HEIGHT: f32 = 24.0;
 pub const GRID_BAND_SPACING: f32 = 16.0;
@@ -231,6 +255,106 @@ pub fn grid_band_y_span(
     None
 }
 
+/// Retorna os índices das entradas cujos cards no Grid intersectam `rect` em coordenadas do conteúdo.
+pub fn grid_marquee_hits(
+    entries: &[FileEntry],
+    viewport_width: f32,
+    card_width: f32,
+    group_folders: bool,
+    strings: Strings,
+    rect: ContentRect,
+) -> Vec<usize> {
+    if entries.is_empty() || viewport_width <= 0.0 {
+        return Vec::new();
+    }
+    let card_width = clamp_grid_card_width(card_width);
+    let card_height = grid_card_height(card_width);
+    let box_width = (card_width - 14.0).max(88.0);
+    let box_inset_x = (card_width - box_width) * 0.5;
+
+    let fit_cols = grid_columns_for_width(viewport_width, card_width);
+    let bands = build_tab_grid_bands(entries, fit_cols, group_folders, strings);
+    let max_row_items = bands
+        .iter()
+        .filter_map(|b| match b {
+            GridBand::Items(chunk) => Some(chunk.len()),
+            GridBand::SectionHeader { .. } => None,
+        })
+        .max()
+        .unwrap_or(0);
+    let active_cols = if max_row_items > 0 && max_row_items < fit_cols {
+        max_row_items
+    } else {
+        fit_cols
+    };
+    let grid_block_width =
+        active_cols as f32 * card_width + active_cols.saturating_sub(1) as f32 * GRID_GAP;
+    let min_header_w = 300.0_f32.min(viewport_width.max(card_width));
+    let block_width = grid_block_width
+        .max(min_header_w)
+        .min(viewport_width.max(card_width));
+    let center_sparse_rows = max_row_items > 0 && max_row_items < fit_cols;
+    let list_x = ((viewport_width - block_width) * 0.5).max(0.0);
+
+    let mut hits = Vec::new();
+    let mut y = 0.0_f32;
+    for (i, band) in bands.iter().enumerate() {
+        let h = band.height_with(card_height);
+        if let GridBand::Items(chunk) = band
+            && rect.max_y >= y
+            && rect.min_y <= y + h
+        {
+            let row_w =
+                chunk.len() as f32 * card_width + chunk.len().saturating_sub(1) as f32 * GRID_GAP;
+            let row_x = if center_sparse_rows {
+                list_x + ((block_width - row_w) * 0.5).max(0.0)
+            } else {
+                list_x
+            };
+            for (col, (entry_idx, _)) in chunk.iter().enumerate() {
+                let x0 = row_x + col as f32 * (card_width + GRID_GAP) + box_inset_x;
+                let x1 = x0 + box_width;
+                if rect.intersects(x0, y, x1, y + card_height) {
+                    hits.push(*entry_idx);
+                }
+            }
+        }
+        y += h;
+        if i + 1 < bands.len() {
+            y += GRID_BAND_SPACING;
+        }
+    }
+    hits
+}
+
+/// Retorna os índices das entradas em modo Lista/Colunas que intersectam `rect` em coordenadas do conteúdo.
+pub fn list_marquee_hits(
+    total_entries: usize,
+    viewport_width: f32,
+    side_padding: f32,
+    rect: ContentRect,
+) -> Vec<usize> {
+    if total_entries == 0 || viewport_width <= 0.0 {
+        return Vec::new();
+    }
+    let x0 = side_padding;
+    let x1 = (viewport_width - side_padding).max(side_padding);
+    if rect.max_x < x0 || rect.min_x > x1 || rect.max_y < 0.0 {
+        return Vec::new();
+    }
+    let start = ((rect.min_y - DETAIL_ROW_HEIGHT).max(0.0) / DETAIL_ROW_STEP).floor() as usize;
+    let end = ((rect.max_y.max(0.0)) / DETAIL_ROW_STEP).floor() as usize;
+    let mut hits = Vec::new();
+    for idx in start..=end.min(total_entries - 1) {
+        let y0 = idx as f32 * DETAIL_ROW_STEP;
+        let y1 = y0 + DETAIL_ROW_HEIGHT;
+        if rect.intersects(x0, y0, x1, y1) {
+            hits.push(idx);
+        }
+    }
+    hits
+}
+
 /// Move a seleção na grade em 2D (`dx` horizontal, `dy` vertical por linha).
 pub fn step_grid_selection(
     bands: &[GridBand<'_>],
@@ -364,5 +488,34 @@ mod tests {
         assert_eq!(grid_columns_for_width(900.0, 140.0), 5);
         assert_eq!(grid_columns_for_width(1400.0, 140.0), 8);
         assert_eq!(grid_columns_for_width(900.0, 220.0), 3);
+    }
+
+    #[test]
+    fn marquee_hits_select_expected_items_in_grid_and_list() {
+        let entries: Vec<FileEntry> = (0..6).map(dummy_file).collect();
+        let strings = Strings::for_language(fm_core::Language::PtBr);
+
+        // Em grade unificada (~900px, card 140px => 5 colunas), primeira linha vai de y = 0..109.
+        let grid_hits = grid_marquee_hits(
+            &entries,
+            900.0,
+            140.0,
+            false,
+            strings,
+            ContentRect::from_points(100.0, 10.0, 460.0, 80.0),
+        );
+        assert!(grid_hits.contains(&0));
+        assert!(grid_hits.contains(&1));
+        assert!(grid_hits.contains(&2));
+        assert!(!grid_hits.contains(&5));
+
+        // Em lista, cada linha ocupa 38px de passo (34px altura + 4px gap).
+        let list_hits = list_marquee_hits(
+            entries.len(),
+            800.0,
+            DETAIL_LIST_SIDE_PADDING,
+            ContentRect::from_points(20.0, 40.0, 300.0, 120.0),
+        );
+        assert_eq!(list_hits, vec![1, 2, 3]);
     }
 }
