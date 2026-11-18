@@ -380,7 +380,18 @@ pub fn extract_permissions_and_hidden(name: &str, meta: &Metadata) -> (Permissio
 }
 
 pub fn volume_space(path: &Path) -> Option<VolumeSpace> {
-    let stat = rustix::fs::statvfs(path).ok()?;
+    let probe_path = if path == Path::new("/") && std::env::var_os("FLATPAK_ID").is_some() {
+        [
+            Path::new("/run/host/os-release"),
+            Path::new("/run/host/etc"),
+        ]
+        .into_iter()
+        .find(|candidate| candidate.exists())
+        .unwrap_or(path)
+    } else {
+        path
+    };
+    let stat = rustix::fs::statvfs(probe_path).ok()?;
     let block_size = if stat.f_frsize > 0 {
         stat.f_frsize
     } else {
@@ -423,6 +434,93 @@ fn is_ignored_system_mount(mount_point: &Path) -> bool {
         || mount_point.starts_with("/dev")
 }
 
+/// Filtra pontos de montagem internos de SO/container/Flatpak (bwrap) na varredura de fallback.
+fn is_ignored_fallback_path(mount_point: &Path) -> bool {
+    if is_ignored_system_mount(mount_point) {
+        return true;
+    }
+    if matches!(
+        mount_point.to_string_lossy().as_ref(),
+        "/" | "/media" | "/mnt" | "/run" | "/run/media" | "/run/user"
+    ) {
+        return true;
+    }
+
+    const IGNORED_PREFIXES: &[&str] = &[
+        "/usr",
+        "/app",
+        "/etc",
+        "/var",
+        "/lib",
+        "/lib32",
+        "/lib64",
+        "/bin",
+        "/sbin",
+        "/opt",
+        "/srv",
+        "/root",
+        "/tmp",
+        "/home",
+        "/cdrom",
+        "/lost+found",
+        "/timeshift",
+        "/sysroot",
+        "/run/host",
+        "/run/flatpak",
+        "/run/docker",
+        "/run/containerd",
+        "/run/netns",
+    ];
+    if IGNORED_PREFIXES
+        .iter()
+        .any(|prefix| mount_point.starts_with(prefix))
+    {
+        return true;
+    }
+
+    mount_point
+        .components()
+        .nth(1)
+        .and_then(|comp| comp.as_os_str().to_str())
+        .is_some_and(|first| first.ends_with(".usr-is-merged"))
+}
+
+fn should_include_fallback_mount(
+    mount: &MountEntry,
+    seen_devices: &HashSet<PathBuf>,
+    seen_mounts: &HashSet<PathBuf>,
+) -> bool {
+    if IGNORED_FS_TYPES.contains(&mount.fs_type.as_str())
+        || is_ignored_fallback_path(&mount.mount_point)
+        || seen_mounts.contains(&mount.mount_point)
+    {
+        return false;
+    }
+    if mount.device.starts_with("/dev/") && seen_devices.contains(Path::new(&mount.device)) {
+        return false;
+    }
+    true
+}
+
+/// No Flatpak, `/` aponta para o `tmpfs` do sandbox; consulta um bind-mount de `/run/host` do mesmo dispositivo.
+fn space_for_lsblk_mount(
+    mount_point: &Path,
+    device_path: &Path,
+    mounts: &[MountEntry],
+) -> Option<VolumeSpace> {
+    if mount_point == Path::new("/") && std::env::var_os("FLATPAK_ID").is_some() {
+        let dev_str = device_path.to_string_lossy();
+        if let Some(host_probe) = mounts.iter().find(|m| {
+            m.mount_point.starts_with("/run/host/") && m.device.as_str() == dev_str.as_ref()
+        }) && let Some(mut space) = volume_space(&host_probe.mount_point)
+        {
+            space.label = CompactString::new("Root (/)");
+            return Some(space);
+        }
+    }
+    volume_space(mount_point)
+}
+
 fn is_critical_os_mount(mount_point: &Path) -> bool {
     mount_point == Path::new("/")
         || matches!(
@@ -458,7 +556,7 @@ pub fn list_drives() -> Vec<DriveInfo> {
             if !seen_mounts.insert(mount_point.clone()) {
                 continue;
             }
-            let space = volume_space(mount_point);
+            let space = space_for_lsblk_mount(mount_point, &dev.path, &mounts);
             if space.is_none() {
                 continue;
             }
@@ -516,14 +614,12 @@ pub fn list_drives() -> Vec<DriveInfo> {
 
     // Completa com montagens virtuais/rede/GVFS presentes em `/proc/mounts` que não vêm do `lsblk`.
     for mount in mounts {
-        if IGNORED_FS_TYPES.contains(&mount.fs_type.as_str())
-            || is_ignored_system_mount(&mount.mount_point)
+        if !should_include_fallback_mount(&mount, &seen_devices, &seen_mounts)
+            || !mount.mount_point.is_dir()
         {
             continue;
         }
-        if !seen_mounts.insert(mount.mount_point.clone()) {
-            continue;
-        }
+        seen_mounts.insert(mount.mount_point.clone());
 
         let space = volume_space(&mount.mount_point);
         if space.is_none() {
@@ -995,5 +1091,60 @@ mod tests {
         let user_status = "Name:\tvagnarok\nUid:\t1000\t1000\t1000\t1000\n";
         assert!(parse_euid_root_from_proc_status(root_status));
         assert!(!parse_euid_root_from_proc_status(user_status));
+    }
+
+    #[test]
+    fn filters_flatpak_bind_mounts_and_system_paths_from_fallback() {
+        let mut seen_devices = HashSet::new();
+        seen_devices.insert(PathBuf::from("/dev/nvme0n1p4"));
+        let mut seen_mounts = HashSet::new();
+        seen_mounts.insert(PathBuf::from("/"));
+
+        let sandbox_mounts = [
+            ("/dev/nvme0n1p4", "/usr", "ext4"),
+            ("/dev/nvme0n1p4", "/app", "ext4"),
+            (
+                "/dev/nvme0n1p4",
+                "/usr/lib/x86_64-linux-gnu/GL/nvidia-580-178-04",
+                "ext4",
+            ),
+            ("/dev/nvme0n1p4", "/etc/machine-id", "ext4"),
+            ("/dev/nvme0n1p4", "/bin.usr-is-merged", "ext4"),
+            ("/dev/nvme0n1p4", "/run/host/usr", "ext4"),
+            ("/dev/nvme0n1p4", "/home", "ext4"),
+            ("/dev/nvme0n1p4", "/media/vagnarok/BindCopy", "ext4"),
+        ];
+        for (dev, mp, fs) in sandbox_mounts {
+            let entry = MountEntry {
+                device: dev.to_owned(),
+                mount_point: PathBuf::from(mp),
+                fs_type: CompactString::new(fs),
+            };
+            assert!(
+                !should_include_fallback_mount(&entry, &seen_devices, &seen_mounts),
+                "bind-mount interno não deveria aparecer como drive: {mp}"
+            );
+        }
+
+        let valid_mounts = [
+            ("//nas/media", "/mnt/nas", "cifs"),
+            (
+                "sshfs#user@host:/",
+                "/run/user/1000/gvfs/sftp:host",
+                "fuse.sshfs",
+            ),
+            ("/dev/sde1", "/media/vagnarok/PENDRIVE", "vfat"),
+        ];
+        for (dev, mp, fs) in valid_mounts {
+            let entry = MountEntry {
+                device: dev.to_owned(),
+                mount_point: PathBuf::from(mp),
+                fs_type: CompactString::new(fs),
+            };
+            assert!(
+                should_include_fallback_mount(&entry, &seen_devices, &seen_mounts),
+                "montagem válida deveria ser incluída no fallback: {mp}"
+            );
+        }
     }
 }

@@ -454,6 +454,7 @@ pub enum Message {
     StartGridResize,
     StartColumnsPanelResize,
     StartSidebarResize,
+    SidebarDividerHovered(bool),
     ResetSidebarWidth,
     EndColumnResize(window::Id),
     StepGridCardWidth(f32),
@@ -517,6 +518,7 @@ pub struct App {
     pub columns_panel_width: f32,
     pub resizing_columns_panel: Option<(f32, f32)>,
     pub resizing_sidebar: Option<(f32, f32)>,
+    pub sidebar_divider_hovered: bool,
     pub deep_search_open: bool,
     pub deep_search_query: String,
     pub deep_search_loading: bool,
@@ -640,6 +642,7 @@ impl App {
             columns_panel_width: 280.0,
             resizing_columns_panel: None,
             resizing_sidebar: None,
+            sidebar_divider_hovered: false,
             deep_search_open: false,
             deep_search_query: String::new(),
             deep_search_loading: false,
@@ -2583,7 +2586,16 @@ impl App {
             }
             Message::StartSidebarResize => {
                 let current_w = views::sidebar::effective_sidebar_width(self, self.strings());
-                self.resizing_sidebar = Some((self.cursor_position.x, current_w));
+                let start_x = if self.cursor_position.x > 1.0 {
+                    self.cursor_position.x
+                } else {
+                    current_w
+                };
+                self.resizing_sidebar = Some((start_x, current_w));
+                Task::none()
+            }
+            Message::SidebarDividerHovered(hovered) => {
+                self.sidebar_divider_hovered = hovered;
                 Task::none()
             }
             Message::ResetSidebarWidth => {
@@ -2682,8 +2694,11 @@ impl App {
                     self.columns_panel_width = (initial_w + (pos.x - start_x)).clamp(200.0, 480.0);
                 }
                 if let Some((start_x, initial_w)) = self.resizing_sidebar {
-                    self.config.sidebar_width = Some(views::sidebar::clamp_sidebar_width(
-                        initial_w + (pos.x - start_x),
+                    self.config.sidebar_width = Some(compute_dragged_sidebar_width(
+                        initial_w,
+                        start_x,
+                        pos.x,
+                        self.window_size.width,
                     ));
                 }
                 Task::none()
@@ -2879,35 +2894,56 @@ impl App {
                 .style(fm_theme::styles::divider_line(palette))
                 .into()
         } else {
-            let line_color = if self.resizing_sidebar.is_some() {
+            let active = self.resizing_sidebar.is_some();
+            let highlighted = active || self.sidebar_divider_hovered;
+            let line_color = if highlighted {
                 palette.accent_primary
             } else {
                 palette.border
             };
-            let line_width = if self.resizing_sidebar.is_some() {
-                2.0
-            } else {
-                1.0
-            };
-            iced::widget::mouse_area(
+            let line_width = if highlighted { 2.0 } else { 1.0 };
+            let full_line = container(
                 container(
-                    container(
-                        iced::widget::Space::new()
-                            .width(line_width)
-                            .height(Length::Fill),
-                    )
-                    .style(move |_| {
-                        fm_theme::styles::panel_surface(line_color, iced::Color::TRANSPARENT, 0.0)
-                    }),
+                    iced::widget::Space::new()
+                        .width(line_width)
+                        .height(Length::Fill),
                 )
-                .width(Length::Fixed(6.0))
-                .height(Length::Fill)
-                .align_x(iced::Alignment::Center),
+                .style(move |_| {
+                    fm_theme::styles::panel_surface(line_color, iced::Color::TRANSPARENT, 0.0)
+                }),
             )
-            .interaction(mouse::Interaction::ResizingHorizontally)
-            .on_press(Message::StartSidebarResize)
-            .on_right_press(Message::ResetSidebarWidth)
-            .into()
+            .width(Length::Fixed(10.0))
+            .height(Length::Fill)
+            .align_x(iced::Alignment::Center);
+
+            let content: Element<'_, Message> = if highlighted {
+                let grip = container(
+                    container(iced::widget::Space::new().width(4.0).height(36.0)).style(
+                        move |_| {
+                            fm_theme::styles::panel_surface(
+                                palette.accent_primary,
+                                iced::Color::TRANSPARENT,
+                                9999.0,
+                            )
+                        },
+                    ),
+                )
+                .width(Length::Fixed(10.0))
+                .height(Length::Fill)
+                .align_x(iced::Alignment::Center)
+                .align_y(iced::Alignment::Center);
+                stack![full_line, grip].into()
+            } else {
+                full_line.into()
+            };
+
+            iced::widget::mouse_area(content)
+                .interaction(mouse::Interaction::ResizingHorizontally)
+                .on_enter(Message::SidebarDividerHovered(true))
+                .on_exit(Message::SidebarDividerHovered(false))
+                .on_press(Message::StartSidebarResize)
+                .on_right_press(Message::ResetSidebarWidth)
+                .into()
         };
 
         let body_row = row![
@@ -4555,11 +4591,27 @@ fn percent_decode_uri_path(input: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Calcula a largura da barra lateral durante o arraste respeitando o limite mínimo, máximo e largura da janela.
+fn compute_dragged_sidebar_width(
+    initial_w: f32,
+    start_x: f32,
+    pos_x: f32,
+    window_width: f32,
+) -> f32 {
+    let min_w = views::sidebar::SIDEBAR_WIDTH_MIN;
+    let max_w = if window_width.is_finite() && window_width > min_w + 280.0 {
+        (window_width - 280.0).min(views::sidebar::SIDEBAR_WIDTH_MAX)
+    } else {
+        views::sidebar::SIDEBAR_WIDTH_MAX
+    };
+    views::sidebar::clamp_sidebar_width(initial_w + (pos_x - start_x)).clamp(min_w, max_w)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        fit_window_size_to_monitor, percent_decode_uri_path, resolve_cli_initial_dir,
-        wheel_zoom_delta,
+        compute_dragged_sidebar_width, fit_window_size_to_monitor, percent_decode_uri_path,
+        resolve_cli_initial_dir, wheel_zoom_delta,
     };
     use iced::Size;
     use iced::mouse::ScrollDelta;
@@ -4603,6 +4655,26 @@ mod tests {
         assert_eq!(
             wheel_zoom_delta(ScrollDelta::Pixels { x: 12.0, y: 0.0 }),
             0.0
+        );
+    }
+
+    #[test]
+    fn sidebar_resize_supports_dragging_right_and_left() {
+        assert_eq!(
+            compute_dragged_sidebar_width(350.0, 355.0, 435.0, 1280.0),
+            430.0
+        );
+        assert_eq!(
+            compute_dragged_sidebar_width(350.0, 355.0, 275.0, 1280.0),
+            270.0
+        );
+        assert_eq!(
+            compute_dragged_sidebar_width(350.0, 355.0, 900.0, 1280.0),
+            super::views::sidebar::SIDEBAR_WIDTH_MAX
+        );
+        assert_eq!(
+            compute_dragged_sidebar_width(350.0, 355.0, 700.0, 720.0),
+            440.0
         );
     }
 }

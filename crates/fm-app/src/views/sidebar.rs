@@ -16,7 +16,7 @@ use crate::app::{App, Message, SidebarTarget};
 use crate::views::{sanitize_single_line, with_tooltip};
 
 pub const SIDEBAR_WIDTH_MIN: f32 = 180.0;
-pub const SIDEBAR_WIDTH_MAX: f32 = 480.0;
+pub const SIDEBAR_WIDTH_MAX: f32 = 560.0;
 
 pub fn clamp_sidebar_width(width: f32) -> f32 {
     if width.is_finite() {
@@ -168,9 +168,12 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
             palette,
         );
         quick_col = quick_col.push(
-            row![expand_btn, container(home_btn).width(Length::Fill)]
-                .spacing(2)
-                .align_y(Center),
+            row![
+                expand_btn,
+                container(home_btn).width(Length::Fill).clip(true)
+            ]
+            .spacing(2)
+            .align_y(Center),
         );
 
         if app.sidebar_home_expanded {
@@ -463,14 +466,30 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
     .align_y(Center);
 
     container(
-        column![scrollable(sections).height(Length::Fill), footer_actions,]
-            .spacing(8)
-            .width(Length::Fill)
-            .height(Length::Fill),
+        column![
+            scrollable(sections)
+                .height(Length::Fill)
+                .direction(scrollable::Direction::Vertical(
+                    scrollable::Scrollbar::new()
+                        .width(6)
+                        .scroller_width(6)
+                        .spacing(6),
+                )),
+            footer_actions,
+        ]
+        .spacing(8)
+        .width(Length::Fill)
+        .height(Length::Fill),
     )
     .width(Length::Fixed(width))
     .height(Length::Fill)
-    .padding(Padding::from([12, 8]))
+    .padding(Padding {
+        top: 12.0,
+        right: 4.0,
+        bottom: 12.0,
+        left: 8.0,
+    })
+    .clip(true)
     .style(styles::sidebar_container(palette))
     .into()
 }
