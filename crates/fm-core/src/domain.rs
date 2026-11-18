@@ -531,6 +531,23 @@ impl SystemIconBucket {
     }
 }
 
+/// Retorna `true` se o modo POSIX possui ao menos um bit de execução (`0o111`).
+#[must_use]
+pub const fn is_posix_executable(mode: u32) -> bool {
+    (mode & 0o111) != 0
+}
+
+/// Alterna os bits de execução de um arquivo preservando os níveis existentes de leitura.
+#[must_use]
+pub const fn toggle_posix_executable_mode(mode: u32) -> u32 {
+    let base = mode & 0o7777;
+    if is_posix_executable(base) {
+        base & !0o111
+    } else {
+        base | 0o100 | ((base & 0o040) >> 2) | ((base & 0o004) >> 2)
+    }
+}
+
 /// Payload bruto retornado pelos backends de sistema antes da rasterização/upload.
 #[derive(Debug, Clone)]
 pub enum SystemIconPayload {
@@ -614,5 +631,17 @@ mod tests {
             local_timestamp_kind(past),
             LocalTimestampKind::Date { year: 1971, .. }
         ));
+    }
+
+    #[test]
+    fn toggles_posix_executable_bits_preserving_read_scope() {
+        assert!(!is_posix_executable(0o644));
+        assert_eq!(toggle_posix_executable_mode(0o644), 0o755);
+        assert_eq!(toggle_posix_executable_mode(0o640), 0o750);
+        assert_eq!(toggle_posix_executable_mode(0o600), 0o700);
+        assert!(is_posix_executable(0o755));
+        assert_eq!(toggle_posix_executable_mode(0o755), 0o644);
+        assert_eq!(toggle_posix_executable_mode(0o750), 0o640);
+        assert_eq!(toggle_posix_executable_mode(0o700), 0o600);
     }
 }

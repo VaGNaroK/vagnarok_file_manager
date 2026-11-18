@@ -13,7 +13,8 @@ pub use domain::{
     LocalTimestampKind, LocaleFormatSpec, PermissionsMeta, RecursiveSize, SelectedFileTelemetry,
     SortDirection, SortField, SortSpec, SystemIconBucket, SystemIconKey, SystemIconPayload,
     SystemPlaceKind, UserPlaces, VIRTUAL_TRASH_PATH, ViewMode, VolumeSpace, compute_entry_id,
-    format_bytes, format_grouped_u64, is_virtual_trash_path, local_timestamp_kind,
+    format_bytes, format_grouped_u64, is_posix_executable, is_virtual_trash_path,
+    local_timestamp_kind, toggle_posix_executable_mode,
 };
 pub use i18n::Strings;
 pub use state::{

@@ -265,3 +265,4 @@ grid-align-left = Da sinistra a destra
 grid-align-center = Centrato
 tip-grid-alignment = Cambia allineamento griglia (Sinistra a destra o Centrato)
 tip-system-icons = Alterna tra icone predefinite e icone di sistema
+perm-allow-exec = Abilita esecuzione come programma

@@ -265,3 +265,4 @@ grid-align-left = Left to right
 grid-align-center = Centered
 tip-grid-alignment = Toggle Grid alignment (Left to right or Centered)
 tip-system-icons = Toggle between default icons and host system icons
+perm-allow-exec = Enable execution as program

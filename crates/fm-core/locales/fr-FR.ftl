@@ -265,3 +265,4 @@ grid-align-left = De gauche à droite
 grid-align-center = Centré
 tip-grid-alignment = Basculer l'alignement de la grille (Gauche à droite ou Centré)
 tip-system-icons = Basculer entre les icônes par défaut et celles du système
+perm-allow-exec = Autoriser l'exécution en tant que programme

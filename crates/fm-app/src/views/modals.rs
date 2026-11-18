@@ -2,7 +2,8 @@ use std::path::Path;
 
 use fm_core::{
     ConflictPolicy, DIR_FILTER_SENTINEL, FileEntry, Language, PermissionsMeta, Strings,
-    ThemePreset, ViewMode, WindowDecorationsMode, format_bytes,
+    ThemePreset, ViewMode, WindowDecorationsMode, format_bytes, is_posix_executable,
+    toggle_posix_executable_mode,
 };
 use fm_theme::{
     FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_BOLD, FONT_UI_SEMIBOLD, ThemePalette, styles,
@@ -1416,32 +1417,7 @@ fn properties_permissions_tab<'a>(
             let active = (mode & bit) != 0;
             button(
                 row![
-                    container(if active {
-                        Element::from(icon_check().size(11).color(palette.on_accent))
-                    } else {
-                        Space::new().width(11).height(11).into()
-                    })
-                    .width(Length::Fixed(18.0))
-                    .height(Length::Fixed(18.0))
-                    .align_x(Center)
-                    .align_y(Center)
-                    .style(move |_| container::Style {
-                        background: Some(Background::Color(if active {
-                            palette.accent_primary
-                        } else {
-                            palette.surface_lowest
-                        })),
-                        border: Border {
-                            color: if active {
-                                palette.accent_primary
-                            } else {
-                                palette.border_strong
-                            },
-                            width: 1.0,
-                            radius: Radius::from(4.0),
-                        },
-                        ..Default::default()
-                    }),
+                    perm_checkbox_box(active, palette),
                     text(title)
                         .size(12)
                         .font(FONT_UI)
@@ -1474,7 +1450,7 @@ fn properties_permissions_tab<'a>(
             .align_y(Center)
         };
 
-        return column![
+        let mut perms_col = column![
             container(
                 row![
                     icon_lock().size(15).color(palette.accent_primary),
@@ -1518,8 +1494,37 @@ fn properties_permissions_tab<'a>(
                 10.0
             )),
         ]
-        .spacing(10)
-        .into();
+        .spacing(10);
+
+        if !is_dir {
+            let exec_active = is_posix_executable(mode);
+            perms_col = perms_col.push(
+                container(
+                    button(
+                        row![
+                            perm_checkbox_box(exec_active, palette),
+                            text(strings.perm_allow_exec)
+                                .size(12)
+                                .font(FONT_UI_SEMIBOLD)
+                                .color(palette.text_primary),
+                        ]
+                        .spacing(8)
+                        .align_y(Center),
+                    )
+                    .padding([6, 10])
+                    .width(Length::Fill)
+                    .style(styles::ghost_button(palette, 6.0))
+                    .on_press_maybe(
+                        editable.then_some(Message::PropertiesToggleExecutable(win_id)),
+                    ),
+                )
+                .width(Length::Fill)
+                .padding(8)
+                .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0)),
+            );
+        }
+
+        return perms_col.into();
     }
 
     // Windows / fallback attributes
@@ -2142,7 +2147,17 @@ pub fn context_menu_overlay<'a>(
     palette: ThemePalette,
     strings: Strings,
 ) -> Element<'a, Message> {
-    let menu_width = 230.0_f32;
+    let menu_width = if matches!(
+        &menu.kind,
+        ContextMenuKind::Entry {
+            posix_mode: Some(_),
+            ..
+        }
+    ) {
+        268.0_f32
+    } else {
+        230.0_f32
+    };
     let has_clipboard = app.clipboard.is_some();
     let show_open_as_root = fm_fs::supports_open_as_root();
 
@@ -2176,6 +2191,7 @@ pub fn context_menu_overlay<'a>(
             index,
             path,
             is_dir,
+            posix_mode,
         } => {
             items = items.push(ctx_item(
                 icon_external_link()
@@ -2284,7 +2300,33 @@ pub fn context_menu_overlay<'a>(
                     palette.text_primary,
                     Message::OpenRenameDialog,
                     palette,
-                ))
+                ));
+            if let Some(mode) = *posix_mode {
+                let exec_enabled = is_posix_executable(mode);
+                let next_mode = toggle_posix_executable_mode(mode);
+                items = items
+                    .push(ctx_divider(palette))
+                    .push(
+                        container(
+                            text(strings.permissions.to_uppercase())
+                                .size(10)
+                                .font(FONT_MONO_BOLD)
+                                .color(palette.text_muted),
+                        )
+                        .padding([2, 10]),
+                    )
+                    .push(ctx_item(
+                        perm_checkbox_box(exec_enabled, palette),
+                        strings.perm_allow_exec,
+                        palette.text_primary,
+                        Message::ToggleEntryExecutable {
+                            path: path.clone(),
+                            next_mode,
+                        },
+                        palette,
+                    ));
+            }
+            items = items
                 .push(ctx_item(
                     icon_info().size(14).color(palette.text_secondary).into(),
                     strings.properties,
@@ -2642,9 +2684,13 @@ pub fn context_menu_overlay<'a>(
     let root_extra = if show_open_as_root { 36.0 } else { 0.0 };
     let est_height = match &menu.kind {
         ContextMenuKind::NewMenu => 84.0,
-        ContextMenuKind::Entry { is_dir, .. } => {
+        ContextMenuKind::Entry {
+            is_dir, posix_mode, ..
+        } => {
             if *is_dir {
                 340.0 + root_extra
+            } else if posix_mode.is_some() {
+                396.0
             } else {
                 340.0
             }
@@ -2690,8 +2736,9 @@ pub fn context_menu_overlay<'a>(
         items.width(Length::Fixed(menu_width)).into()
     };
 
+    let max_card_h = (app.window_size.height - 24.0).clamp(240.0, 460.0);
     let card = container(card_body)
-        .max_height(320.0)
+        .max_height(max_card_h)
         .padding(8)
         .style(styles::modal_card(palette));
 
@@ -2747,6 +2794,36 @@ fn ctx_item_owned<'a>(
     .padding([6, 10])
     .style(styles::ghost_button(palette, 6.0))
     .on_press(msg)
+    .into()
+}
+
+fn perm_checkbox_box<'a>(active: bool, palette: ThemePalette) -> Element<'a, Message> {
+    container(if active {
+        Element::from(icon_check().size(11).color(palette.on_accent))
+    } else {
+        Space::new().width(11).height(11).into()
+    })
+    .width(Length::Fixed(18.0))
+    .height(Length::Fixed(18.0))
+    .align_x(Center)
+    .align_y(Center)
+    .style(move |_| container::Style {
+        background: Some(Background::Color(if active {
+            palette.accent_primary
+        } else {
+            palette.surface_lowest
+        })),
+        border: Border {
+            color: if active {
+                palette.accent_primary
+            } else {
+                palette.border_strong
+            },
+            width: 1.0,
+            radius: Radius::from(4.0),
+        },
+        ..Default::default()
+    })
     .into()
 }
 

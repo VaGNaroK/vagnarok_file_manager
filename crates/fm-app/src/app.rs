@@ -56,6 +56,7 @@ pub enum ContextMenuKind {
         index: usize,
         path: PathBuf,
         is_dir: bool,
+        posix_mode: Option<u32>,
     },
     SidebarPlace {
         path: PathBuf,
@@ -450,6 +451,15 @@ pub enum Message {
     PropertiesToggleReadonly(window::Id),
     PropertiesToggleHidden(window::Id),
     PropertiesTogglePosixBit(window::Id, u32),
+    PropertiesToggleExecutable(window::Id),
+    ToggleEntryExecutable {
+        path: PathBuf,
+        next_mode: u32,
+    },
+    EntryExecutableToggled {
+        path: PathBuf,
+        result: Result<FileEntry, FsError>,
+    },
     PropertiesApply {
         window_id: window::Id,
         close_after: bool,
@@ -2317,7 +2327,19 @@ impl App {
                     && let Some(entry) = tab.visible_entries.get(index)
                 {
                     let already_selected = tab.selection.selected_ids.contains(&entry.id);
-                    target_meta = Some((entry.path.clone(), entry.kind.is_dir_like()));
+                    let is_dir = entry.kind.is_dir_like();
+                    let posix_mode = if !is_dir
+                        && !fm_core::is_virtual_trash_path(&entry.path)
+                        && fm_fs::archive::split_archive_path(&entry.path).is_none()
+                    {
+                        match entry.permissions {
+                            PermissionsMeta::PosixMode(mode) => Some(mode),
+                            PermissionsMeta::WinAttributes(_) => None,
+                        }
+                    } else {
+                        None
+                    };
+                    target_meta = Some((entry.path.clone(), is_dir, posix_mode));
                     if !already_selected {
                         tab.selection.select_single(index, &tab.visible_entries);
                         let single = tab.selection.single_selected(&tab.visible_entries).cloned();
@@ -2325,12 +2347,13 @@ impl App {
                         side_task = self.dispatch_selection_side_effects(single.as_ref());
                     }
                 }
-                if let Some((path, is_dir)) = target_meta {
+                if let Some((path, is_dir, posix_mode)) = target_meta {
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::Entry {
                             index,
                             path,
                             is_dir,
+                            posix_mode,
                         },
                         position: self.cursor_position,
                     });
@@ -2528,6 +2551,71 @@ impl App {
                 }
                 Task::none()
             }
+            Message::PropertiesToggleExecutable(window_id) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && !props.is_archive()
+                    && !props.applying
+                    && !props.entry.kind.is_dir_like()
+                    && let Some(mode) = &mut props.posix_mode_draft
+                {
+                    *mode = fm_core::toggle_posix_executable_mode(*mode);
+                    props.readonly_draft = (*mode & 0o222) == 0;
+                }
+                Task::none()
+            }
+            Message::ToggleEntryExecutable { path, next_mode } => {
+                self.context_menu = None;
+                let target_path = path.clone();
+                Task::perform(
+                    async move {
+                        let patch = fm_fs::PropertyPatch {
+                            readonly: None,
+                            hidden: None,
+                            posix_mode: Some(next_mode),
+                        };
+                        if let Err(err) =
+                            fm_fs::apply_entry_properties(target_path.clone(), patch).await
+                        {
+                            return (target_path, Err(err));
+                        }
+                        let stat = fm_fs::stat_entry(target_path.clone()).await;
+                        (target_path, stat)
+                    },
+                    |(path, result)| Message::EntryExecutableToggled { path, result },
+                )
+            }
+            Message::EntryExecutableToggled { path, result } => match result {
+                Ok(updated_entry) => {
+                    for tab in &mut self.tabs {
+                        if let Some(raw) = tab.raw_entries.iter_mut().find(|e| e.path == path) {
+                            *raw = updated_entry.clone();
+                            apply_tab_filter(tab);
+                            if let Some(single) =
+                                tab.selection.single_selected(&tab.visible_entries)
+                                && single.path == path
+                            {
+                                tab.selected_telemetry = Some(basic_file_telemetry(single));
+                            }
+                        }
+                    }
+                    for props in self.properties_windows.values_mut() {
+                        if props.entry.path == path {
+                            if let PermissionsMeta::PosixMode(mode) = updated_entry.permissions {
+                                let perms = mode & 0o777;
+                                props.posix_mode_draft = Some(perms);
+                                props.initial_posix_mode = Some(perms);
+                            }
+                            props.entry = updated_entry.clone();
+                        }
+                    }
+                    self.status_notice = Some(self.strings().prop_applied_notice.to_owned());
+                    Task::none()
+                }
+                Err(err) => {
+                    self.status_notice = Some(err.to_string());
+                    Task::none()
+                }
+            },
             Message::PropertiesApply {
                 window_id,
                 close_after,
