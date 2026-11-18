@@ -2972,55 +2972,38 @@ impl App {
         .height(Length::Fill)
         .style(fm_theme::styles::canvas_container(palette));
 
-        if let Some(dialog) = &self.active_dialog {
-            stack![
-                main_shell,
-                views::modals::dialog_modal(dialog, palette, strings),
-            ]
-            .into()
+        // Mantém `Stack` sempre como raiz para que abrir/fechar menus e modais não descarte o estado da árvore (ex.: scroll do canvas).
+        let overlay: Option<Element<'_, Message>> = if let Some(dialog) = &self.active_dialog {
+            Some(views::modals::dialog_modal(dialog, palette, strings))
         } else if let Some(props) = self.properties_windows.get(&self.main_window_id) {
-            stack![
-                main_shell,
-                views::modals::properties_modal_overlay(
-                    self.main_window_id,
-                    props,
-                    palette,
-                    strings,
-                ),
-            ]
-            .into()
+            Some(views::modals::properties_modal_overlay(
+                self.main_window_id,
+                props,
+                palette,
+                strings,
+            ))
         } else if self.prefs_open {
-            stack![
-                main_shell,
-                views::modals::preferences_modal(self, palette, strings),
-            ]
-            .into()
+            Some(views::modals::preferences_modal(self, palette, strings))
         } else if self.quicklook_open {
-            stack![
-                main_shell,
-                views::inspector::quicklook_modal(self, tab, palette, strings),
-            ]
-            .into()
+            Some(views::inspector::quicklook_modal(
+                self, tab, palette, strings,
+            ))
         } else if self.deep_search_open {
-            stack![
-                main_shell,
-                views::inspector::deep_search_modal(self, palette, strings),
-            ]
-            .into()
+            Some(views::inspector::deep_search_modal(self, palette, strings))
         } else if let Some((root, folders)) = &self.breadcrumb_menu {
-            stack![
-                main_shell,
-                views::modals::breadcrumb_menu_overlay(root, folders, palette, strings),
-            ]
-            .into()
-        } else if let Some(menu) = &self.context_menu {
-            stack![
-                main_shell,
-                views::modals::context_menu_overlay(self, menu, palette, strings),
-            ]
-            .into()
+            Some(views::modals::breadcrumb_menu_overlay(
+                root, folders, palette, strings,
+            ))
         } else {
-            main_shell.into()
+            self.context_menu
+                .as_ref()
+                .map(|menu| views::modals::context_menu_overlay(self, menu, palette, strings))
+        };
+
+        if let Some(layer) = overlay {
+            stack![main_shell, layer].into()
+        } else {
+            stack![main_shell].into()
         }
     }
 
