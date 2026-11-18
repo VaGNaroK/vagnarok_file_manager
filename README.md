@@ -9,7 +9,7 @@
   </p>
 
   <p>
-    <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/versão-v0.1.0--alpha.5-blue?style=flat-square" alt="Versão v0.1.0-alpha.5" /></a>
+    <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/versão-v0.1.0--alpha.6-blue?style=flat-square" alt="Versão v0.1.0-alpha.6" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/licença-GPL--3.0--or--later-green?style=flat-square" alt="Licença GPL-3.0-or-later" /></a>
     <img src="https://img.shields.io/badge/rust-1.88%2B%20(edition%202024)-orange?style=flat-square" alt="Rust 1.88+" />
     <img src="https://img.shields.io/badge/plataformas-Linux%20%7C%20Windows-lightgrey?style=flat-square" alt="Linux e Windows" />
@@ -26,7 +26,7 @@
 
 O **Vagnarok File Manager** (`dev.vagnarok.FileManager`) combina interface reativa acelerada por GPU (`wgpu` via Vulkan/DirectX 12) e drivers nativos de sistema de arquivos para manter a thread de UI sempre livre, mesmo em diretórios com dezenas de milhares de itens.
 
-* **Estágio atual**: `v0.1.0-alpha.5` (prévia alpha funcional com suporte a Linux e Windows).
+* **Estágio atual**: `v0.1.0-alpha.6` (prévia alpha funcional com suporte a Linux e Windows).
 * **Requisitos de GPU**: exige placa gráfica com suporte a **Vulkan** (Linux/Windows) ou **DirectX 12** (Windows). **Hardware legado sem suporte a Vulkan/DX12** (ex.: Intel HD Graphics 2000/3000 e GPUs equivalentes da geração D3D10/OpenGL 3.x) **não é suportado no momento**, pois drivers legados e o modo de software (`tiny-skia`) apresentam artefatos visuais em sombras, transparências e overlays.
 * **Temas oficiais**: **Obsidian Flow** (Dark) e **Aether Light** (Light), selecionáveis em runtime ou sincronizados automaticamente com o tema do sistema operacional.
 * **Arquitetura estrita**: toda leitura de disco, geração de miniaturas, cálculo de hash, busca profunda e telemetria Git roda em workers assíncronos canceláveis (`tokio` + `rayon`).
@@ -38,9 +38,9 @@ O **Vagnarok File Manager** (`dev.vagnarok.FileManager`) combina interface reati
 ### Navegação, Visualizações e Arquivos Compactados
 * **Múltiplas abas** com histórico voltar/avançar, breadcrumbs interativos com menus suspensos e edição direta de caminho (`Ctrl+L`).
 * **3 modos de visualização virtualizados** (renderizam apenas a janela visível do scroll):
-  * **Grid** (agrupado por pastas/arquivos ou unificado, com zoom por `Ctrl + Scroll` ou `Ctrl + +` / `-` / `0`).
-  * **Tabela de Detalhes** (ordenação por coluna).
-  * **Colunas (Miller Columns)** para navegação hierárquica rápida.
+  * **Grid** (alinhado da esquerda para direita ou centralizado, agrupado por pastas/arquivos ou unificado, com zoom por `Ctrl + Scroll` ou `Ctrl + +` / `-` / `0`).
+  * **Tabela de Detalhes** (ordenação por coluna) e **Colunas (Miller Columns)** com seleção em caixa (*marquee*) ao clicar e arrastar no espaço vazio.
+* **Ícones híbridos opcionais**: alternância rápida na barra do canvas entre os ícones vetoriais padrão (`lucide-icons`) e os ícones instalados no sistema hospedeiro (tema Freedesktop no Linux/Flatpak ou Shell nativo no Windows).
 * **`ArchiveVfs`**: navegação transparente dentro de pacotes `.zip`, `.tar` e `.tar.gz` sem extração manual prévia.
 * **Lixeira e Favoritos**: acesso rápido, drag-and-drop, restauração/esvaziamento de lixeira e gerenciamento persistente de favoritos em TOML.
 

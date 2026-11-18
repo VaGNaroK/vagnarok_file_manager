@@ -27,8 +27,25 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-16 | **Alpha 3 (`v0.1.0-alpha.3`), Polimento Windows & Lixeira** | Lixeira virtual no Windows (`trash://`) com restauração, remoção do CMD em release, correção de controles duplicados e limpeza do mockup `code.html` | 45 unitários |
 | 2026-11-16 | **Alpha 4 (`v0.1.0-alpha.4`), Paridade de Atalhos & Janela no Windows** | Zoom `Ctrl + Scroll` no Windows, rastreamento de modificadores via `KeyPressed`/`KeyReleased`, alternância ao vivo de decorações da janela e `rustfmt` | 45 unitários |
 | 2026-11-16 | **Alpha 5 (`v0.1.0-alpha.5`), Barra Lateral Estilo Nemo, Discos & Propriedades** | Cards compactos no Grid, `Propriedades` no fundo do diretório (conteúdo + espaço livre), `PageUp`/`PageDown`, `Ctrl+Q`, tooltips localizados, barra lateral estilo Nemo redimensionável, montar/desmontar discos e `Abrir como root` no Linux | 51 unitários |
+| 2026-11-17 | **Alpha 6 (`v0.1.0-alpha.6`), Seleção em Caixa, Alinhamento Grid, Correções Flatpak & Ícones do Sistema** | Seleção em caixa (marquee), alinhamento do Grid esquerda→direita por padrão + alternância, preservação de scroll no menu de contexto, filtro de bind-mounts no Flatpak, divisor/scrollbar da barra lateral e ícones híbridos do sistema hospedeiro | 58 unitários |
 
 ---
+
+## [0.1.0-alpha.6] — 2026-11-17
+
+### Adicionado
+- **Seleção em caixa (*marquee / rubber-band*) no canvas**:
+  - Clicar em área vazia e arrastar nos modos **Grade**, **Lista** e **Colunas** seleciona todos os itens interceptados pelo retângulo translúcido, com suporte a seleção aditiva (`Ctrl`/`Shift`) e limpeza ao clicar em espaço vazio.
+- **Alinhamento do Grid (Esquerda → Direita ou Centralizado)**:
+  - Pastas e arquivos na visualização em Grade agora iniciam por padrão da esquerda para direita (`grid_center_items = false`), com botão rápido na barra do canvas e seletor em **Preferências → Geral** para alternar com o modo centralizado.
+- **Ícones híbridos do sistema hospedeiro (Linux / Flatpak / Windows)**:
+  - Suporte opcional e 100% em Rust nativo para exibir ícones do tema do sistema (Linux GTK/KDE/Cinnamon via `index.theme`, `globs2`, `gsettings` e `/run/host/share/icons` no Flatpak; Windows via `SHGetFileInfoW` com `SHGFI_USEFILEATTRIBUTES` e `GetDIBits` sem travar arquivos), mantendo botões da UI em `lucide-icons`.
+  - Inicia por padrão com os **Ícones padrão do aplicativo** (`IconThemeMode::Bundled`) e traz botão rápido na barra de ferramentas do canvas para alternar em tempo real.
+
+### Corrigido
+- **Scroll resetado ao abrir menu de contexto**: mantida a raiz `Stack` estável em `App::view` para que abrir/fechar menus de contexto e modais não descarte o estado de rolagem no modo Lista, Grade, Colunas ou Barra Lateral.
+- **Listagem de sistema em Unidades no Flatpak**: filtrados bind-mounts internos do `bubblewrap` (`/usr`, `/app`, extensões GL/codecs, `/etc/*`, `/run/host/*`, `*.usr-is-merged`) e montagens de arquivo único do `/proc/mounts`, além de medir o espaço livre real de `Root (/)` no host via `/run/host/*` dentro do Flatpak.
+- **Divisor e scrollbar da barra lateral**: reservado espaçamento dedicado para a scrollbar vertical da sidebar (sem cobrir botões de montar/desmontar), aplicado `.clip(true)`, ampliada a área de captura do divisor (`10px`) com destaque no hover/arraste e elevado o limite máximo para `560px`.
 
 ## [0.1.0-alpha.5] — 2026-11-16
 
