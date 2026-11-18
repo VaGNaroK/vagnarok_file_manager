@@ -416,7 +416,7 @@ pub fn fs_type_for_path(path: &Path) -> Option<CompactString> {
     best_mount_for_path(path, &mounts).map(|m| m.fs_type)
 }
 
-fn host_command(program: &str) -> Command {
+pub(crate) fn host_command(program: &str) -> Command {
     if std::env::var_os("FLATPAK_ID").is_some() {
         let mut cmd = Command::new("flatpak-spawn");
         cmd.arg("--host").arg(program);

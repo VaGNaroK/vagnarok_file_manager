@@ -1,6 +1,6 @@
 use fm_core::{
-    CopyMode, DIR_FILTER_SENTINEL, FileEntry, JobProgress, SelectionModifiers, SortDirection,
-    SortField, Strings, TabState, ViewMode, format_bytes,
+    CopyMode, DIR_FILTER_SENTINEL, FileEntry, IconThemeMode, JobProgress, SelectionModifiers,
+    SortDirection, SortField, Strings, TabState, ViewMode, format_bytes,
 };
 use fm_theme::{
     FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_BOLD, FONT_UI_SEMIBOLD, ThemePalette, styles,
@@ -23,7 +23,7 @@ use iced::{
 use lucide_icons::iced::{
     icon_align_center, icon_align_left, icon_arrow_up_down, icon_chevron_right,
     icon_clipboard_paste, icon_copy, icon_eye, icon_eye_off, icon_filter, icon_folder_tree,
-    icon_info, icon_minus, icon_pencil, icon_plus, icon_rotate_ccw, icon_scissors,
+    icon_info, icon_minus, icon_pencil, icon_plus, icon_rotate_ccw, icon_scissors, icon_shapes,
     icon_shield_alert, icon_star, icon_terminal, icon_trash_2, icon_x,
 };
 
@@ -37,7 +37,7 @@ use crate::views::virtualized::{
     compute_band_window_with_row_height, compute_fixed_window, compute_grid_layout_metrics,
     grid_card_height, grid_columns_for_width,
 };
-use crate::views::{entry_icon, sanitize_single_line, with_tooltip};
+use crate::views::{render_entry_icon, sanitize_single_line, with_tooltip};
 
 pub fn view<'a>(
     app: &'a App,
@@ -466,6 +466,21 @@ fn action_bar<'a>(
         palette,
     );
 
+    let sys_icons_active = app.config.icon_theme_mode == IconThemeMode::HostSystem;
+    let icons_btn = with_tooltip(
+        button(icon_shapes().size(13).color(if sys_icons_active {
+            palette.accent_primary
+        } else {
+            palette.text_secondary
+        }))
+        .padding([6, 8])
+        .style(styles::pill_secondary_button(palette))
+        .on_press(Message::ToggleSystemIcons),
+        strings.tip_system_icons,
+        tooltip::Position::Bottom,
+        palette,
+    );
+
     let terminal_btn = with_tooltip(
         button(
             row![
@@ -584,6 +599,7 @@ fn action_bar<'a>(
         .push(sort_dir_btn)
         .push(filter_btn)
         .push(hidden_btn)
+        .push(icons_btn)
         .push(terminal_btn)
         .push(fav_btn)
         .push(info_btn);
@@ -836,6 +852,7 @@ fn grid_view<'a>(
                     for &(idx, entry) in chunk {
                         let thumb = app.gpu_thumbnails.get(&thumbnail_key_for_entry(entry));
                         r = r.push(grid_item_card(
+                            app,
                             idx,
                             entry,
                             selected_id_set_contains(tab, entry.id),
@@ -915,6 +932,7 @@ fn section_title_bar<'a>(
 
 #[allow(clippy::too_many_arguments)]
 fn grid_item_card<'a>(
+    app: &'a App,
     index: usize,
     entry: &'a FileEntry,
     selected: bool,
@@ -935,7 +953,7 @@ fn grid_item_card<'a>(
             .into()
     } else {
         let icon_px = (preview_box * 0.68).clamp(28.0, 72.0);
-        let (icon_widget, _color) = entry_icon(entry, palette, icon_px);
+        let icon_widget = render_entry_icon(app, entry, palette, icon_px);
         let mut icon_box_col = column![icon_widget].align_x(Center);
         if let Some(badge) = &entry.mime_badge {
             let badge_bg = if selected {
@@ -1211,7 +1229,7 @@ fn detail_table_view<'a>(
     for idx in win.range {
         let entry = &tab.visible_entries[idx];
         let selected = selected_id_set_contains(tab, entry.id);
-        let (icon_widget, _) = entry_icon(entry, palette, 16.0);
+        let icon_widget = render_entry_icon(app, entry, palette, 16.0);
         let size_txt = if entry.kind.is_dir_like() {
             entry
                 .child_count
@@ -1409,7 +1427,7 @@ fn columns_view<'a>(
 
             for child in anc_entries.iter().take(250) {
                 let is_on_active_chain = tab.current_path.starts_with(&child.path);
-                let (c_icon, _) = entry_icon(child, palette, 14.0);
+                let c_icon = render_entry_icon(app, child, palette, 14.0);
                 let mut r = row![
                     c_icon,
                     single_line_label(
@@ -1477,7 +1495,7 @@ fn columns_view<'a>(
     for idx in win.range {
         let entry = &tab.visible_entries[idx];
         let selected = selected_id_set_contains(tab, entry.id);
-        let (icon_widget, _) = entry_icon(entry, palette, 15.0);
+        let icon_widget = render_entry_icon(app, entry, palette, 15.0);
         let mut r = row![
             icon_widget,
             single_line_label(
@@ -1563,7 +1581,7 @@ fn columns_view<'a>(
                         ),]
                         .spacing(4);
                         for child in children.iter().take(200) {
-                            let (c_icon, _) = entry_icon(child, palette, 14.0);
+                            let c_icon = render_entry_icon(app, child, palette, 14.0);
                             let mut r = row![
                                 c_icon,
                                 single_line_label(
@@ -1630,8 +1648,7 @@ fn columns_view<'a>(
                         .content_fit(ContentFit::Contain)
                         .into()
                 } else {
-                    let (icon_widget, _) = entry_icon(selected, palette, 42.0);
-                    icon_widget.into()
+                    render_entry_icon(app, selected, palette, 42.0)
                 };
 
             let mut preview_col = column![

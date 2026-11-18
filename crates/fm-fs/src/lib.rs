@@ -5,10 +5,12 @@
 pub mod archive;
 pub mod config;
 pub mod copy_engine;
+pub mod icons;
 
 pub use archive::is_archive_file;
 pub use config::{config_file_path, load_config, save_config};
 pub use copy_engine::run_transfer_job;
+pub use icons::resolve_system_icon;
 
 #[cfg(target_os = "linux")]
 mod linux;

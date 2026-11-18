@@ -207,7 +207,7 @@ pub struct EntryExtraInfo {
 }
 
 /// Tipo de dispositivo/volume exibido na barra lateral.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DriveKind {
     InternalSsd,
     SecondaryDisk,
@@ -454,6 +454,92 @@ pub fn local_timestamp_kind(ts: SystemTime) -> LocalTimestampKind {
             minute,
         }
     }
+}
+
+/// Locais padrão do usuário para mapeamento de ícones temáticos do sistema operacional.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SystemPlaceKind {
+    Home,
+    Desktop,
+    Documents,
+    Downloads,
+    Music,
+    Pictures,
+    Videos,
+    Public,
+    Templates,
+    Trash,
+}
+
+/// Chave semântica de cache para resolução de ícones do sistema hospedeiro.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SystemIconKey {
+    Directory,
+    Archive,
+    Extension(CompactString),
+    GenericFile,
+    SpecialPlace(SystemPlaceKind),
+    Drive(DriveKind),
+}
+
+impl SystemIconKey {
+    /// Constrói a chave semântica de ícone para uma entrada de diretório ou arquivo.
+    pub fn for_entry(entry: &FileEntry, is_archive: bool) -> Self {
+        if entry.kind.is_dir_like() {
+            return Self::Directory;
+        }
+        if is_archive {
+            return Self::Archive;
+        }
+        if let Some(ext) = entry
+            .extension
+            .as_deref()
+            .filter(|e| !e.is_empty())
+            .map(str::to_ascii_lowercase)
+        {
+            return Self::Extension(CompactString::from(ext));
+        }
+        Self::GenericFile
+    }
+}
+
+/// Buckets de resolução para rasterização e cache de ícones do sistema em GPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SystemIconBucket {
+    Small24,
+    Large64,
+}
+
+impl SystemIconBucket {
+    /// Tamanho lógico em pixels associado ao bucket.
+    #[must_use]
+    pub const fn target_px(self) -> u32 {
+        match self {
+            Self::Small24 => 48,
+            Self::Large64 => 128,
+        }
+    }
+
+    /// Seleciona o bucket apropriado para um tamanho de exibição na UI.
+    #[must_use]
+    pub fn for_display_size(size: f32) -> Self {
+        if size >= 32.0 {
+            Self::Large64
+        } else {
+            Self::Small24
+        }
+    }
+}
+
+/// Payload bruto retornado pelos backends de sistema antes da rasterização/upload.
+#[derive(Debug, Clone)]
+pub enum SystemIconPayload {
+    File(PathBuf),
+    Rgba8 {
+        width: u32,
+        height: u32,
+        pixels: Vec<u8>,
+    },
 }
 
 #[cfg(test)]

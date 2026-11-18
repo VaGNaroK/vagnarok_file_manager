@@ -6,14 +6,18 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use compact_str::CompactString;
 use fm_core::{
     AppConfig, ClipboardTransfer, ConflictPolicy, CopyMode, DIR_FILTER_SENTINEL, DirectorySnapshot,
-    DriveInfo, EntryExtraInfo, EntryId, FileEntry, FolderSummary, FsError, JobProgress, JobState,
-    Language, PermissionsMeta, RecursiveSize, SelectedFileTelemetry, SelectionModifiers,
-    SortDirection, SortField, Strings, TabId, TabState, ThemePreset, UserPlaces, VfsProvider,
-    ViewMode, VolumeSpace, WindowDecorationsMode,
+    DriveInfo, EntryExtraInfo, EntryId, FileEntry, FolderSummary, FsError, IconThemeMode,
+    JobProgress, JobState, Language, PermissionsMeta, RecursiveSize, SelectedFileTelemetry,
+    SelectionModifiers, SortDirection, SortField, Strings, SystemIconBucket, SystemIconKey,
+    SystemPlaceKind, TabId, TabState, ThemePreset, UserPlaces, VfsProvider, ViewMode, VolumeSpace,
+    WindowDecorationsMode,
 };
 use fm_fs::LocalFs;
 use fm_index::SearchHit;
-use fm_preview::{DiskThumbnailCache, ThumbnailCache, ThumbnailKey, ThumbnailRgba};
+use fm_preview::{
+    DiskThumbnailCache, SystemIconCache, ThumbnailCache, ThumbnailKey, ThumbnailRgba,
+    rasterize_system_icon,
+};
 use fm_telemetry::{CachedFileTelemetry, DiskMetadataCache};
 use fm_theme::{Spacing, ThemePalette};
 use iced::futures::SinkExt;
@@ -400,6 +404,13 @@ pub enum Message {
     ToggleGridGroupFolders,
     ToggleGridCenterItems,
     SetGridCenterItems(bool),
+    ToggleSystemIcons,
+    SystemIconReady {
+        generation: u64,
+        key: SystemIconKey,
+        bucket: SystemIconBucket,
+        rgba: Option<Arc<ThumbnailRgba>>,
+    },
     ToggleDirsFirst,
     ToggleWindowDecorations,
     RequestEmptyTrash,
@@ -549,6 +560,10 @@ pub struct App {
     pub thumbnail_cache: ThumbnailCache,
     pub gpu_thumbnails: HashMap<ThumbnailKey, image::Handle>,
     pub in_flight_thumbs: HashSet<PathBuf>,
+    pub system_icon_cache: SystemIconCache,
+    pub gpu_system_icons: HashMap<(SystemIconKey, SystemIconBucket), image::Handle>,
+    pub in_flight_system_icons: HashSet<(SystemIconKey, SystemIconBucket)>,
+    pub system_icon_generation: u64,
     pub breadcrumb_menu: Option<(PathBuf, Vec<FileEntry>)>,
     pub breadcrumb_menu_cancel: Option<CancellationToken>,
     pub quicklook_editor: text_editor::Content,
@@ -628,7 +643,7 @@ impl App {
             ..window::Settings::default()
         });
 
-        let app = Self {
+        let mut app = Self {
             vfs: Arc::clone(&vfs),
             places,
             config,
@@ -674,6 +689,10 @@ impl App {
             thumbnail_cache: ThumbnailCache::default(),
             gpu_thumbnails: HashMap::new(),
             in_flight_thumbs: HashSet::new(),
+            system_icon_cache: SystemIconCache::default(),
+            gpu_system_icons: HashMap::new(),
+            in_flight_system_icons: HashSet::new(),
+            system_icon_generation: 0,
             breadcrumb_menu: None,
             breadcrumb_menu_cancel: None,
             quicklook_editor: text_editor::Content::new(),
@@ -745,6 +764,7 @@ impl App {
         let vibrancy_task = apply_window_vibrancy(main_window_id, app.config.theme);
         let load1 = spawn_list_task(Arc::clone(&vfs), TabId(1), tab1_path, 1, cancel1);
         let load2 = spawn_list_task(vfs, TabId(2), tab2_path, 2, cancel2);
+        let sys_icons_task = app.queue_visible_system_icons();
 
         let monitor_fit_task = open_main_task
             .then(window::monitor_size)
@@ -762,6 +782,7 @@ impl App {
                 vibrancy_task,
                 load1,
                 load2,
+                sys_icons_task,
             ]),
         )
     }
@@ -947,10 +968,11 @@ impl App {
             Message::ToggleSidebarHomeExpanded => {
                 self.sidebar_home_expanded = !self.sidebar_home_expanded;
                 if self.sidebar_home_expanded {
-                    Task::perform(
+                    let subdirs_task = Task::perform(
                         fm_fs::list_home_subdirs(self.places.home.clone()),
                         Message::HomeSubdirsLoaded,
-                    )
+                    );
+                    Task::batch([subdirs_task, self.queue_visible_system_icons()])
                 } else {
                     Task::none()
                 }
@@ -1427,7 +1449,7 @@ impl App {
                 if let Ok(drives) = res {
                     self.drives = drives;
                 }
-                Task::none()
+                self.queue_visible_system_icons()
             }
             Message::DirectoryLoaded {
                 tab_id,
@@ -1964,6 +1986,29 @@ impl App {
                 }
                 Task::none()
             }
+            Message::SystemIconReady {
+                generation,
+                key,
+                bucket,
+                rgba,
+            } => {
+                self.in_flight_system_icons.remove(&(key.clone(), bucket));
+                if generation != self.system_icon_generation {
+                    return Task::none();
+                }
+                self.system_icon_cache
+                    .insert((key.clone(), bucket), rgba.clone());
+                if let Some(thumb) = rgba {
+                    if self.gpu_system_icons.len() >= fm_preview::DEFAULT_ICON_CACHE_CAPACITY {
+                        self.gpu_system_icons.clear();
+                    }
+                    self.gpu_system_icons.insert(
+                        (key, bucket),
+                        image::Handle::from_rgba(thumb.width, thumb.height, thumb.pixels.clone()),
+                    );
+                }
+                Task::none()
+            }
             Message::OpenCreateDialog(is_dir) => {
                 self.context_menu = None;
                 self.active_dialog = Some(ActiveDialog::CreateItem {
@@ -2176,6 +2221,15 @@ impl App {
                 }
                 self.config.grid_center_items = center;
                 self.persist_config_task()
+            }
+            Message::ToggleSystemIcons => {
+                self.config.icon_theme_mode = match self.config.icon_theme_mode {
+                    IconThemeMode::Bundled => IconThemeMode::HostSystem,
+                    IconThemeMode::HostSystem => IconThemeMode::Bundled,
+                };
+                let persist = self.persist_config_task();
+                let queue = self.queue_visible_system_icons();
+                Task::batch([persist, queue])
             }
             Message::ToggleDirsFirst => {
                 self.config.dirs_first = !self.config.dirs_first;
@@ -4009,6 +4063,201 @@ impl App {
                     (key, rgba)
                 },
                 |(key, rgba)| Message::ThumbnailReady { key, rgba },
+            ));
+        }
+
+        Task::batch([Task::batch(tasks), self.queue_visible_system_icons()])
+    }
+
+    fn queue_visible_system_icons(&mut self) -> Task<Message> {
+        if self.config.icon_theme_mode != IconThemeMode::HostSystem {
+            return Task::none();
+        }
+
+        let mut needed: Vec<(SystemIconKey, SystemIconBucket)> = Vec::new();
+        let mut seen: HashSet<(SystemIconKey, SystemIconBucket)> = HashSet::new();
+        let mut push_icon = |key: SystemIconKey, bucket: SystemIconBucket| {
+            let pair = (key, bucket);
+            if seen.insert(pair.clone()) {
+                needed.push(pair);
+            }
+        };
+
+        for place in [
+            SystemPlaceKind::Home,
+            SystemPlaceKind::Desktop,
+            SystemPlaceKind::Documents,
+            SystemPlaceKind::Downloads,
+            SystemPlaceKind::Music,
+            SystemPlaceKind::Pictures,
+            SystemPlaceKind::Videos,
+            SystemPlaceKind::Public,
+            SystemPlaceKind::Templates,
+            SystemPlaceKind::Trash,
+        ] {
+            push_icon(
+                SystemIconKey::SpecialPlace(place),
+                SystemIconBucket::Small24,
+            );
+        }
+        if self.sidebar_home_expanded {
+            push_icon(SystemIconKey::Directory, SystemIconBucket::Small24);
+        }
+        for drive in &self.drives {
+            push_icon(SystemIconKey::Drive(drive.kind), SystemIconBucket::Small24);
+        }
+
+        if let Some(tab) = self.current_tab() {
+            let strings = self.strings();
+            let entry_bucket = if tab.view_mode == ViewMode::Grid {
+                SystemIconBucket::Large64
+            } else {
+                SystemIconBucket::Small24
+            };
+            match tab.view_mode {
+                ViewMode::Grid => {
+                    let card_w =
+                        views::virtualized::clamp_grid_card_width(self.config.grid_card_width);
+                    let card_h = views::virtualized::grid_card_height(card_w);
+                    let fit_cols = views::virtualized::grid_columns_for_width(
+                        self.effective_canvas_width(),
+                        card_w,
+                    );
+                    let bands = views::virtualized::build_tab_grid_bands(
+                        &tab.visible_entries,
+                        fit_cols,
+                        self.config.grid_group_folders,
+                        strings,
+                    );
+                    let win = views::virtualized::compute_band_window_with_row_height(
+                        &bands,
+                        card_h,
+                        self.canvas_scroll_y,
+                        self.canvas_viewport_height,
+                        280.0,
+                    );
+                    for band in &bands[win.range] {
+                        if let views::virtualized::GridBand::Items(chunk) = band {
+                            for &(_, entry) in chunk {
+                                push_icon(
+                                    SystemIconKey::for_entry(
+                                        entry,
+                                        fm_fs::is_archive_file(&entry.path),
+                                    ),
+                                    entry_bucket,
+                                );
+                            }
+                        }
+                    }
+                }
+                ViewMode::DetailTable | ViewMode::Columns => {
+                    let step = if tab.view_mode == ViewMode::DetailTable {
+                        views::virtualized::DETAIL_ROW_STEP
+                    } else {
+                        32.0
+                    };
+                    let win = views::virtualized::compute_fixed_window(
+                        tab.visible_entries.len(),
+                        step,
+                        self.canvas_scroll_y,
+                        self.canvas_viewport_height,
+                        6,
+                    );
+                    for entry in &tab.visible_entries[win.range] {
+                        push_icon(
+                            SystemIconKey::for_entry(entry, fm_fs::is_archive_file(&entry.path)),
+                            entry_bucket,
+                        );
+                    }
+                    if tab.view_mode == ViewMode::Columns {
+                        for (_, anc_entries) in &self.column_ancestors {
+                            for child in anc_entries.iter().take(60) {
+                                push_icon(
+                                    SystemIconKey::for_entry(
+                                        child,
+                                        fm_fs::is_archive_file(&child.path),
+                                    ),
+                                    SystemIconBucket::Small24,
+                                );
+                            }
+                        }
+                        if let Some((_, children)) = &self.column_preview {
+                            for child in children.iter().take(60) {
+                                push_icon(
+                                    SystemIconKey::for_entry(
+                                        child,
+                                        fm_fs::is_archive_file(&child.path),
+                                    ),
+                                    SystemIconBucket::Small24,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (self.config.show_inspector || self.quicklook_open)
+                && let Some(selected) = tab.selection.single_selected(&tab.visible_entries)
+            {
+                push_icon(
+                    SystemIconKey::for_entry(selected, fm_fs::is_archive_file(&selected.path)),
+                    SystemIconBucket::Large64,
+                );
+            }
+        }
+
+        let generation = self.system_icon_generation;
+        let cancel = self
+            .tab_cancels
+            .get(&self.active_tab)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut tasks = Vec::new();
+        for (key, bucket) in needed {
+            let pair = (key.clone(), bucket);
+            if self.gpu_system_icons.contains_key(&pair) {
+                continue;
+            }
+            if let Some(cached_opt) = self.system_icon_cache.get(&pair) {
+                if let Some(thumb) = cached_opt {
+                    if self.gpu_system_icons.len() >= fm_preview::DEFAULT_ICON_CACHE_CAPACITY {
+                        self.gpu_system_icons.clear();
+                    }
+                    self.gpu_system_icons.insert(
+                        pair,
+                        image::Handle::from_rgba(thumb.width, thumb.height, thumb.pixels.clone()),
+                    );
+                }
+                continue;
+            }
+            if self.in_flight_system_icons.contains(&pair) {
+                continue;
+            }
+            self.in_flight_system_icons.insert(pair);
+            let cancel = cancel.clone();
+            tasks.push(Task::perform(
+                async move {
+                    let k_bg = key.clone();
+                    let cancel_bg = cancel.clone();
+                    let rgba = tokio::task::spawn_blocking(move || {
+                        if cancel_bg.is_cancelled() {
+                            return None;
+                        }
+                        let payload = fm_fs::resolve_system_icon(&k_bg, bucket)?;
+                        rasterize_system_icon(payload, bucket, &cancel_bg)
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                    (generation, key, bucket, rgba)
+                },
+                |(generation, key, bucket, rgba)| Message::SystemIconReady {
+                    generation,
+                    key,
+                    bucket,
+                    rgba,
+                },
             ));
         }
 

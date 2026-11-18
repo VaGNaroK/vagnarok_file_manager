@@ -1,9 +1,11 @@
 //! Pipeline de geração de thumbnails SIMD, SVG (`resvg`), cache LRU + persistente (`redb`) e QuickLook.
 
 pub mod disk_cache;
+pub mod icons;
 pub mod thumbs;
 
 pub use disk_cache::DiskThumbnailCache;
+pub use icons::{DEFAULT_ICON_CACHE_CAPACITY, SystemIconCache, rasterize_system_icon};
 pub use thumbs::{
     DEFAULT_THUMBNAIL_CACHE_CAPACITY, ThumbnailCache, ThumbnailRgba, decode_thumbnail_from_bytes,
     generate_or_load_thumbnail, generate_thumbnail, is_image_extension,

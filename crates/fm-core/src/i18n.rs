@@ -242,6 +242,7 @@ pub struct Strings {
     pub grid_align_left: &'static str,
     pub grid_align_center: &'static str,
     pub tip_grid_alignment: &'static str,
+    pub tip_system_icons: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -646,6 +647,7 @@ impl Strings {
         let grid_align_left = resolve("grid-align-left");
         let grid_align_center = resolve("grid-align-center");
         let tip_grid_alignment = resolve("tip-grid-alignment");
+        let tip_system_icons = resolve("tip-system-icons");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -857,6 +859,7 @@ impl Strings {
             grid_align_left,
             grid_align_center,
             tip_grid_alignment,
+            tip_system_icons,
         }
     }
 }

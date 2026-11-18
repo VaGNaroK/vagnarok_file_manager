@@ -264,3 +264,4 @@ grid-center-label = Alinhamento dos itens no Grid
 grid-align-left = Esquerda para direita
 grid-align-center = Centralizado
 tip-grid-alignment = Alternar alinhamento da grade (Esquerda para direita ou Centralizado)
+tip-system-icons = Alternar entre ícones padrão e ícones do sistema

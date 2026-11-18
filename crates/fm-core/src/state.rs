@@ -388,6 +388,14 @@ fn default_grid_card_width() -> f32 {
     140.0
 }
 
+/// Modo de ícones exibidos para pastas, arquivos, locais e unidades.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum IconThemeMode {
+    #[default]
+    Bundled,
+    HostSystem,
+}
+
 /// Preferências persistíveis da aplicação.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -414,6 +422,8 @@ pub struct AppConfig {
     #[serde(default = "default_true")]
     pub dirs_first: bool,
     #[serde(default)]
+    pub icon_theme_mode: IconThemeMode,
+    #[serde(default)]
     pub favorites: Vec<PathBuf>,
 }
 
@@ -434,6 +444,7 @@ impl Default for AppConfig {
             grid_center_items: false,
             grid_card_width: default_grid_card_width(),
             dirs_first: true,
+            icon_theme_mode: IconThemeMode::Bundled,
             favorites: Vec::new(),
         }
     }

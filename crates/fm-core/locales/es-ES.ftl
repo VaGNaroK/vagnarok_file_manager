@@ -264,3 +264,4 @@ grid-center-label = Alineación de elementos en Cuadrícula
 grid-align-left = De izquierda a derecha
 grid-align-center = Centrado
 tip-grid-alignment = Alternar alineación de cuadrícula (Izquierda a derecha o Centrado)
+tip-system-icons = Alternar entre iconos predeterminados e iconos del sistema

@@ -6,14 +6,87 @@ pub mod modals;
 pub mod sidebar;
 pub mod virtualized;
 
-use fm_core::FileEntry;
+use fm_core::{
+    DriveInfo, FileEntry, IconThemeMode, SystemIconBucket, SystemIconKey, SystemPlaceKind,
+};
 use fm_theme::{FONT_UI, ThemePalette, styles};
-use iced::widget::{Text, container, text, tooltip};
-use iced::{Color, Element};
+use iced::widget::{Text, container, image, text, tooltip};
+use iced::{Color, ContentFit, Element};
 use lucide_icons::iced::{
     icon_file_archive, icon_file_code, icon_file_json, icon_file_text, icon_folder, icon_image,
     icon_terminal,
 };
+
+use crate::app::{App, Message};
+
+/// Renderiza um ícone do sistema hospedeiro (quando ativo e já em cache na GPU) ou usa o fallback vetorial.
+pub fn render_system_or_fallback<'a>(
+    app: &'a App,
+    key: &SystemIconKey,
+    fallback: Text<'a, iced::Theme>,
+    size: f32,
+) -> Element<'a, Message> {
+    if app.config.icon_theme_mode == IconThemeMode::HostSystem {
+        let primary_bucket = SystemIconBucket::for_display_size(size);
+        let alt_bucket = match primary_bucket {
+            SystemIconBucket::Small24 => SystemIconBucket::Large64,
+            SystemIconBucket::Large64 => SystemIconBucket::Small24,
+        };
+        if let Some(handle) = app
+            .gpu_system_icons
+            .get(&(key.clone(), primary_bucket))
+            .or_else(|| app.gpu_system_icons.get(&(key.clone(), alt_bucket)))
+        {
+            return image(handle.clone())
+                .width(size)
+                .height(size)
+                .content_fit(ContentFit::Contain)
+                .into();
+        }
+    }
+    fallback.into()
+}
+
+/// Renderiza o ícone de uma entrada de arquivo/pasta respeitando o modo de ícones configurado.
+pub fn render_entry_icon<'a>(
+    app: &'a App,
+    entry: &FileEntry,
+    palette: ThemePalette,
+    size: f32,
+) -> Element<'a, Message> {
+    let (fallback, _) = entry_icon(entry, palette, size);
+    if app.config.icon_theme_mode == IconThemeMode::Bundled {
+        return fallback.into();
+    }
+    let key = SystemIconKey::for_entry(entry, fm_fs::is_archive_file(&entry.path));
+    render_system_or_fallback(app, &key, fallback, size)
+}
+
+/// Renderiza o ícone de um local especial da barra lateral respeitando o modo de ícones configurado.
+pub fn render_place_icon<'a>(
+    app: &'a App,
+    place: SystemPlaceKind,
+    fallback: Text<'a, iced::Theme>,
+    size: f32,
+) -> Element<'a, Message> {
+    if app.config.icon_theme_mode == IconThemeMode::Bundled {
+        return fallback.into();
+    }
+    render_system_or_fallback(app, &SystemIconKey::SpecialPlace(place), fallback, size)
+}
+
+/// Renderiza o ícone de uma unidade/disco respeitando o modo de ícones configurado.
+pub fn render_drive_icon<'a>(
+    app: &'a App,
+    drive: &DriveInfo,
+    fallback: Text<'a, iced::Theme>,
+    size: f32,
+) -> Element<'a, Message> {
+    if app.config.icon_theme_mode == IconThemeMode::Bundled {
+        return fallback.into();
+    }
+    render_system_or_fallback(app, &SystemIconKey::Drive(drive.kind), fallback, size)
+}
 
 /// Mapeia uma entrada de arquivo/pasta para o ícone Lucide e cor semântica correspondentes.
 pub fn entry_icon<'a>(

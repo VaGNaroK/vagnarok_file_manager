@@ -141,7 +141,7 @@ pub async fn generate_or_load_thumbnail(
     .flatten()
 }
 
-fn generate_thumbnail_sync(
+pub(crate) fn generate_thumbnail_sync(
     path: &Path,
     max_side_px: u32,
     cancel: &CancellationToken,

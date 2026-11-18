@@ -90,6 +90,7 @@ mod tests {
             grid_center_items: true,
             grid_card_width: 172.0,
             dirs_first: false,
+            icon_theme_mode: fm_core::IconThemeMode::HostSystem,
             favorites: vec![PathBuf::from("/tmp/work")],
         };
 
@@ -112,6 +113,7 @@ mod tests {
         assert!(!loaded.grid_group_folders);
         assert!(loaded.grid_center_items);
         assert!(!loaded.dirs_first);
+        assert_eq!(loaded.icon_theme_mode, fm_core::IconThemeMode::HostSystem);
         assert_eq!(loaded.favorites, vec![PathBuf::from("/tmp/work")]);
     }
 
@@ -134,5 +136,6 @@ favorites = []
         assert!(parsed.grid_group_folders);
         assert!(!parsed.grid_center_items);
         assert!(parsed.dirs_first);
+        assert_eq!(parsed.icon_theme_mode, fm_core::IconThemeMode::Bundled);
     }
 }

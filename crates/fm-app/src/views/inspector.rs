@@ -11,7 +11,7 @@ use iced::{ContentFit, Element, Length, Padding};
 use lucide_icons::iced::{icon_file_text, icon_folder, icon_search, icon_x};
 
 use crate::app::{App, Message, deep_search_input_id, thumbnail_key_for_entry};
-use crate::views::{entry_icon, sanitize_single_line};
+use crate::views::{render_entry_icon, sanitize_single_line};
 
 pub fn drawer<'a>(
     app: &'a App,
@@ -54,8 +54,7 @@ pub fn drawer<'a>(
                             .content_fit(ContentFit::Contain)
                             .into()
                     } else {
-                        let (icon_widget, _) = entry_icon(entry, palette, 46.0);
-                        icon_widget.into()
+                        render_entry_icon(app, entry, palette, 46.0)
                     };
 
                 let perms = entry.permissions.format_compact(entry.kind.is_dir_like());
@@ -250,7 +249,7 @@ pub fn quicklook_modal<'a>(
         .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0))
         .into()
     } else if let Some(e) = entry {
-        let (icon_widget, _) = entry_icon(e, palette, 56.0);
+        let icon_widget = render_entry_icon(app, e, palette, 56.0);
         column![
             icon_widget,
             text(sanitize_single_line(e.name.as_str()))

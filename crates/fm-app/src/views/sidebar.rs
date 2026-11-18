@@ -1,4 +1,4 @@
-use fm_core::{DriveKind, Strings, format_bytes};
+use fm_core::{DriveKind, Strings, SystemIconKey, SystemPlaceKind, format_bytes};
 use fm_theme::{FONT_MONO, FONT_UI, FONT_UI_SEMIBOLD, Spacing, ThemePalette, styles};
 use iced::Alignment::Center;
 use iced::widget::{
@@ -13,7 +13,10 @@ use lucide_icons::iced::{
 };
 
 use crate::app::{App, Message, SidebarTarget};
-use crate::views::{sanitize_single_line, with_tooltip};
+use crate::views::{
+    render_drive_icon, render_place_icon, render_system_or_fallback, sanitize_single_line,
+    with_tooltip,
+};
 
 pub const SIDEBAR_WIDTH_MIN: f32 = 180.0;
 pub const SIDEBAR_WIDTH_MAX: f32 = 560.0;
@@ -94,33 +97,49 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
     let quick_candidates = [
         (
             SidebarTarget::Desktop,
+            SystemPlaceKind::Desktop,
             strings.desktop,
             icon_monitor().size(16),
         ),
         (
             SidebarTarget::Documents,
+            SystemPlaceKind::Documents,
             strings.documents,
             icon_folder().size(16),
         ),
         (
             SidebarTarget::Downloads,
+            SystemPlaceKind::Downloads,
             strings.downloads,
             icon_download().size(16),
         ),
-        (SidebarTarget::Music, strings.music, icon_music().size(16)),
+        (
+            SidebarTarget::Music,
+            SystemPlaceKind::Music,
+            strings.music,
+            icon_music().size(16),
+        ),
         (
             SidebarTarget::Pictures,
+            SystemPlaceKind::Pictures,
             strings.pictures,
             icon_image().size(16),
         ),
-        (SidebarTarget::Videos, strings.videos, icon_video().size(16)),
+        (
+            SidebarTarget::Videos,
+            SystemPlaceKind::Videos,
+            strings.videos,
+            icon_video().size(16),
+        ),
         (
             SidebarTarget::PublicDir,
+            SystemPlaceKind::Public,
             strings.public_dir,
             icon_folder().size(16),
         ),
         (
             SidebarTarget::Templates,
+            SystemPlaceKind::Templates,
             strings.templates,
             icon_file_text().size(16),
         ),
@@ -138,7 +157,7 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
         .current_tab()
         .is_some_and(|t| t.current_path == home_path);
     let home_btn = sidebar_btn_owned(
-        icon_home().size(16),
+        render_place_icon(app, SystemPlaceKind::Home, icon_home().size(16), 16.0),
         strings.home.to_owned(),
         collapsed,
         home_active,
@@ -188,7 +207,12 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
                     .current_tab()
                     .is_some_and(|t| &t.current_path == sub_path);
                 let sub_btn = sidebar_btn_owned(
-                    icon_folder().size(14),
+                    render_system_or_fallback(
+                        app,
+                        &SystemIconKey::Directory,
+                        icon_folder().size(14),
+                        14.0,
+                    ),
                     label,
                     false,
                     sub_active,
@@ -213,13 +237,13 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
         }
     }
 
-    for (target, label, icon) in quick_candidates {
+    for (target, place_kind, label, icon) in quick_candidates {
         if let Some(resolved) = target.resolve_path(&app.places) {
             let active = app
                 .current_tab()
                 .is_some_and(|t| t.current_path == resolved);
             quick_col = quick_col.push(sidebar_btn_owned(
-                icon,
+                render_place_icon(app, place_kind, icon, 16.0),
                 label.to_owned(),
                 collapsed,
                 active,
@@ -291,7 +315,7 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
                 can_unmount: drive.can_unmount,
             };
             let btn = sidebar_btn_owned(
-                icon,
+                render_drive_icon(app, drive, icon, 16.0),
                 label,
                 collapsed,
                 active,
@@ -404,7 +428,7 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
                 .current_tab()
                 .is_some_and(|t| &t.current_path == fav_path);
             fav_col = fav_col.push(sidebar_btn_owned(
-                icon_star().size(15).color(palette.accent_tertiary),
+                icon_star().size(15).color(palette.accent_tertiary).into(),
                 label,
                 collapsed,
                 active,
@@ -424,7 +448,7 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
             .current_tab()
             .is_some_and(|t| &t.current_path == trash_path);
         sections = sections.push(sidebar_btn_owned(
-            icon_trash_2().size(16),
+            render_place_icon(app, SystemPlaceKind::Trash, icon_trash_2().size(16), 16.0),
             strings.trash.to_owned(),
             collapsed,
             active,
@@ -440,7 +464,7 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
     let footer_actions = row![
         with_tooltip(
             sidebar_btn_owned(
-                icon_settings().size(16),
+                icon_settings().size(16).into(),
                 strings.preferences.to_owned(),
                 collapsed,
                 false,
@@ -506,7 +530,7 @@ fn section_header<'a>(label: &'a str, palette: ThemePalette) -> Element<'a, Mess
 }
 
 fn sidebar_btn_owned<'a>(
-    icon: iced::widget::Text<'a, iced::Theme>,
+    icon: Element<'a, Message>,
     label: String,
     collapsed: bool,
     active: bool,

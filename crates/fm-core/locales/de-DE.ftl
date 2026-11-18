@@ -264,3 +264,4 @@ grid-center-label = Elementausrichtung im Raster
 grid-align-left = Links nach rechts
 grid-align-center = Zentriert
 tip-grid-alignment = Rasterausrichtung umschalten (Links nach rechts oder Zentriert)
+tip-system-icons = Zwischen Standard- und Systemsymbolen umschalten

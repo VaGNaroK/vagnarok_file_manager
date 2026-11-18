@@ -1581,6 +1581,7 @@ version = "0.1.0-alpha.5"
 dependencies = [
  "directories",
  "fast_image_resize",
+ "fm-core",
  "image",
  "lru",
  "redb",
