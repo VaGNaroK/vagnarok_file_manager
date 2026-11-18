@@ -268,11 +268,7 @@ fn action_bar<'a>(
         palette,
     );
 
-    let is_in_trash = app
-        .places
-        .trash
-        .as_ref()
-        .is_some_and(|tr| tab.current_path.starts_with(tr));
+    let is_in_trash = app.is_current_tab_trash();
     let sel_count = tab.selection.count();
     let mut ops_row = row![].spacing(4).align_y(Center);
     if is_in_trash {
@@ -344,8 +340,12 @@ fn action_bar<'a>(
             button(icon_trash_2().size(14).color(palette.status_error))
                 .padding([6, 8])
                 .style(styles::pill_secondary_button(palette))
-                .on_press(Message::RequestDelete(false)),
-            strings.move_to_trash,
+                .on_press(Message::RequestDelete(is_in_trash)),
+            if is_in_trash {
+                strings.delete_permanent
+            } else {
+                strings.move_to_trash
+            },
             tooltip::Position::Bottom,
             palette,
         ));

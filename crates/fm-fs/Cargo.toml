@@ -31,6 +31,7 @@ harness = false
 open.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+chrono.workspace = true
 rustix.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]

@@ -828,6 +828,17 @@ impl App {
         self.tabs.iter().find(|t| t.id == self.active_tab)
     }
 
+    pub fn is_current_tab_trash(&self) -> bool {
+        self.current_tab().is_some_and(|tab| {
+            fm_core::is_virtual_trash_path(&tab.current_path)
+                || self
+                    .places
+                    .trash
+                    .as_ref()
+                    .is_some_and(|tr| tab.current_path.starts_with(tr))
+        })
+    }
+
     pub fn current_tab_mut(&mut self) -> Option<&mut TabState> {
         let active = self.active_tab;
         self.tabs.iter_mut().find(|t| t.id == active)
@@ -2045,6 +2056,7 @@ impl App {
                 if paths.is_empty() {
                     return Task::none();
                 }
+                let permanent = permanent || self.is_current_tab_trash();
                 self.active_dialog = Some(ActiveDialog::ConfirmDelete { paths, permanent });
                 Task::none()
             }

@@ -2235,12 +2235,13 @@ pub fn context_menu_overlay<'a>(
                     palette,
                 ));
             }
-            if app
-                .places
-                .trash
-                .as_ref()
-                .is_some_and(|tr| path.starts_with(tr))
-            {
+            let is_in_trash = app.is_current_tab_trash()
+                || app
+                    .places
+                    .trash
+                    .as_ref()
+                    .is_some_and(|tr| path.starts_with(tr));
+            if is_in_trash {
                 items = items.push(ctx_item(
                     icon_rotate_ccw()
                         .size(14)
@@ -2252,16 +2253,15 @@ pub fn context_menu_overlay<'a>(
                     palette,
                 ));
             }
-            items = items
-                .push(ctx_divider(palette))
-                .push(ctx_item(
-                    icon_copy().size(14).color(palette.text_secondary).into(),
-                    strings.copy,
-                    palette.text_primary,
-                    Message::CopySelected,
-                    palette,
-                ))
-                .push(ctx_item(
+            items = items.push(ctx_divider(palette)).push(ctx_item(
+                icon_copy().size(14).color(palette.text_secondary).into(),
+                strings.copy,
+                palette.text_primary,
+                Message::CopySelected,
+                palette,
+            ));
+            if !is_in_trash {
+                items = items.push(ctx_item(
                     icon_scissors()
                         .size(14)
                         .color(palette.text_secondary)
@@ -2271,37 +2271,39 @@ pub fn context_menu_overlay<'a>(
                     Message::CutSelected,
                     palette,
                 ));
-            if has_clipboard {
-                items = items.push(ctx_item(
-                    icon_clipboard_paste()
-                        .size(14)
-                        .color(palette.accent_primary)
-                        .into(),
-                    strings.paste,
-                    palette.text_primary,
-                    Message::PasteClipboard,
-                    palette,
-                ));
+                if has_clipboard {
+                    items = items.push(ctx_item(
+                        icon_clipboard_paste()
+                            .size(14)
+                            .color(palette.accent_primary)
+                            .into(),
+                        strings.paste,
+                        palette.text_primary,
+                        Message::PasteClipboard,
+                        palette,
+                    ));
+                }
             }
-            items = items
-                .push(ctx_item(
-                    icon_clipboard_copy()
-                        .size(14)
-                        .color(palette.text_secondary)
-                        .into(),
-                    strings.copy_path,
-                    palette.text_primary,
-                    Message::CopyPath(path.clone()),
-                    palette,
-                ))
-                .push(ctx_item(
+            items = items.push(ctx_item(
+                icon_clipboard_copy()
+                    .size(14)
+                    .color(palette.text_secondary)
+                    .into(),
+                strings.copy_path,
+                palette.text_primary,
+                Message::CopyPath(path.clone()),
+                palette,
+            ));
+            if !is_in_trash {
+                items = items.push(ctx_item(
                     icon_pencil().size(14).color(palette.text_secondary).into(),
                     strings.rename,
                     palette.text_primary,
                     Message::OpenRenameDialog,
                     palette,
                 ));
-            if let Some(mode) = *posix_mode {
+            }
+            if !is_in_trash && let Some(mode) = *posix_mode {
                 let exec_enabled = is_posix_executable(mode);
                 let next_mode = toggle_posix_executable_mode(mode);
                 items = items
@@ -2337,9 +2339,13 @@ pub fn context_menu_overlay<'a>(
                 .push(ctx_divider(palette))
                 .push(ctx_item(
                     icon_trash_2().size(14).color(palette.status_error).into(),
-                    strings.move_to_trash,
+                    if is_in_trash {
+                        strings.delete_permanent
+                    } else {
+                        strings.move_to_trash
+                    },
                     palette.status_error,
-                    Message::RequestDelete(false),
+                    Message::RequestDelete(is_in_trash),
                     palette,
                 ));
         }
@@ -2392,7 +2398,15 @@ pub fn context_menu_overlay<'a>(
                     Message::OpenProperties(path.clone()),
                     palette,
                 ));
-            if *is_favorite {
+            if fm_core::is_virtual_trash_path(path) {
+                items = items.push(ctx_divider(palette)).push(ctx_item(
+                    icon_trash_2().size(14).color(palette.status_error).into(),
+                    strings.empty_trash,
+                    palette.status_error,
+                    Message::RequestEmptyTrash,
+                    palette,
+                ));
+            } else if *is_favorite {
                 items = items.push(ctx_divider(palette)).push(ctx_item(
                     icon_star_off().size(14).color(palette.status_error).into(),
                     strings.remove_favorite,
@@ -2695,8 +2709,12 @@ pub fn context_menu_overlay<'a>(
                 340.0
             }
         }
-        ContextMenuKind::SidebarPlace { is_favorite, .. } => {
-            if *is_favorite {
+        ContextMenuKind::SidebarPlace {
+            path, is_favorite, ..
+        } => {
+            if fm_core::is_virtual_trash_path(path) {
+                196.0
+            } else if *is_favorite {
                 196.0 + root_extra
             } else {
                 156.0 + root_extra
