@@ -87,6 +87,7 @@ mod tests {
             window_decorations: WindowDecorationsMode::IntegratedCsd,
             default_view_mode: ViewMode::Columns,
             grid_group_folders: false,
+            grid_center_items: true,
             grid_card_width: 172.0,
             dirs_first: false,
             favorites: vec![PathBuf::from("/tmp/work")],
@@ -109,6 +110,7 @@ mod tests {
         );
         assert_eq!(loaded.default_view_mode, ViewMode::Columns);
         assert!(!loaded.grid_group_folders);
+        assert!(loaded.grid_center_items);
         assert!(!loaded.dirs_first);
         assert_eq!(loaded.favorites, vec![PathBuf::from("/tmp/work")]);
     }
@@ -130,6 +132,7 @@ favorites = []
         assert!(!parsed.theme_customized);
         assert_eq!(parsed.sidebar_width, None);
         assert!(parsed.grid_group_folders);
+        assert!(!parsed.grid_center_items);
         assert!(parsed.dirs_first);
     }
 }

@@ -260,3 +260,7 @@ refresh-drives = Aggiorna unità
 tip-expand-home = Espandi o comprimi cartelle della Home
 open-as-root = Apri come root
 root-mode-badge = Modalità Root (Privilegi elevati)
+grid-center-label = Allineamento elementi nella Griglia
+grid-align-left = Da sinistra a destra
+grid-align-center = Centrato
+tip-grid-alignment = Cambia allineamento griglia (Sinistra a destra o Centrato)

@@ -398,6 +398,8 @@ pub enum Message {
     ClosePreferences,
     SetDefaultViewMode(ViewMode),
     ToggleGridGroupFolders,
+    ToggleGridCenterItems,
+    SetGridCenterItems(bool),
     ToggleDirsFirst,
     ToggleWindowDecorations,
     RequestEmptyTrash,
@@ -1114,6 +1116,7 @@ impl App {
                 let strings = self.strings();
                 let card_width = self.config.grid_card_width;
                 let group_folders = self.config.grid_group_folders;
+                let center_items = self.config.grid_center_items;
                 if is_initial {
                     self.marquee_base_selection = if additive {
                         self.current_tab()
@@ -1131,6 +1134,7 @@ impl App {
                             viewport_width,
                             card_width,
                             group_folders,
+                            center_items,
                             strings,
                             rect,
                         ),
@@ -2160,6 +2164,17 @@ impl App {
             }
             Message::ToggleGridGroupFolders => {
                 self.config.grid_group_folders = !self.config.grid_group_folders;
+                self.persist_config_task()
+            }
+            Message::ToggleGridCenterItems => {
+                self.config.grid_center_items = !self.config.grid_center_items;
+                self.persist_config_task()
+            }
+            Message::SetGridCenterItems(center) => {
+                if self.config.grid_center_items == center {
+                    return Task::none();
+                }
+                self.config.grid_center_items = center;
                 self.persist_config_task()
             }
             Message::ToggleDirsFirst => {

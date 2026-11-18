@@ -21,10 +21,10 @@ use iced::{
     Vector,
 };
 use lucide_icons::iced::{
-    icon_arrow_up_down, icon_chevron_right, icon_clipboard_paste, icon_copy, icon_eye,
-    icon_eye_off, icon_filter, icon_folder_tree, icon_info, icon_minus, icon_pencil, icon_plus,
-    icon_rotate_ccw, icon_scissors, icon_shield_alert, icon_star, icon_terminal, icon_trash_2,
-    icon_x,
+    icon_align_center, icon_align_left, icon_arrow_up_down, icon_chevron_right,
+    icon_clipboard_paste, icon_copy, icon_eye, icon_eye_off, icon_filter, icon_folder_tree,
+    icon_info, icon_minus, icon_pencil, icon_plus, icon_rotate_ccw, icon_scissors,
+    icon_shield_alert, icon_star, icon_terminal, icon_trash_2, icon_x,
 };
 
 use crate::app::{
@@ -34,8 +34,8 @@ use crate::views::modals::format_transfer_summary;
 use crate::views::virtualized::{
     ContentRect, DETAIL_LIST_SIDE_PADDING, DETAIL_ROW_HEIGHT, DETAIL_ROW_STEP, GRID_BAND_SPACING,
     GRID_GAP, GridBand, build_tab_grid_bands, clamp_grid_card_width,
-    compute_band_window_with_row_height, compute_fixed_window, grid_card_height,
-    grid_columns_for_width,
+    compute_band_window_with_row_height, compute_fixed_window, compute_grid_layout_metrics,
+    grid_card_height, grid_columns_for_width,
 };
 use crate::views::{entry_icon, sanitize_single_line, with_tooltip};
 
@@ -516,6 +516,22 @@ fn action_bar<'a>(
             palette,
         );
 
+        let center_active = app.config.grid_center_items;
+        let align_icon = if center_active {
+            icon_align_center().size(13).color(palette.accent_primary)
+        } else {
+            icon_align_left().size(13).color(palette.text_secondary)
+        };
+        let align_btn = with_tooltip(
+            button(align_icon)
+                .padding([6, 8])
+                .style(styles::pill_secondary_button(palette))
+                .on_press(Message::ToggleGridCenterItems),
+            strings.tip_grid_alignment,
+            tooltip::Position::Bottom,
+            palette,
+        );
+
         let size_controls = container(
             row![
                 with_tooltip(
@@ -557,7 +573,10 @@ fn action_bar<'a>(
         .padding(2)
         .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 8.0));
 
-        toolbar_right = toolbar_right.push(group_btn).push(size_controls);
+        toolbar_right = toolbar_right
+            .push(group_btn)
+            .push(align_btn)
+            .push(size_controls);
     }
 
     toolbar_right = toolbar_right
@@ -776,6 +795,7 @@ fn grid_view<'a>(
     strings: Strings,
 ) -> Element<'a, Message> {
     let group_folders = app.config.grid_group_folders;
+    let center_items = app.config.grid_center_items;
     let modifiers = SelectionModifiers {
         ctrl: app.current_modifiers.control(),
         shift: app.current_modifiers.shift(),
@@ -793,31 +813,11 @@ fn grid_view<'a>(
         let bands = build_tab_grid_bands(&tab.visible_entries, fit_cols, group_folders, strings);
         let win =
             compute_band_window_with_row_height(&bands, card_height, scroll_y, viewport_h, 280.0);
-
-        let max_row_items = bands
-            .iter()
-            .filter_map(|b| match b {
-                GridBand::Items(chunk) => Some(chunk.len()),
-                GridBand::SectionHeader { .. } => None,
-            })
-            .max()
-            .unwrap_or(0);
-        let active_cols = if max_row_items > 0 && max_row_items < fit_cols {
-            max_row_items
-        } else {
-            fit_cols
-        };
-        let grid_block_width =
-            active_cols as f32 * card_width + active_cols.saturating_sub(1) as f32 * GRID_GAP;
-        let min_header_w = 300.0_f32.min(size.width.max(card_width));
-        let block_width = grid_block_width
-            .max(min_header_w)
-            .min(size.width.max(card_width));
-        let center_sparse_rows = max_row_items > 0 && max_row_items < fit_cols;
+        let metrics = compute_grid_layout_metrics(&bands, size.width, card_width, center_items);
 
         let mut list = column![]
             .spacing(GRID_BAND_SPACING)
-            .width(Length::Fixed(block_width));
+            .width(Length::Fixed(metrics.block_width));
         if win.top_spacer > 0.0 {
             list = list.push(Space::new().height(win.top_spacer));
         }
@@ -852,7 +852,7 @@ fn grid_view<'a>(
                     let row_wrap =
                         container(r)
                             .width(Length::Fill)
-                            .align_x(if center_sparse_rows {
+                            .align_x(if metrics.center_sparse_rows {
                                 Center
                             } else {
                                 Alignment::Start
@@ -868,9 +868,16 @@ fn grid_view<'a>(
         // Garante área vazia clicável ao final do grid mesmo quando a pasta preenche toda a largura.
         list = list.push(Space::new().height(48.0));
 
-        let centered_canvas = container(list).width(Length::Fill).align_x(Center);
+        let aligned_canvas = if center_items {
+            container(list).width(Length::Fill).align_x(Center)
+        } else {
+            container(list)
+                .width(Length::Fill)
+                .padding(Padding::from([0.0, metrics.list_x]))
+                .align_x(Alignment::Start)
+        };
 
-        let scroll = scrollable(centered_canvas)
+        let scroll = scrollable(aligned_canvas)
             .id(canvas_scroll_id())
             .width(Length::Fill)
             .height(Length::Fill)

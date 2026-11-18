@@ -407,6 +407,8 @@ pub struct AppConfig {
     pub default_view_mode: ViewMode,
     #[serde(default = "default_true")]
     pub grid_group_folders: bool,
+    #[serde(default)]
+    pub grid_center_items: bool,
     #[serde(default = "default_grid_card_width")]
     pub grid_card_width: f32,
     #[serde(default = "default_true")]
@@ -429,6 +431,7 @@ impl Default for AppConfig {
             window_decorations: WindowDecorationsMode::NativeWm,
             default_view_mode: ViewMode::Grid,
             grid_group_folders: true,
+            grid_center_items: false,
             grid_card_width: default_grid_card_width(),
             dirs_first: true,
             favorites: Vec::new(),

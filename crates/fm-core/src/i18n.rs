@@ -238,6 +238,10 @@ pub struct Strings {
     pub tip_expand_home: &'static str,
     pub open_as_root: &'static str,
     pub root_mode_badge: &'static str,
+    pub grid_center_label: &'static str,
+    pub grid_align_left: &'static str,
+    pub grid_align_center: &'static str,
+    pub tip_grid_alignment: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -638,6 +642,10 @@ impl Strings {
         let tip_expand_home = resolve("tip-expand-home");
         let open_as_root = resolve("open-as-root");
         let root_mode_badge = resolve("root-mode-badge");
+        let grid_center_label = resolve("grid-center-label");
+        let grid_align_left = resolve("grid-align-left");
+        let grid_align_center = resolve("grid-align-center");
+        let tip_grid_alignment = resolve("tip-grid-alignment");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -845,6 +853,10 @@ impl Strings {
             tip_expand_home,
             open_as_root,
             root_mode_badge,
+            grid_center_label,
+            grid_align_left,
+            grid_align_center,
+            tip_grid_alignment,
         }
     }
 }

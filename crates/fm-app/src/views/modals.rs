@@ -1773,6 +1773,29 @@ pub fn preferences_modal<'a>(
                 .into(),
             ),
             pref_row(
+                strings.grid_center_label,
+                row![
+                    button(
+                        text(strings.grid_align_left)
+                            .size(12)
+                            .font(FONT_UI_SEMIBOLD)
+                    )
+                    .padding([5, 10])
+                    .style(styles::tab_button(palette, !app.config.grid_center_items))
+                    .on_press(Message::SetGridCenterItems(false)),
+                    button(
+                        text(strings.grid_align_center)
+                            .size(12)
+                            .font(FONT_UI_SEMIBOLD)
+                    )
+                    .padding([5, 10])
+                    .style(styles::tab_button(palette, app.config.grid_center_items))
+                    .on_press(Message::SetGridCenterItems(true)),
+                ]
+                .spacing(6)
+                .into(),
+            ),
+            pref_row(
                 strings.dirs_first_label,
                 button(
                     text(if app.config.dirs_first { "ON" } else { "OFF" })

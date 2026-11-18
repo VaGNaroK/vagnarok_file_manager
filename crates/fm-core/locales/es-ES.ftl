@@ -260,3 +260,7 @@ refresh-drives = Actualizar unidades
 tip-expand-home = Expandir o contraer carpetas de Inicio
 open-as-root = Abrir como root
 root-mode-badge = Modo Root (Privilegios elevados)
+grid-center-label = Alineación de elementos en Cuadrícula
+grid-align-left = De izquierda a derecha
+grid-align-center = Centrado
+tip-grid-alignment = Alternar alineación de cuadrícula (Izquierda a derecha o Centrado)

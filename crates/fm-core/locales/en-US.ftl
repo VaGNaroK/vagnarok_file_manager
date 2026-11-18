@@ -260,3 +260,7 @@ refresh-drives = Refresh drives
 tip-expand-home = Expand or collapse Home folders
 open-as-root = Open as root
 root-mode-badge = Root Mode (Elevated privileges)
+grid-center-label = Grid item alignment
+grid-align-left = Left to right
+grid-align-center = Centered
+tip-grid-alignment = Toggle Grid alignment (Left to right or Centered)

@@ -255,25 +255,33 @@ pub fn grid_band_y_span(
     None
 }
 
-/// Retorna os índices das entradas cujos cards no Grid intersectam `rect` em coordenadas do conteúdo.
-pub fn grid_marquee_hits(
-    entries: &[FileEntry],
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridLayoutMetrics {
+    pub fit_cols: usize,
+    pub block_width: f32,
+    pub list_x: f32,
+    pub center_sparse_rows: bool,
+}
+
+/// Calcula largura e alinhamento do bloco da grade (esquerda->direita ou centralizado).
+pub fn compute_grid_layout_metrics(
+    bands: &[GridBand<'_>],
     viewport_width: f32,
     card_width: f32,
-    group_folders: bool,
-    strings: Strings,
-    rect: ContentRect,
-) -> Vec<usize> {
-    if entries.is_empty() || viewport_width <= 0.0 {
-        return Vec::new();
-    }
+    center_items: bool,
+) -> GridLayoutMetrics {
     let card_width = clamp_grid_card_width(card_width);
-    let card_height = grid_card_height(card_width);
-    let box_width = (card_width - 14.0).max(88.0);
-    let box_inset_x = (card_width - box_width) * 0.5;
-
     let fit_cols = grid_columns_for_width(viewport_width, card_width);
-    let bands = build_tab_grid_bands(entries, fit_cols, group_folders, strings);
+    if !center_items {
+        let side_pad = 12.0_f32;
+        return GridLayoutMetrics {
+            fit_cols,
+            block_width: (viewport_width - side_pad * 2.0).max(card_width),
+            list_x: side_pad,
+            center_sparse_rows: false,
+        };
+    }
+
     let max_row_items = bands
         .iter()
         .filter_map(|b| match b {
@@ -293,8 +301,37 @@ pub fn grid_marquee_hits(
     let block_width = grid_block_width
         .max(min_header_w)
         .min(viewport_width.max(card_width));
-    let center_sparse_rows = max_row_items > 0 && max_row_items < fit_cols;
     let list_x = ((viewport_width - block_width) * 0.5).max(0.0);
+
+    GridLayoutMetrics {
+        fit_cols,
+        block_width,
+        list_x,
+        center_sparse_rows: max_row_items > 0 && max_row_items < fit_cols,
+    }
+}
+
+/// Retorna os índices das entradas cujos cards no Grid intersectam `rect` em coordenadas do conteúdo.
+pub fn grid_marquee_hits(
+    entries: &[FileEntry],
+    viewport_width: f32,
+    card_width: f32,
+    group_folders: bool,
+    center_items: bool,
+    strings: Strings,
+    rect: ContentRect,
+) -> Vec<usize> {
+    if entries.is_empty() || viewport_width <= 0.0 {
+        return Vec::new();
+    }
+    let card_width = clamp_grid_card_width(card_width);
+    let card_height = grid_card_height(card_width);
+    let box_width = (card_width - 14.0).max(88.0);
+    let box_inset_x = (card_width - box_width) * 0.5;
+
+    let fit_cols = grid_columns_for_width(viewport_width, card_width);
+    let bands = build_tab_grid_bands(entries, fit_cols, group_folders, strings);
+    let metrics = compute_grid_layout_metrics(&bands, viewport_width, card_width, center_items);
 
     let mut hits = Vec::new();
     let mut y = 0.0_f32;
@@ -306,10 +343,10 @@ pub fn grid_marquee_hits(
         {
             let row_w =
                 chunk.len() as f32 * card_width + chunk.len().saturating_sub(1) as f32 * GRID_GAP;
-            let row_x = if center_sparse_rows {
-                list_x + ((block_width - row_w) * 0.5).max(0.0)
+            let row_x = if metrics.center_sparse_rows {
+                metrics.list_x + ((metrics.block_width - row_w) * 0.5).max(0.0)
             } else {
-                list_x
+                metrics.list_x
             };
             for (col, (entry_idx, _)) in chunk.iter().enumerate() {
                 let x0 = row_x + col as f32 * (card_width + GRID_GAP) + box_inset_x;
@@ -495,19 +532,32 @@ mod tests {
         let entries: Vec<FileEntry> = (0..6).map(dummy_file).collect();
         let strings = Strings::for_language(fm_core::Language::PtBr);
 
-        // Em grade unificada (~900px, card 140px => 5 colunas), primeira linha vai de y = 0..109.
-        let grid_hits = grid_marquee_hits(
+        // Em grade esquerda->direita (~900px, card 140px => 5 colunas), primeira linha começa em x=12.
+        let grid_hits_left = grid_marquee_hits(
             &entries,
             900.0,
             140.0,
             false,
+            false,
+            strings,
+            ContentRect::from_points(14.0, 10.0, 350.0, 80.0),
+        );
+        assert_eq!(grid_hits_left, vec![0, 1, 2]);
+
+        // Em modo centralizado, mesma largura desloca a linha para o centro.
+        let grid_hits_centered = grid_marquee_hits(
+            &entries,
+            900.0,
+            140.0,
+            false,
+            true,
             strings,
             ContentRect::from_points(100.0, 10.0, 460.0, 80.0),
         );
-        assert!(grid_hits.contains(&0));
-        assert!(grid_hits.contains(&1));
-        assert!(grid_hits.contains(&2));
-        assert!(!grid_hits.contains(&5));
+        assert!(grid_hits_centered.contains(&0));
+        assert!(grid_hits_centered.contains(&1));
+        assert!(grid_hits_centered.contains(&2));
+        assert!(!grid_hits_centered.contains(&5));
 
         // Em lista, cada linha ocupa 38px de passo (34px altura + 4px gap).
         let list_hits = list_marquee_hits(

@@ -260,3 +260,7 @@ refresh-drives = Actualiser les lecteurs
 tip-expand-home = Développer ou réduire les dossiers personnels
 open-as-root = Ouvrir en tant que root
 root-mode-badge = Mode Root (Privilèges élevés)
+grid-center-label = Alignement des éléments en Grille
+grid-align-left = De gauche à droite
+grid-align-center = Centré
+tip-grid-alignment = Basculer l'alignement de la grille (Gauche à droite ou Centré)
