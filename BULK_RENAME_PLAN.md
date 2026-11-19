@@ -1,6 +1,6 @@
 # Plano de Implementação — **Renomeação em Lote (`Bulk Rename`) Nativo**
 
-Documento de análise de viabilidade e plano arquitetural para adicionar ao **Vagnarok File Manager** uma ferramenta modal nativa de **Renomeação em Lote** com **preview em tempo real**, suporte a **Regex**, **numeração sequencial** e extração de **metadados (EXIF / ID3)**, alinhada às regras de engenharia do repositório (`AGENTS.md`).
+Documento de análise de viabilidade e plano arquitetural para adicionar ao **Vagnarok File Manager** uma ferramenta modal nativa e intuitiva de **Renomeação em Lote** com **preview em tempo real**, controles visuais diretos (substituir, remover, inserir, capitalização, numeração sequencial e alteração de extensão), extração de **metadados (EXIF / ID3)** e **Regex opcional (modo avançado)**, alinhada às regras de engenharia do repositório (`AGENTS.md`).
 
 ---
 
@@ -27,7 +27,7 @@ Documento de análise de viabilidade e plano arquitetural para adicionar ao **Va
 Atualmente:
 - `crates/fm-app/src/app.rs` (`Message::OpenRenameDialog`, atalho `F2`) e `crates/fm-app/src/views/canvas.rs` (`if sel_count == 1`) habilitam renomeação apenas quando há **1 item** selecionado.
 - **Novo comportamento**:
-  - `sel_count == 1`: mantém o diálogo rápido de renomeação individual atual (ou opção secundária no menu para abrir o Bulk Rename caso queira usar regex/EXIF nele também).
+  - `sel_count == 1`: mantém o diálogo rápido de renomeação individual atual (com opção secundária no menu para abrir a **Renomeação em Lote** caso queira aplicar substituição guiada, caixa ou metadados EXIF/ID3 nele também).
   - `sel_count > 1`: `F2`, botão de **Renomear** na barra superior e item **Renomear em Lote...** no menu de contexto (`ContextMenuKind::Entry`) abrem diretamente o modal de **Bulk Rename** com todos os itens selecionados na ordem da aba ativa.
 - **Proteção de VFS somente leitura**: Caso a aba atual esteja na Lixeira virtual (`is_virtual_trash_path`) ou dentro de um arquivo compactado (`ArchiveVfs` somente leitura), a ação deve bloquear a abertura com aviso limpo na barra de status (`status_notice`).
 
@@ -37,38 +37,66 @@ Seguindo o padrão recém-consolidado em `crates/fm-app/src/views/mod.rs` (`moda
 - O modal deve rodar sobre `modal_overlay_backdrop_at` + `opaque(...)` para **bloquear cliques na janela principal atrás**.
 - Deve suportar **arrastar pela barra de título** e **redimensionar pelo canto inferior direito** (essencial para visualizar caminhos/nomes longos sem truncamento excessivo), com dimensões mínimas seguras (ex.: `740x520`).
 
-### 2.3 Wireframe Conceitual (Tokens `ObsidianFlow` / `AetherLight`)
+### 2.3 Design User-Friendly e Wireframe Conceitual (Tokens `ObsidianFlow` / `AetherLight`)
+
+A interface deve ser **direta para qualquer usuário**, evitando exigir sintaxe técnica como `IMG_(\d+)_(\d+)` ou templates complexos `{n:03}` na tela principal. Em vez disso, o painel de regras oferece **cartões com caixas de seleção (`[x]`)** e controles explícitos e fáceis de entender:
+
+- **Procurar e Substituir**: campos simples de texto + escolha clara de onde atuar (*Em qualquer lugar*, *Só no início do nome*, *Só no fim do nome*, *Só início de palavra*, *Só fim de palavra*, *Palavra inteira*). A opção **Usar Regex** fica recolhida/discreta em **"Opções avançadas"** e desligada por padrão.
+- **Remover**: caixas para marcar remoção dos *N* primeiros caracteres, *N* últimos caracteres, texto específico, números, espaços extras ou pontuação.
+- **Inserir**: adicionar texto no *início do nome*, *fim do nome* (antes da extensão) ou em uma *posição exata*.
+- **Maiúsculas / Minúsculas**: opções diretas (*Sem alteração*, *TUDO MAIÚSCULA*, *tudo minúscula*, *Primeira Letra De Cada Palavra*, *Só a 1ª letra do nome*).
+- **Numeração Sequencial**: escolher posição (*Início* / *Fim* / *Substituir nome*), separador, número inicial, passo e quantidade de zeros (`1`, `01`, `001`...).
+- **Metadados (EXIF / ID3)**: botões/caixas prontas para adicionar *Data da foto*, *Modelo da câmera*, *Artista*, *Álbum*, *Título* ou *Nº da faixa* sem precisar decorar códigos.
+- **Extensão**: controles dedicados para *Manter original*, *Trocar extensão para...*, *Colocar extensão em minúscula/MAIÚSCULA* ou *Remover extensão*.
 
 ```text
-+---------------------------------------------------------------------------------+
-| [Renomear em Lote]  124 itens selecionados                                  [x] |
-+---------------------------------------------------------------------------------+
-| PRESETS / MODO:  [Substituir / Regex]  [Numeração]  [Metadados EXIF/ID3]  [Aa]  |
-+------------------------------------+--------------------------------------------+
-| REGRAS ATIVAS                      | PREVIEW EM TEMPO REAL                      |
-|                                    |                                            |
-| 1. Buscar / Substituir             |  Status | Atual            | Novo Nome     |
-|    Buscar:   [ IMG_(\d+)_(\d+)  ]  |  -------+------------------+-------------- |
-|    Subst.:   [ Viagem_$1        ]  |   [OK]  | IMG_2026_01.jpg  | Viagem_01.jpg |
-|    [x] Usar Regex   [ ] Ign. Caso  |   [OK]  | IMG_2026_02.jpg  | Viagem_02.jpg |
-|    Escopo: (o) Nome  ( ) Tudo      |   [!!]  | IMG_2026_03.jpg  | Viagem_01.jpg |
-|                                    |           ^ Conflito: destino duplicado    |
-| 2. Numeração & Template            |   [--]  | notas.txt        | (sem mudança) |
-|    Padrão: [ {stem}_{n:03}      ]  |                                            |
-|    Início: [ 1 ]  Passo: [ 1 ]     |                                            |
-|    Ordenar por: [ Nome v ]         |  (Lista virtualizada: renderiza só visível)|
-|                                    |                                            |
-| 3. Tokens Rápidos (Clique p/ ins.) |                                            |
-|    {stem} {ext} {n:03}             |                                            |
-|    {exif:date} {exif:camera}       |                                            |
-|    {id3:artist} {id3:title} {id3:#}|                                            |
-|                                    |                                            |
-| 4. Caixa & Limpeza                 |                                            |
-|    Caixa: [ Sem alteração     v ]  |  Leitura EXIF/ID3: 124/124 (em cache)      |
-+------------------------------------+--------------------------------------------+
-| 120 alterados | 3 sem mudança | 1 conflito (bloqueando aplicar)                 |
-|                                               [ Cancelar ]  [ Aplicar (120) ]   |
-+---------------------------------------------------------------------------------+
++--------------------------------------------------------------------------------------+
+| [Renomear em Lote]  124 itens selecionados                        [Limpar regras] [x]|
++--------------------------------------+-----------------------------------------------+
+| O QUE VOCÊ QUER FAZER?               | PREVIEW EM TEMPO REAL                         |
+|                                      |                                               |
+| [x] Procurar e Substituir            |  Status | Nome Atual       | Novo Nome        |
+|     Procurar:   [ IMG_2026_       ]  |  -------+------------------+---------------- |
+|     Substituir: [ Ferias_         ]  |   [OK]  | IMG_2026_01.jpg  | Ferias_01.jpg    |
+|     Onde: [ Qualquer lugar        v ]|   [OK]  | IMG_2026_02.jpg  | Ferias_02.jpg    |
+|       (Qualquer / Só início / Só fim |   [!!]  | IMG_2026_03.jpg  | Ferias_03.jpg    |
+|        Início da palavra / Fim pal.) |         ^ Conflito: nome já existe no disco   |
+|     [ ] Diferenciar MAIÚSC./minúsc.  |   [--]  | notas.txt        | (sem mudança)    |
+|     [ ] Só a 1ª ocorrência           |                                               |
+|     > Opções avançadas (Regex)       |  (Lista virtualizada: renderiza só visível)   |
+|                                      |                                               |
+| [ ] Remover                          |                                               |
+|     [ ] Primeiros [ 0 ] caracteres   |                                               |
+|     [ ] Últimos   [ 0 ] caracteres   |                                               |
+|     [ ] Trecho:   [               ]  |                                               |
+|     [ ] Espaços extras  [ ] Números  |                                               |
+|                                      |                                               |
+| [ ] Inserir Texto                    |                                               |
+|     Texto:   [                    ]  |                                               |
+|     Posição: [ No início do nome  v ]|                                               |
+|                                      |                                               |
+| [x] Maiúsculas / Minúsculas          |                                               |
+|     Estilo: [ Primeira Letra Pal. v ]|                                               |
+|       (Sem alteração / TUDO MAIÚSC.  |                                               |
+|        minúscula / Só 1ª letra nome) |                                               |
+|                                      |                                               |
+| [ ] Numeração Sequencial             |                                               |
+|     Posição: [ No fim ]  Sep.: [ _ ] |                                               |
+|     Início: [ 1 ]  Passo: [ 1 ]      |                                               |
+|     Dígitos: [ 001 (3 dígitos)    v ]|                                               |
+|     Ordem:   [ Nome (A-Z)         v ]|                                               |
+|                                      |                                               |
+| [ ] Usar Dados da Foto / Música      |                                               |
+|     [+] Data da foto  [+] Câmera     |                                               |
+|     [+] Artista  [+] Álbum  [+] Faixa|                                               |
+|                                      |                                               |
+| [ ] Mudar Extensão                   |                                               |
+|     Ação: [ Manter original       v ]|                                               |
+|     Nova extensão: [ jpg ]           |  Leitura EXIF/ID3: ociosa (só ao ativar)     |
++--------------------------------------+-----------------------------------------------+
+| Escopo: [x] Nome  [ ] Pastas     | 120 alterados | 3 sem mudança | 1 conflito        |
+|                                                    [ Cancelar ]  [ Aplicar (120) ]   |
++--------------------------------------------------------------------------------------+
 ```
 
 ---
@@ -84,12 +112,21 @@ Novo módulo `crates/fm-core/src/bulk_rename.rs` (sem `iced`, sem `tokio`, sem `
    - `BulkRenameMediaTags`: campos opcionais leves (`Option<CompactString>`) para:
      - EXIF: `date_taken` (ex.: `2026-08-14_15-30-22`), `date_ymd` (`2026-08-14`), `camera_model`, `width`, `height`.
      - ID3: `title`, `artist`, `album`, `track` (numérico para zero-padding), `year`.
-2. **Pipeline Componível de Transformações**:
-   - Ordem previsível de avaliação sobre cada item `(index, input, tags)`:
-     1. **Separação segura de nome base (`stem`) e extensão (`ext`)**: respeitar arquivos sem extensão e diretórios (em pastas, `is_dir == true`, o ponto em `"v1.2.0"` normalmente pertence ao nome, com opção explícita se o usuário quiser tratar extensão).
-     2. **Template / Numeração**: expansão de tokens (`{stem}`, `{ext}`, `{name}`, `{n}`, `{n:02}`..`{n:06}`, `{mtime:ymd}`, `{exif:date}`, `{exif:ymd}`, `{exif:camera}`, `{id3:artist}`, `{id3:album}`, `{id3:title}`, `{id3:track:02}`, `{id3:year}`). Fallbacks limpos quando uma tag estiver ausente no arquivo (ex.: manter vazio ou valor fallback configurável, evitando literais `"None"`).
-     3. **Busca & Substituição / Regex**: usando `regex::RegexBuilder` com tratamento gracioso de erro de sintaxe (retorna `Err(RegexError)` para exibição em banner inline na UI sem panics) e suporte a grupos de captura (`$1`, `$2`, `${nome}`). Compilar o `Regex` **uma única vez por atualização**, nunca dentro do loop de arquivos.
-     4. **Transformação de Caixa & Sanitização**: `Keep`, `Lowercase`, `Uppercase`, `TitleCase`, `TrimSpaces`, além de sanitização automática opcional de caracteres ilegais em nomes (`/` no POSIX; `\ / : * ? " < > |` e nomes reservados `CON`/`PRN`/`NUL` quando o alvo for Windows ou modo portátil).
+2. **Pipeline Componível e Visual de Transformações**:
+   - Cada bloco da UI mapeia para uma estrutura tipada em `BulkRenamePipeline` (somente as etapas marcadas como ativas são aplicadas), executada em ordem determinística sobre `(index, input, tags)`:
+     1. **Separação segura de nome base (`stem`) e extensão (`ext`)**: respeitar arquivos sem extensão e diretórios (em pastas, `is_dir == true`, o ponto em `"v1.2.0"` pertence ao nome).
+     2. **Composição por Metadados (opcional)**: caso o bloco de EXIF/ID3 esteja ativo, monta ou anexa campos selecionados pelo usuário (*Data da foto*, *Câmera*, *Artista*, *Álbum*, *Título*, *Faixa* com zero-padding) com separador configurável e fallback limpo quando a tag não existir no arquivo (nunca gerar literais `"None"`).
+     3. **Remover**:
+        - Primeiros `N` caracteres / últimos `N` caracteres / intervalo `[de..até]`.
+        - Texto literal exato (com filtro de posição: *qualquer lugar*, *só início*, *só fim*).
+        - Limpeza rápida por checkbox: espaços duplicados / início e fim (`trim`), apenas dígitos, apenas símbolos/pontuação.
+     4. **Procurar e Substituir**:
+        - Modo padrão **texto simples** com escopo amigável: `Anywhere`, `StartOfName`, `EndOfName`, `WordStart` (altera só o início da palavra), `WordEnd` (altera só o fim da palavra), `WholeWord`, mais flags `case_sensitive` e `first_occurrence_only`.
+        - Modo **Regex opcional** (`use_regex: bool`, desligado por padrão): usa `regex::RegexBuilder` com tratamento gracioso de erro de sintaxe (retorna `Err` para banner inline sem panics) e compilação única por atualização antes do loop nos arquivos.
+     5. **Inserir Texto**: texto literal no início do nome, no final do nome base, ou em índice `pos` (contando a partir do início ou do fim).
+     6. **Numeração Sequencial**: insere contador no início, no fim ou substituindo o nome base, com `start`, `step`, `zero_pad_digits` (1..6), `separator`, e ordenação do lote (`SelectionOrder`, `NameAsc`, `NameDesc`, `ModifiedAsc`, `ModifiedDesc`, `SizeAsc`).
+     7. **Maiúsculas / Minúsculas (Capitalização)**: `Keep`, `Uppercase` (`TODOS MAIÚSCULA`), `Lowercase` (`todos minúscula`), `TitleCaseWords` (`Primeira Letra De Cada Palavra`), `SentenceCaseFirst` (`Só a primeira letra do nome maiúscula`).
+     8. **Mudar Extensão**: `Keep`, `Lowercase`, `Uppercase`, `Replace(String)`, `Remove`, mais sanitização automática opcional de caracteres ilegais no SO (`/` no POSIX; `\ / : * ? " < > |` e nomes reservados `CON`/`PRN`/`NUL` quando aplicável).
 3. **Detector de Conflitos e Validador**:
    - Compara todos os destinos propostos dentro do mesmo `parent_dir`:
      - Em Windows (ou modo case-insensitive), compara com `to_lowercase()` para detectar colisão real em NTFS/FAT (`Foto.jpg` e `foto.jpg` no mesmo lote!).
@@ -119,8 +156,8 @@ Novo módulo `crates/fm-core/src/bulk_rename.rs` (sem `iced`, sem `tokio`, sem `
 Novo módulo `crates/fm-telemetry/src/media_tags.rs`:
 
 1. **Carregamento Sob Demanda (`Lazy`)**:
-   - Abrir o modal **não** deve disparar leitura de disco de 1.000 arquivos se o usuário quer apenas rodar um Regex simples ou numeração sequencial.
-   - O worker de metadados só é disparado quando o pipeline ativo referenciar ao menos um token `{exif:...}` ou `{id3:...}` (ou se o usuário clicar em "Carregar tags").
+   - Abrir o modal **não** deve disparar leitura de disco de 1.000 arquivos se o usuário quer apenas fazer uma substituição simples, remover caracteres, ajustar maiúsculas ou numerar.
+   - O worker de metadados só é disparado quando o usuário marcar opções do bloco **"Usar Dados da Foto / Música"** (ou clicar em "Carregar tags").
 2. **Leitura Parcial & Baixo Consumo de RAM**:
    - **Abertura segura**: usar sempre `crate::open_shared::open_shared_read(&path)` (Windows share mode `0x7`), evitando erros de arquivo em uso por VLC, navegadores ou editores.
    - **EXIF** (JPEG, TIFF, WebP/PNG quando aplicável via `kamadak-exif`): ler apenas um buffer inicial limitado (ex.: cabeçalho até ~128–256 KiB em chunks ou leitor com `Take`), nunca carregar uma imagem RAW/JPEG de 40 MB inteira na memória para ler 4 tags de texto.
@@ -149,7 +186,7 @@ Novo módulo `crates/fm-telemetry/src/media_tags.rs`:
 - **Estado dedicado** (ex.: `BulkRenameModalState` em `crates/fm-app/src/app.rs` ou submódulo `bulk_rename_modal.rs`):
   - `items: Vec<BulkRenameItemState>` (com `BulkRenameInput`, `Option<BulkRenameMediaTags>`, último `BulkRenamePreviewRow` calculado).
   - `existing_names_in_dir: HashSet<OsString>` (snapshot instantâneo dos nomes já presentes em `visible_entries` da aba ativa, evitando I/O síncrono para checar colisão!).
-  - `rule_state`: campos do formulário (busca, substituição, flags regex, template, início/passo de numeração, transformação de caixa, ordenação do lote).
+  - `rule_state`: estado dos cartões visuais marcáveis (procurar/substituir com escopo de posição/palavra + flag avançada Regex, remover, inserir, maiúsculas/minúsculas, numeração sequencial, metadados EXIF/ID3 selecionados, regra de extensão e ordenação do lote).
   - `preview_generation: u64`, `tags_cancel: Option<CancellationToken>`, `tags_progress: (usize, usize)`.
   - `modal_offset: Option<(f32, f32)>` e `modal_size: Option<(f32, f32)>` + estados de drag/resize análogos a `properties_modal_offset` / `properties_modal_size`.
 - **Virtualização da Tabela de Preview**:
@@ -174,20 +211,20 @@ Novo módulo `crates/fm-telemetry/src/media_tags.rs`:
 
 ### Fase 1 — Motor Puro em `fm-core` (P0)
 - Criar `crates/fm-core/src/bulk_rename.rs` com:
-  - Parser de templates e numeração sequencial (`{n}`, `{n:03}`, `{stem}`, `{ext}`, `{mtime:...}`, `{exif:...}`, `{id3:...}`).
-  - Integração com `regex = "1.13.1"` (`fm-core/Cargo.toml` + `Cargo.toml` raiz).
+  - Pipeline componível para regras visuais: **Procurar/Substituir** (qualquer lugar, início/fim do nome, início/fim de palavra), **Remover** (N primeiros/últimos, trecho, espaços/números), **Inserir** (início/fim/posição), **Capitalização** (maiúsculas, minúsculas, primeira letra de cada palavra, só 1ª letra do nome), **Numeração Sequencial**, **Extensão** e campos de metadados.
+  - Suporte opcional a Regex via `regex = "1.13.1"` (`fm-core/Cargo.toml` + `Cargo.toml` raiz) apenas quando o usuário marcar o modo avançado.
   - Validador de nomes inválidos (POSIX + regras Windows), detector de conflitos internos/externos e planejador em 2 fases para ciclos e case-only renames.
-- Cobertura extensiva de testes unitários em `fm-core` (ciclos A↔B, cadeias A→B→C, colisão case-insensitive, captura regex `$1`, caracteres inválidos, fallback de tags ausentes).
+- Cobertura extensiva de testes unitários em `fm-core` (ciclos A↔B, cadeias A→B→C, colisão case-insensitive, início/fim de palavra, mudança de extensão, remoção/inserção por índice, modo Regex avançado, fallback de tags ausentes).
 
-### Fase 2 — Modal UI + Preview Virtualizado + Execução VFS (P1)
+### Fase 2 — Modal UI Amigável + Preview Virtualizado + Execução VFS (P1)
 - Implementar `BulkRenameModalState` e mensagens em `fm-app`.
 - Integrar gatilhos: `F2`, botão da toolbar e menu de contexto quando `sel_count > 1` (e atalho opcional mesmo com 1 arquivo pelo menu de contexto).
-- Construir modal em `crates/fm-app/src/views/modals.rs` seguindo **ObsidianFlow / AetherLight**, com arraste pela barra de título, redimensionamento pelo canto inferior direito, bloqueio de clique ao fundo (`opaque`) e tabela de preview virtualizada.
+- Construir modal em `crates/fm-app/src/views/modals.rs` seguindo **ObsidianFlow / AetherLight**, com cartões recolhíveis/marcáveis de fácil leitura (sem expor sintaxe Regex por padrão), arraste pela barra de título, redimensionamento pelo canto inferior direito, bloqueio de clique ao fundo (`opaque`) e tabela de preview virtualizada.
 - Executar passos gerados via worker assíncrono no `fm-fs`, atualizar aba mantendo seleção nos itens renomeados e reportar resumo em `status_notice`.
 
 ### Fase 3 — Metadados EXIF & ID3 em `fm-telemetry` (P2)
 - Criar `crates/fm-telemetry/src/media_tags.rs` usando `open_shared_read`, `kamadak-exif = "0.6.2"` e leitor streaming puro-Rust para ID3v1 / ID3v2.3 / ID3v2.4.
-- Disparo lazy ao usar tokens `{exif:*}` / `{id3:*}`, com cancelamento imediato (`CancellationToken`) e atualização progressiva do preview.
+- Disparo lazy ao marcar chips/opções de **Dados da Foto / Música (EXIF / ID3)**, com cancelamento imediato (`CancellationToken`) e atualização progressiva do preview.
 - Testes unitários em `fm-telemetry` com fixtures binárias mínimas geradas em teste (JPEG/EXIF mínimo + MP3/ID3v2 com `APIC` pulado + ID3v1).
 
 ### Fase 4 — Polimento & Internacionalização (P3)
