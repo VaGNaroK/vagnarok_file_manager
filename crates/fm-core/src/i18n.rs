@@ -345,6 +345,36 @@ pub struct Strings {
     pub br_applying: &'static str,
     pub br_undo_last: &'static str,
     pub br_readonly_error: &'static str,
+    pub arch_extract_here: &'static str,
+    pub arch_extract_subdir: &'static str,
+    pub arch_compress_as: &'static str,
+    pub arch_add_7z: &'static str,
+    pub arch_modal_title: &'static str,
+    pub arch_output_name: &'static str,
+    pub arch_destination: &'static str,
+    pub arch_format_label: &'static str,
+    pub arch_level_label: &'static str,
+    pub arch_format_7z: &'static str,
+    pub arch_format_zip: &'static str,
+    pub arch_format_tar: &'static str,
+    pub arch_format_targz: &'static str,
+    pub arch_level_store: &'static str,
+    pub arch_level_min: &'static str,
+    pub arch_level_normal: &'static str,
+    pub arch_level_max: &'static str,
+    pub arch_tar_store_hint: &'static str,
+    pub arch_conflict_label: &'static str,
+    pub arch_conflict_rename: &'static str,
+    pub arch_conflict_overwrite: &'static str,
+    pub arch_conflict_skip: &'static str,
+    pub arch_start_compress: &'static str,
+    pub arch_minimize: &'static str,
+    pub arch_restore: &'static str,
+    pub arch_compressing: &'static str,
+    pub arch_extracting: &'static str,
+    pub arch_done_compress: &'static str,
+    pub arch_done_extract: &'static str,
+    pub arch_cancelled: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -852,6 +882,36 @@ impl Strings {
         let br_applying = resolve("br-applying");
         let br_undo_last = resolve("br-undo-last");
         let br_readonly_error = resolve("br-readonly-error");
+        let arch_extract_here = resolve("arch-extract-here");
+        let arch_extract_subdir = resolve("arch-extract-subdir");
+        let arch_compress_as = resolve("arch-compress-as");
+        let arch_add_7z = resolve("arch-add-7z");
+        let arch_modal_title = resolve("arch-modal-title");
+        let arch_output_name = resolve("arch-output-name");
+        let arch_destination = resolve("arch-destination");
+        let arch_format_label = resolve("arch-format-label");
+        let arch_level_label = resolve("arch-level-label");
+        let arch_format_7z = resolve("arch-format-7z");
+        let arch_format_zip = resolve("arch-format-zip");
+        let arch_format_tar = resolve("arch-format-tar");
+        let arch_format_targz = resolve("arch-format-targz");
+        let arch_level_store = resolve("arch-level-store");
+        let arch_level_min = resolve("arch-level-min");
+        let arch_level_normal = resolve("arch-level-normal");
+        let arch_level_max = resolve("arch-level-max");
+        let arch_tar_store_hint = resolve("arch-tar-store-hint");
+        let arch_conflict_label = resolve("arch-conflict-label");
+        let arch_conflict_rename = resolve("arch-conflict-rename");
+        let arch_conflict_overwrite = resolve("arch-conflict-overwrite");
+        let arch_conflict_skip = resolve("arch-conflict-skip");
+        let arch_start_compress = resolve("arch-start-compress");
+        let arch_minimize = resolve("arch-minimize");
+        let arch_restore = resolve("arch-restore");
+        let arch_compressing = resolve("arch-compressing");
+        let arch_extracting = resolve("arch-extracting");
+        let arch_done_compress = resolve("arch-done-compress");
+        let arch_done_extract = resolve("arch-done-extract");
+        let arch_cancelled = resolve("arch-cancelled");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -1166,6 +1226,36 @@ impl Strings {
             br_applying,
             br_undo_last,
             br_readonly_error,
+            arch_extract_here,
+            arch_extract_subdir,
+            arch_compress_as,
+            arch_add_7z,
+            arch_modal_title,
+            arch_output_name,
+            arch_destination,
+            arch_format_label,
+            arch_level_label,
+            arch_format_7z,
+            arch_format_zip,
+            arch_format_tar,
+            arch_format_targz,
+            arch_level_store,
+            arch_level_min,
+            arch_level_normal,
+            arch_level_max,
+            arch_tar_store_hint,
+            arch_conflict_label,
+            arch_conflict_rename,
+            arch_conflict_overwrite,
+            arch_conflict_skip,
+            arch_start_compress,
+            arch_minimize,
+            arch_restore,
+            arch_compressing,
+            arch_extracting,
+            arch_done_compress,
+            arch_done_extract,
+            arch_cancelled,
         }
     }
 }
