@@ -18,7 +18,7 @@ use crate::{DiskThumbnailCache, ThumbnailKey, open_shared_read};
 const MAX_SVG_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Capacidade padrão do cache LRU de miniaturas em RAM.
-pub const DEFAULT_THUMBNAIL_CACHE_CAPACITY: usize = 512;
+pub const DEFAULT_THUMBNAIL_CACHE_CAPACITY: usize = 128;
 
 /// Buffer RGBA8 pronto para envio à GPU via `iced::widget::image::Handle::from_rgba`.
 #[derive(Debug, Clone)]

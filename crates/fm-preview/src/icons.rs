@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::ThumbnailRgba;
 use crate::thumbs::generate_thumbnail_sync;
 
-pub const DEFAULT_ICON_CACHE_CAPACITY: usize = 512;
+pub const DEFAULT_ICON_CACHE_CAPACITY: usize = 128;
 
 type IconCacheKey = (SystemIconKey, SystemIconBucket);
 type CachedIconEntry = Option<Arc<ThumbnailRgba>>;

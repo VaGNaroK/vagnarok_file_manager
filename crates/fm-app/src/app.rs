@@ -14,10 +14,7 @@ use fm_core::{
 };
 use fm_fs::LocalFs;
 use fm_index::SearchHit;
-use fm_preview::{
-    DiskThumbnailCache, SystemIconCache, ThumbnailCache, ThumbnailKey, ThumbnailRgba,
-    rasterize_system_icon,
-};
+use fm_preview::{DiskThumbnailCache, ThumbnailKey, ThumbnailRgba, rasterize_system_icon};
 use fm_telemetry::{CachedFileTelemetry, DiskMetadataCache};
 use fm_theme::{Spacing, ThemePalette};
 use iced::futures::SinkExt;
@@ -500,10 +497,7 @@ pub enum Message {
         path: PathBuf,
         result: Result<OpenWithCatalog, FsError>,
     },
-    OpenWithIconLoaded {
-        hint: String,
-        handle: Option<image::Handle>,
-    },
+    OpenWithIconsBatchLoaded(Vec<(String, Option<image::Handle>)>),
     OpenWithSelectApp(window::Id, String),
     OpenWithCustomCommandChanged(window::Id, String),
     OpenWithAddCustom(window::Id),
@@ -616,11 +610,10 @@ pub struct App {
     pub marquee_base_selection: HashSet<EntryId>,
     pub metadata_cache: Option<Arc<DiskMetadataCache>>,
     pub disk_thumbnail_cache: Option<Arc<DiskThumbnailCache>>,
-    pub thumbnail_cache: ThumbnailCache,
     pub gpu_thumbnails: HashMap<ThumbnailKey, image::Handle>,
     pub in_flight_thumbs: HashSet<PathBuf>,
-    pub system_icon_cache: SystemIconCache,
     pub gpu_system_icons: HashMap<(SystemIconKey, SystemIconBucket), image::Handle>,
+    pub system_icon_misses: HashSet<(SystemIconKey, SystemIconBucket)>,
     pub in_flight_system_icons: HashSet<(SystemIconKey, SystemIconBucket)>,
     pub system_icon_generation: u64,
     pub open_with_icons: HashMap<String, image::Handle>,
@@ -747,11 +740,10 @@ impl App {
             marquee_base_selection: HashSet::new(),
             metadata_cache: None,
             disk_thumbnail_cache: None,
-            thumbnail_cache: ThumbnailCache::default(),
             gpu_thumbnails: HashMap::new(),
             in_flight_thumbs: HashSet::new(),
-            system_icon_cache: SystemIconCache::default(),
             gpu_system_icons: HashMap::new(),
+            system_icon_misses: HashSet::new(),
             in_flight_system_icons: HashSet::new(),
             system_icon_generation: 0,
             open_with_icons: HashMap::new(),
@@ -2045,14 +2037,10 @@ impl App {
             Message::ThumbnailReady { key, rgba } => {
                 self.in_flight_thumbs.remove(&key.path);
                 if let Some(thumb) = rgba {
-                    self.thumbnail_cache.insert(key.clone(), Arc::clone(&thumb));
                     if self.gpu_thumbnails.len() >= fm_preview::DEFAULT_THUMBNAIL_CACHE_CAPACITY {
                         self.gpu_thumbnails.clear();
                     }
-                    self.gpu_thumbnails.insert(
-                        key,
-                        image::Handle::from_rgba(thumb.width, thumb.height, thumb.pixels.clone()),
-                    );
+                    self.gpu_thumbnails.insert(key, rgba_arc_to_handle(thumb));
                 }
                 Task::none()
             }
@@ -2066,16 +2054,15 @@ impl App {
                 if generation != self.system_icon_generation {
                     return Task::none();
                 }
-                self.system_icon_cache
-                    .insert((key.clone(), bucket), rgba.clone());
                 if let Some(thumb) = rgba {
+                    self.system_icon_misses.remove(&(key.clone(), bucket));
                     if self.gpu_system_icons.len() >= fm_preview::DEFAULT_ICON_CACHE_CAPACITY {
                         self.gpu_system_icons.clear();
                     }
-                    self.gpu_system_icons.insert(
-                        (key, bucket),
-                        image::Handle::from_rgba(thumb.width, thumb.height, thumb.pixels.clone()),
-                    );
+                    self.gpu_system_icons
+                        .insert((key, bucket), rgba_arc_to_handle(thumb));
+                } else {
+                    self.system_icon_misses.insert((key, bucket));
                 }
                 Task::none()
             }
@@ -2837,7 +2824,8 @@ impl App {
                                         catalog.recommended.first().map(|a| a.id.to_string())
                                     });
                             }
-                            icon_task = self.queue_open_with_icons(&catalog);
+                            let batch_cancel = props.cancel.clone().unwrap_or_default();
+                            icon_task = self.queue_open_with_icons(&catalog, batch_cancel);
                             if let Some(props_mut) = self.properties_windows.get_mut(&window_id) {
                                 props_mut.open_with_catalog = Some(catalog);
                             }
@@ -2851,10 +2839,15 @@ impl App {
                 }
                 icon_task
             }
-            Message::OpenWithIconLoaded { hint, handle } => {
-                self.open_with_icons_in_flight.remove(&hint);
-                if let Some(h) = handle {
-                    self.open_with_icons.insert(hint, h);
+            Message::OpenWithIconsBatchLoaded(items) => {
+                for (hint, handle) in items {
+                    self.open_with_icons_in_flight.remove(&hint);
+                    if let Some(h) = handle {
+                        if self.open_with_icons.len() >= 64 {
+                            self.open_with_icons.clear();
+                        }
+                        self.open_with_icons.insert(hint, h);
+                    }
                 }
                 Task::none()
             }
@@ -2896,7 +2889,16 @@ impl App {
                     props_mut.open_with_selected_id = Some(assoc.app_id.clone());
                     props_mut.open_with_custom_command.clear();
                 }
-                let icon_task = self.queue_single_open_with_icon(assoc.icon_hint.as_deref());
+                let mut custom_hints = Vec::new();
+                if let Some(hint) = assoc.icon_hint.as_deref() {
+                    custom_hints.push(hint.to_owned());
+                }
+                let batch_cancel = self
+                    .properties_windows
+                    .get(&window_id)
+                    .and_then(|p| p.cancel.clone())
+                    .unwrap_or_default();
+                let icon_task = self.queue_open_with_icon_hints(custom_hints, batch_cancel);
                 let save_task = self.persist_config_task();
                 Task::batch([save_task, icon_task])
             }
@@ -3053,6 +3055,11 @@ impl App {
                     && let Some(cancel) = props.cancel.take()
                 {
                     cancel.cancel();
+                }
+                if self.properties_windows.is_empty() {
+                    self.open_with_icons.clear();
+                    self.open_with_icons.shrink_to_fit();
+                    self.open_with_icons_in_flight.clear();
                 }
                 if window_id == self.main_window_id {
                     Task::none()
@@ -3604,21 +3611,14 @@ impl App {
                 .flatten()
         });
 
-        #[cfg(target_os = "windows")]
-        let (win_id, open_task) = (self.main_window_id, Task::<window::Id>::none());
-
-        #[cfg(not(target_os = "windows"))]
-        let (win_id, open_task) = window::open(window::Settings {
-            size: Size::new(720.0, 520.0),
-            min_size: Some(Size::new(640.0, 460.0)),
-            position: window::Position::Centered,
-            decorations: true,
-            resizable: true,
-            ..window::Settings::default()
-        });
-
+        let win_id = self.main_window_id;
+        if let Some(mut prev) = self.properties_windows.remove(&win_id)
+            && let Some(prev_cancel) = prev.cancel.take()
+        {
+            prev_cancel.cancel();
+        }
         let win_cancel = CancellationToken::new();
-        let mut tasks = vec![open_task.discard()];
+        let mut tasks: Vec<Task<Message>> = Vec::new();
 
         if !is_archive && initial_volume_space.is_none() {
             let vfs = Arc::clone(&self.vfs);
@@ -3859,10 +3859,20 @@ impl App {
         )
     }
 
-    fn queue_open_with_icons(&mut self, catalog: &OpenWithCatalog) -> Task<Message> {
+    fn queue_open_with_icons(
+        &mut self,
+        catalog: &OpenWithCatalog,
+        cancel: CancellationToken,
+    ) -> Task<Message> {
+        const MAX_OTHER_OPEN_WITH_ICONS: usize = 24;
+        const MAX_OPEN_WITH_ICONS_BATCH: usize = 48;
+
         let mut hints: Vec<String> = Vec::new();
         let mut seen = HashSet::new();
         let mut push_hint = |opt: Option<&str>| {
+            if hints.len() >= MAX_OPEN_WITH_ICONS_BATCH {
+                return;
+            }
             if let Some(h) = opt.map(str::trim).filter(|s| !s.is_empty())
                 && seen.insert(h.to_owned())
             {
@@ -3870,21 +3880,18 @@ impl App {
             }
         };
 
-        if let Some(def) = &catalog.system_default {
-            push_hint(def.icon_hint.as_deref());
-        }
-        for app in &catalog.recommended {
-            push_hint(app.icon_hint.as_deref());
-        }
-        for app in &catalog.others {
-            push_hint(app.icon_hint.as_deref());
-        }
         if let Some(assoc) = self
             .config
             .open_with_defaults
             .get(catalog.type_key.as_str())
         {
             push_hint(assoc.icon_hint.as_deref());
+        }
+        if let Some(def) = &catalog.system_default {
+            push_hint(def.icon_hint.as_deref());
+        }
+        for app in &catalog.recommended {
+            push_hint(app.icon_hint.as_deref());
         }
         if let Some(customs) = self
             .config
@@ -3895,46 +3902,62 @@ impl App {
                 push_hint(assoc.icon_hint.as_deref());
             }
         }
-
-        let mut tasks = Vec::new();
-        for hint in hints {
-            tasks.push(self.queue_single_open_with_icon(Some(&hint)));
+        for app in catalog.others.iter().take(MAX_OTHER_OPEN_WITH_ICONS) {
+            push_hint(app.icon_hint.as_deref());
         }
-        Task::batch(tasks)
+
+        self.queue_open_with_icon_hints(hints, cancel)
     }
 
-    fn queue_single_open_with_icon(&mut self, opt_hint: Option<&str>) -> Task<Message> {
-        let Some(hint) = opt_hint.map(str::trim).filter(|s| !s.is_empty()) else {
-            return Task::none();
-        };
-        if self.open_with_icons.contains_key(hint)
-            || !self.open_with_icons_in_flight.insert(hint.to_owned())
-        {
+    fn queue_open_with_icon_hints(
+        &mut self,
+        hints: Vec<String>,
+        cancel: CancellationToken,
+    ) -> Task<Message> {
+        let mut to_load = Vec::new();
+        for raw in hints {
+            let trimmed = raw.trim();
+            if trimmed.is_empty()
+                || self.open_with_icons.contains_key(trimmed)
+                || !self.open_with_icons_in_flight.insert(trimmed.to_owned())
+            {
+                continue;
+            }
+            to_load.push(trimmed.to_owned());
+        }
+        if to_load.is_empty() {
             return Task::none();
         }
-        let hint_owned = hint.to_owned();
+
+        // Um único worker sequencial evita dezenas de threads bloqueantes e segmentos extras no mimalloc.
+        let sent_keys = to_load.clone();
         Task::perform(
             tokio::task::spawn_blocking(move || {
-                let payload = fm_fs::resolve_app_icon(&hint_owned, SystemIconBucket::Small24)?;
-                let cancel = CancellationToken::new();
-                let rgba = rasterize_system_icon(payload, SystemIconBucket::Small24, &cancel)?;
-                Some((
-                    hint_owned,
-                    image::Handle::from_rgba(rgba.width, rgba.height, rgba.pixels.clone()),
-                ))
-            }),
-            {
-                let hint_fallback = hint.to_owned();
-                move |res| match res {
-                    Ok(Some((hint, handle))) => Message::OpenWithIconLoaded {
-                        hint,
-                        handle: Some(handle),
-                    },
-                    _ => Message::OpenWithIconLoaded {
-                        hint: hint_fallback.clone(),
-                        handle: None,
-                    },
+                let mut out = Vec::with_capacity(to_load.len());
+                for hint in to_load {
+                    if cancel.is_cancelled() {
+                        out.push((hint, None));
+                        continue;
+                    }
+                    let rgba = fm_fs::resolve_app_icon(&hint, SystemIconBucket::Small24).and_then(
+                        |payload| {
+                            rasterize_system_icon(payload, SystemIconBucket::Small24, &cancel)
+                        },
+                    );
+                    out.push((hint, rgba));
                 }
+                out
+            }),
+            move |res| match res {
+                Ok(items) => Message::OpenWithIconsBatchLoaded(
+                    items
+                        .into_iter()
+                        .map(|(hint, rgba)| (hint, rgba.map(rgba_arc_to_handle)))
+                        .collect(),
+                ),
+                Err(_) => Message::OpenWithIconsBatchLoaded(
+                    sent_keys.into_iter().map(|h| (h, None)).collect(),
+                ),
             },
         )
     }
@@ -4652,16 +4675,6 @@ impl App {
             if self.gpu_thumbnails.contains_key(&key) {
                 continue;
             }
-            if let Some(cached) = self.thumbnail_cache.get(&key) {
-                if self.gpu_thumbnails.len() >= fm_preview::DEFAULT_THUMBNAIL_CACHE_CAPACITY {
-                    self.gpu_thumbnails.clear();
-                }
-                self.gpu_thumbnails.insert(
-                    key,
-                    image::Handle::from_rgba(cached.width, cached.height, cached.pixels.clone()),
-                );
-                continue;
-            }
             if self.in_flight_thumbs.contains(&path) {
                 continue;
             }
@@ -4835,19 +4848,8 @@ impl App {
         let mut tasks = Vec::new();
         for (key, bucket) in needed {
             let pair = (key.clone(), bucket);
-            if self.gpu_system_icons.contains_key(&pair) {
-                continue;
-            }
-            if let Some(cached_opt) = self.system_icon_cache.get(&pair) {
-                if let Some(thumb) = cached_opt {
-                    if self.gpu_system_icons.len() >= fm_preview::DEFAULT_ICON_CACHE_CAPACITY {
-                        self.gpu_system_icons.clear();
-                    }
-                    self.gpu_system_icons.insert(
-                        pair,
-                        image::Handle::from_rgba(thumb.width, thumb.height, thumb.pixels.clone()),
-                    );
-                }
+            if self.gpu_system_icons.contains_key(&pair) || self.system_icon_misses.contains(&pair)
+            {
                 continue;
             }
             if self.in_flight_system_icons.contains(&pair) {
@@ -5448,6 +5450,16 @@ fn longest_common_prefix<'a>(items: &[&'a str]) -> &'a str {
             .min(prefix_len);
     }
     &first[..prefix_len]
+}
+
+fn rgba_arc_to_handle(thumb: Arc<ThumbnailRgba>) -> image::Handle {
+    let w = thumb.width;
+    let h = thumb.height;
+    let pixels = match Arc::try_unwrap(thumb) {
+        Ok(owned) => owned.pixels,
+        Err(shared) => shared.pixels.clone(),
+    };
+    image::Handle::from_rgba(w, h, pixels)
 }
 
 pub(crate) fn open_with_props_type_key(props: &PropertiesWindowState) -> String {
