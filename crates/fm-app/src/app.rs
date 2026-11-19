@@ -528,6 +528,7 @@ pub enum Message {
     StartGridResize,
     StartColumnsPanelResize,
     StartSidebarResize,
+    StartPropertiesResize,
     SidebarDividerHovered(bool),
     ResetSidebarWidth,
     EndColumnResize(window::Id),
@@ -593,6 +594,8 @@ pub struct App {
     pub resizing_columns_panel: Option<(f32, f32)>,
     pub resizing_sidebar: Option<(f32, f32)>,
     pub sidebar_divider_hovered: bool,
+    pub properties_modal_size: (f32, f32),
+    pub resizing_properties_modal: Option<(Point, f32, f32)>,
     pub deep_search_open: bool,
     pub deep_search_query: String,
     pub deep_search_loading: bool,
@@ -723,6 +726,8 @@ impl App {
             resizing_columns_panel: None,
             resizing_sidebar: None,
             sidebar_divider_hovered: false,
+            properties_modal_size: (760.0, 560.0),
+            resizing_properties_modal: None,
             deep_search_open: false,
             deep_search_query: String::new(),
             deep_search_loading: false,
@@ -3120,6 +3125,11 @@ impl App {
                 self.resizing_sidebar = Some((start_x, current_w));
                 Task::none()
             }
+            Message::StartPropertiesResize => {
+                let (w, h) = effective_properties_modal_size(self);
+                self.resizing_properties_modal = Some((self.cursor_position, w, h));
+                Task::none()
+            }
             Message::SidebarDividerHovered(hovered) => {
                 self.sidebar_divider_hovered = hovered;
                 Task::none()
@@ -3135,6 +3145,7 @@ impl App {
                 }
                 self.resizing_col = None;
                 self.resizing_columns_panel = None;
+                self.resizing_properties_modal = None;
                 let mut should_persist = self.resizing_grid.take().is_some();
                 if self.resizing_sidebar.take().is_some() {
                     should_persist = true;
@@ -3226,6 +3237,15 @@ impl App {
                         pos.x,
                         self.window_size.width,
                     ));
+                }
+                if let Some((start, initial_w, initial_h)) = self.resizing_properties_modal {
+                    self.properties_modal_size = compute_dragged_properties_modal_size(
+                        initial_w,
+                        initial_h,
+                        start,
+                        pos,
+                        self.window_size,
+                    );
                 }
                 Task::none()
             }
@@ -5452,6 +5472,33 @@ fn longest_common_prefix<'a>(items: &[&'a str]) -> &'a str {
     &first[..prefix_len]
 }
 
+pub fn effective_properties_modal_size(app: &App) -> (f32, f32) {
+    clamp_properties_modal_size(
+        app.properties_modal_size.0,
+        app.properties_modal_size.1,
+        app.window_size,
+    )
+}
+
+fn clamp_properties_modal_size(width: f32, height: f32, window_size: Size) -> (f32, f32) {
+    let max_w = (window_size.width - 32.0).max(560.0);
+    let max_h = (window_size.height - 32.0).max(420.0);
+    (width.clamp(560.0, max_w), height.clamp(420.0, max_h))
+}
+
+fn compute_dragged_properties_modal_size(
+    initial_w: f32,
+    initial_h: f32,
+    start: Point,
+    current: Point,
+    window_size: Size,
+) -> (f32, f32) {
+    // Modal centralizado cresce simetricamente conforme o canto inferior direito é arrastado.
+    let next_w = initial_w + (current.x - start.x) * 2.0;
+    let next_h = initial_h + (current.y - start.y) * 2.0;
+    clamp_properties_modal_size(next_w, next_h, window_size)
+}
+
 fn rgba_arc_to_handle(thumb: Arc<ThumbnailRgba>) -> image::Handle {
     let w = thumb.width;
     let h = thumb.height;
@@ -5728,6 +5775,31 @@ mod tests {
         assert_eq!(
             super::quote_exec_path_if_needed(std::path::Path::new("/opt/My App/bin")),
             "\"/opt/My App/bin\""
+        );
+    }
+
+    #[test]
+    fn properties_modal_resize_clamps_within_viewport() {
+        let win = Size::new(1000.0, 700.0);
+        assert_eq!(
+            super::compute_dragged_properties_modal_size(
+                760.0,
+                560.0,
+                iced::Point::new(880.0, 630.0),
+                iced::Point::new(920.0, 650.0),
+                win,
+            ),
+            (840.0, 600.0)
+        );
+        assert_eq!(
+            super::compute_dragged_properties_modal_size(
+                760.0,
+                560.0,
+                iced::Point::new(880.0, 630.0),
+                iced::Point::new(500.0, 300.0),
+                win,
+            ),
+            (560.0, 420.0)
         );
     }
 }

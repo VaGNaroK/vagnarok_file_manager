@@ -10,8 +10,8 @@ use fm_core::{
     DriveInfo, FileEntry, IconThemeMode, SystemIconBucket, SystemIconKey, SystemPlaceKind,
 };
 use fm_theme::{FONT_UI, ThemePalette, styles};
-use iced::widget::{Text, container, image, text, tooltip};
-use iced::{Color, ContentFit, Element};
+use iced::widget::{Text, container, image, opaque, text, tooltip};
+use iced::{Alignment::Center, Color, ContentFit, Element, Length};
 use lucide_icons::iced::{
     icon_file_archive, icon_file_code, icon_file_json, icon_file_text, icon_folder, icon_image,
     icon_terminal,
@@ -186,6 +186,18 @@ pub fn with_tooltip<'a, M: 'a>(
     .padding(0.0)
     .style(styles::tooltip_container(palette))
     .into()
+}
+
+/// Centraliza um card modal sobre backdrop escurecido e captura eventos de mouse da camada inferior.
+pub fn modal_overlay_backdrop<'a, M: 'a>(card: impl Into<Element<'a, M>>) -> Element<'a, M> {
+    opaque(
+        container(card)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Center)
+            .align_y(Center)
+            .style(move |_| styles::modal_backdrop()(&iced::Theme::Light)),
+    )
 }
 
 #[cfg(test)]

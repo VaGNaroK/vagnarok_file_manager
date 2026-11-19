@@ -11,7 +11,7 @@ use iced::{ContentFit, Element, Length, Padding};
 use lucide_icons::iced::{icon_file_text, icon_folder, icon_search, icon_x};
 
 use crate::app::{App, Message, deep_search_input_id, thumbnail_key_for_entry};
-use crate::views::{render_entry_icon, sanitize_single_line};
+use crate::views::{modal_overlay_backdrop, render_entry_icon, sanitize_single_line};
 
 pub fn drawer<'a>(
     app: &'a App,
@@ -297,13 +297,7 @@ pub fn quicklook_modal<'a>(
     .padding(20)
     .style(styles::modal_card(palette));
 
-    container(card)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(Center)
-        .align_y(Center)
-        .style(move |_| styles::modal_backdrop()(&iced::Theme::Light))
-        .into()
+    modal_overlay_backdrop(card)
 }
 
 pub fn deep_search_modal<'a>(
@@ -419,11 +413,5 @@ pub fn deep_search_modal<'a>(
     .padding(20)
     .style(styles::modal_card(palette));
 
-    container(card)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(Center)
-        .align_y(Center)
-        .style(move |_| styles::modal_backdrop()(&iced::Theme::Light))
-        .into()
+    modal_overlay_backdrop(card)
 }

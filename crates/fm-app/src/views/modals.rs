@@ -10,10 +10,10 @@ use fm_theme::{
 };
 use iced::Alignment::Center;
 use iced::widget::{
-    Space, button, column, container, image, mouse_area, pick_list, row, scrollable, space, text,
-    text_input, tooltip,
+    Space, button, column, container, image, mouse_area, opaque, pick_list, row, scrollable, space,
+    text, text_input, tooltip,
 };
-use iced::{Background, Border, Color, Element, Length, Padding, border::Radius, window};
+use iced::{Background, Border, Color, Element, Length, Padding, border::Radius, mouse, window};
 use lucide_icons::iced::{
     icon_arrow_left, icon_arrow_up_from_line, icon_check, icon_check_square, icon_clipboard_copy,
     icon_clipboard_paste, icon_copy, icon_external_link, icon_eye, icon_file_plus, icon_file_text,
@@ -24,9 +24,10 @@ use lucide_icons::iced::{
 
 use crate::app::{
     ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, PreferencesTab, PropertiesTab,
-    PropertiesWindowState, dialog_input_id, open_with_props_type_key,
+    PropertiesWindowState, dialog_input_id, effective_properties_modal_size,
+    open_with_props_type_key,
 };
-use crate::views::{entry_icon, sanitize_single_line, with_tooltip};
+use crate::views::{entry_icon, modal_overlay_backdrop, sanitize_single_line, with_tooltip};
 
 pub fn dialog_modal<'a>(
     dialog: &'a ActiveDialog,
@@ -377,13 +378,7 @@ pub fn dialog_modal<'a>(
         .padding(20)
         .style(styles::modal_card(palette));
 
-    container(card)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(Center)
-        .align_y(Center)
-        .style(move |_| styles::modal_backdrop()(&iced::Theme::Light))
-        .into()
+    modal_overlay_backdrop(card)
 }
 
 pub fn properties_modal_overlay<'a>(
@@ -393,18 +388,14 @@ pub fn properties_modal_overlay<'a>(
     palette: ThemePalette,
     strings: Strings,
 ) -> Element<'a, Message> {
+    let (modal_w, modal_h) = effective_properties_modal_size(app);
     let card = container(properties_window_view(app, win_id, props, palette, strings))
-        .width(Length::Fixed(720.0))
-        .height(Length::Fixed(520.0))
+        .width(Length::Fixed(modal_w))
+        .height(Length::Fixed(modal_h))
+        .clip(true)
         .style(styles::modal_card(palette));
 
-    container(card)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(Center)
-        .align_y(Center)
-        .style(move |_| styles::modal_backdrop()(&iced::Theme::Light))
-        .into()
+    modal_overlay_backdrop(card)
 }
 
 pub fn properties_window_view<'a>(
@@ -559,20 +550,51 @@ pub fn properties_window_view<'a>(
         close_after: false,
     }));
 
+    let resize_grip = mouse_area(
+        container(
+            column![
+                row![Space::new().width(6).height(2), grip_dot(palette),].spacing(2),
+                row![
+                    Space::new().width(2).height(2),
+                    grip_dot(palette),
+                    grip_dot(palette),
+                ]
+                .spacing(2),
+                row![grip_dot(palette), grip_dot(palette), grip_dot(palette),].spacing(2),
+            ]
+            .spacing(2),
+        )
+        .padding([4, 4]),
+    )
+    .interaction(mouse::Interaction::ResizingDiagonallyDown)
+    .on_press(Message::StartPropertiesResize);
+
     let footer = row![
         status_hint,
         space::horizontal(),
         row![confirm_btn, cancel_btn, apply_btn].spacing(8),
+        resize_grip,
     ]
+    .spacing(6)
     .align_y(Center);
+
+    let body_slot: Element<'a, Message> = if props.active_tab == PropertiesTab::OpenWith {
+        container(tab_body)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        container(scrollable(tab_body).height(Length::Fill))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    };
 
     container(
         column![
             header,
             tab_bar,
-            container(scrollable(tab_body).height(Length::Fill))
-                .width(Length::Fill)
-                .height(Length::Fill),
+            body_slot,
             container(Space::new().width(Length::Fill).height(1))
                 .style(styles::divider_line(palette)),
             footer,
@@ -584,8 +606,20 @@ pub fn properties_window_view<'a>(
     .width(Length::Fill)
     .height(Length::Fill)
     .padding(18)
-    .style(styles::canvas_container(palette))
     .into()
+}
+
+fn grip_dot<'a>(palette: ThemePalette) -> Element<'a, Message> {
+    container(Space::new().width(2).height(2))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(palette.text_muted)),
+            border: Border {
+                radius: Radius::from(1.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
 fn properties_general_tab<'a>(
@@ -1743,7 +1777,7 @@ fn properties_open_with_tab<'a>(
         }
 
         scrollable(list_col.padding([4, 6]))
-            .height(Length::Fixed(185.0))
+            .height(Length::Fill)
             .width(Length::Fill)
             .into()
     } else {
@@ -1759,6 +1793,7 @@ fn properties_open_with_tab<'a>(
 
     let apps_box = container(list_body)
         .width(Length::Fill)
+        .height(Length::Fill)
         .padding(4)
         .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
 
@@ -2389,13 +2424,7 @@ pub fn preferences_modal<'a>(
     .padding(20)
     .style(styles::modal_card(palette));
 
-    container(card)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(Center)
-        .align_y(Center)
-        .style(move |_| styles::modal_backdrop()(&iced::Theme::Light))
-        .into()
+    modal_overlay_backdrop(card)
 }
 
 /// Renders an underline-accented modal tab button shared between Preferences and Properties.
@@ -3300,10 +3329,12 @@ pub fn context_menu_overlay<'a>(
     };
 
     let max_card_h = (app.window_size.height - 24.0).clamp(240.0, 460.0);
-    let card = container(card_body)
-        .max_height(max_card_h)
-        .padding(8)
-        .style(styles::modal_card(palette));
+    let card = opaque(
+        container(card_body)
+            .max_height(max_card_h)
+            .padding(8)
+            .style(styles::modal_card(palette)),
+    );
 
     let backdrop = mouse_area(
         container(card)
