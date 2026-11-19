@@ -1,6 +1,6 @@
-# Plano de Implementação — **Extração de Arquivos e Compactação (`7z`, `zip`, `tar`, `tar.gz`)**
+# Plano de Implementação — **Extração de Arquivos (`zip`, `tar`, `tar.gz`, `7z`, `rar`) e Compactação (`7z`, `zip`, `tar`, `tar.gz`)**
 
-Documento de análise técnica e plano arquitetural para adicionar ao **Vagnarok File Manager** suporte completo no **menu de contexto** para **Extração de arquivos** (`.zip`, `.tar`, `.tar.gz`/`.tgz`, `.7z`) e **Compactação ("Compactar como...")** com seletor de formato, seletor de nível de compressão (`Armazenar`, `Mínimo`, `Normal`, `Máximo`), execução assíncrona em segundo plano e **janela minimizável que libera totalmente a navegação e abas durante o processo**.
+Documento de análise técnica e plano arquitetural para adicionar ao **Vagnarok File Manager** suporte completo no **menu de contexto** para **Extração de arquivos** (`.zip`, `.tar`, `.tar.gz`/`.tgz`, `.7z` e **`.rar` somente leitura/extração**) e **Compactação ("Compactar como...")** com seletor de formato (sem `.rar`, formato proprietário), seletor de nível de compressão (`Armazenar`, `Mínimo`, `Normal`, `Máximo`), execução assíncrona em segundo plano e **janela minimizável que libera totalmente a navegação e abas durante o processo**.
 
 ---
 
@@ -12,10 +12,12 @@ Documento de análise técnica e plano arquitetural para adicionar ao **Vagnarok
    - `Cargo.lock` já inclui **`zip` (`9.6.0`)**, **`tar` (`0.4.46`)** e **`flate2` (`1.1.11`)**.
    - `crates/fm-fs/src/archive.rs` já implementa leitura/listagem virtual somente leitura (`ArchiveKind::Zip | Tar | TarGz`), detecção de extensão (`detect_archive_kind`, `is_archive_file`, `split_archive_path`) e abertura compartilhada no Windows (`open_shared_archive` com `share_mode(0x7)`).
    - `crates/fm-fs/src/copy_engine.rs` e `crates/fm-core/src/domain.rs` já contam com `JobProgress`, `JobState`, `ConflictPolicy`, `CancellationToken` e streaming via `tokio::sync::mpsc`.
-2. **O que falta para 7-Zip (`.7z`) — 100% Rust Nativo**:
-   - Não há crate `.7z` ou `lzma` no `Cargo.lock` atual.
-   - Pelas regras do `AGENTS.md` (100% Rust nativo, sem bindings C/C++ pesados como `libarchive`/`lzma-sys` nem dependência de CLI externo `7z`), recomenda-se adotar crate **100% Rust puro**: **`sevenz-rust2`** (com **`lzma-rust2`** para LZMA/LZMA2).
-   - **Atenção ao Build Offline (Flatpak `--offline --locked`)**: como `packaging/flatpak/dev.vagnarok.FileManager.yml` usa `cargo build --release --offline --locked -p fm-app`, ao adicionar `sevenz-rust2` será necessário atualizar `Cargo.lock` e sincronizar o cache offline/vendor usado pelo build Flatpak.
+2. **O que falta para 7-Zip (`.7z`) e RAR (`.rar`) — 100% Rust Nativo**:
+   - Não há crate `.7z`, `lzma` ou `.rar` no `Cargo.lock` atual.
+   - Pelas regras do `AGENTS.md` (100% Rust nativo, sem bindings C/C++ pesados como `libarchive`/`lzma-sys`/UnRAR C++ nem dependência de CLI externo `7z`/`unrar`), as duas famílias usam crates distintas em Rust puro:
+     - **7-Zip (`.7z`)**: **`sevenz-rust2`** (com `lzma-rust2` para LZMA/LZMA2, licença Apache-2.0) — implementa leitura/extração e criação de `.7z`, **mas não decodifica `.rar`** (apenas o binário C++ do 7-Zip embute decoder RAR separado).
+     - **RAR (`.rar`, RAR4 / RAR5 — SOMENTE descompactação)**: **`unrar-rs`** (port em **100% Rust puro**, configurado explicitamente com backend criptográfico puro-Rust `crypto-rust` para evitar dependências C/CMake como `aws-lc`). Sua licença (`GPL-3.0-or-later` derivada das regras do UnRAR) **permite descompactar/ler gratuitamente e proíbe implementar compressor RAR** — exatamente alinhado à decisão do projeto de **suportar `.rar` apenas para extração/leitura, nunca para compactação**. *(Opcionalmente encapsulado atrás de uma feature Cargo `rar-extract`, ligada por padrão, caso empacotamentos FOSS estritos como Flathub exijam desativar codecs derivados de UnRAR).*
+   - **Atenção ao Build Offline (Flatpak `--offline --locked`)**: como `packaging/flatpak/dev.vagnarok.FileManager.yml` usa `cargo build --release --offline --locked -p fm-app`, ao adicionar `sevenz-rust2` e `unrar-rs` será necessário atualizar `Cargo.lock` e sincronizar o cache offline/vendor usado pelo build Flatpak.
 3. **Desempenho e Thread de UI Sagrada**:
    - Compressão LZMA2 em Rust puro é mais custosa em CPU do que C++/ASM (especialmente no nível **Máximo**), podendo levar segundos ou minutos em pastas grandes.
    - Portanto, toda compactação/extração roda em `tokio::task::spawn_blocking` dentro do `fm-fs`, usando canal `mpsc` para emitir progresso incremental sem bloquear um único frame da thread do `iced`.
@@ -28,13 +30,13 @@ Documento de análise técnica e plano arquitetural para adicionar ao **Vagnarok
 
 Quando `!is_in_trash` e `split_archive_path(path).is_none()` (não estamos dentro de um arquivo virtual ou da Lixeira):
 
-1. **Quando `sel_count == 1` e o item for arquivo compactado suportado** (`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.7z`):
+1. **Quando `sel_count == 1` e o item for arquivo compactado suportado** (`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.7z`, **`.rar`**):
    - **Extrair aqui** → extrai diretamente para o diretório atual da aba (`parent_dir`).
-   - **Extrair em "`<nome_base>/`"** → extrai dentro de subpasta com o nome base do arquivo (evitando espalhar dezenas de arquivos soltos na pasta atual).
+   - **Extrair em "`<nome_base>/`"** → extrai dentro de subpasta com o nome base do arquivo (evitando espalhar dezenas de arquivos soltos na pasta atual; útil também para `.rar` multi-volume quando selecionado `.part1.rar`).
    - *(Opcional futuro: "Extrair para...")*
 2. **Para qualquer seleção válida (`sel_count >= 1`, arquivos e/ou pastas)**:
    - **Adicionar a "`<nome_sugerido>.7z`"** *(atalho rápido opcional 1 clique)*
-   - **Compactar como...** → abre a janela configurável descrita abaixo.
+   - **Compactar como...** → abre a janela configurável descrita abaixo (**apenas** formatos abertos `.7z`, `.zip`, `.tar`, `.tar.gz`; `.rar` nunca é oferecido para criação).
 
 ### 2.2 Janela **"Compactar como..."** (Configuração + Progresso Minimizável)
 
@@ -115,10 +117,13 @@ Ao clicar em **Compactar** (e também durante uma **Extração** longa):
 
 ### 3.2 `fm-fs` — Engine de Extração e Compactação Segura
 
-1. **Dependência em `Cargo.toml` e `crates/fm-fs/Cargo.toml`**:
-   - Adicionar `sevenz-rust2` (100% Rust puro, com compressão LZMA2) e garantir resolução em `Cargo.lock`.
+1. **Dependências em `Cargo.toml` e `crates/fm-fs/Cargo.toml`**:
+   - Adicionar **`sevenz-rust2`** (100% Rust puro, leitura e compressão LZMA2 de `.7z`).
+   - Adicionar **`unrar-rs`** (feature `crypto-rust` em Rust puro, sem C/CMake; habilitado atrás da feature Cargo `rar-extract = ["dep:unrar-rs"]` ligada por padrão no `fm-fs`) exclusivamente para leitura/extração de `.rar` (RAR4/RAR5).
+   - Garantir resolução em `Cargo.lock` e compatibilidade com Windows/Linux.
 2. **Estender `crates/fm-fs/src/archive.rs`**:
-   - Incluir `ArchiveKind::SevenZ` em `detect_archive_kind` para reconhecer `.7z` (tanto para o menu de contexto quanto para listagem virtual em `list_archive_dir`, caso desejado).
+   - Incluir `ArchiveKind::SevenZ` (`.7z`) e `ArchiveKind::Rar` (`.rar`, somente leitura) em `detect_archive_kind` para reconhecer ambos no menu de contexto e opcionalmente na listagem virtual `list_archive_dir`.
+   - Para nomes divididos estilo `.part1.rar` / `.part01.rar`, remover o sufixo `.partN` ao sugerir o nome base da subpasta de destino no modo *"Extrair em..."*.
 3. **Novo módulo `crates/fm-fs/src/archive_ops.rs`**:
    - **`run_compress_job(...)`**:
      - Fase 1 (Inventário): percorre os `sources` selecionados sem seguir symlinks recursivos (evita loops infinitos), ignora sockets/FIFOs especiais, soma `bytes_total` e `items_total`, respeitando `CancellationToken`.
@@ -131,11 +136,12 @@ Ao clicar em **Compactar** (e também durante uma **Extração** longa):
        - `.tar` (`tar` `0.4.46`): empacotamento direto sem compressão (`Store`).
        - `.tar.gz` (`tar` + `flate2` `1.1.11`): `GzEncoder::new(out, flate2::Compression::none() / fast() / default() / best())`.
    - **`run_extract_job(...)`**:
-     - Suporta `.zip`, `.tar`, `.tar.gz`/`.tgz` e `.7z`.
+     - Suporta **`.zip`, `.tar`, `.tar.gz`/`.tgz`, `.7z` e `.rar`** (RAR4 e RAR5 somente leitura/extração).
+     - Em `.rar` com senha ou volumes divididos faltantes (ex.: `.part2.rar` ausente na pasta), retornar `FsError::Io` com mensagem clara na UI sem panics/corrupção parcial (e permitir futura caixa de senha na evolução P2).
      - **Hardening Anti-Zip-Slip obrigatório**:
        - Função pura `sanitize_archive_rel_path(raw: &str) -> Option<PathBuf>` rejeita caminhos absolutos, prefixos `C:`, componentes `..`, bytes `\0`, e garante que o caminho final normalizado pertence estritamente a `dest_root`.
        - Symlinks internos são ignorados por padrão (ou validados estritamente dentro de `dest_root`) para impedir escrita fora da pasta alvo.
-     - Se o destino for `ExtractTargetMode::Subfolder`, cria pasta segura baseada no nome do arquivo (removendo `.tar.gz`/`.tgz`/`.zip`/`.7z`) e aplica `ConflictPolicy` por entrada ou diretório.
+     - Se o destino for `ExtractTargetMode::Subfolder`, cria pasta segura baseada no nome do arquivo (removendo `.tar.gz`/`.tgz`/`.zip`/`.7z`/`.rar` e eventual `.partN`) e aplica `ConflictPolicy` por entrada ou diretório.
      - Emite progresso contínuo via `UnboundedSender<ArchiveJobProgress>`.
 
 ---
@@ -169,7 +175,8 @@ Ao clicar em **Compactar** (e também durante uma **Extração** longa):
 
 | Risco | Impacto | Mitigação |
 | :--- | :--- | :--- |
-| **Build Flatpak `--offline --locked`** | Falha se novas crates não estiverem vendored | Atualizar `Cargo.lock` com `sevenz-rust2`/`lzma-rust2` (sem deps C) e validar `cargo check --locked` + atualização do cache offline Flatpak. |
+| **Build Flatpak `--offline --locked` e Licença RAR** | Falha offline se crates faltarem no vendor ou restrição FOSS em repositórios | Atualizar `Cargo.lock` com `sevenz-rust2` e `unrar-rs` (feature `crypto-rust`, sem deps C), isolar RAR atrás da feature Cargo `rar-extract` (somente leitura, nunca criação) e sincronizar o cache offline Flatpak. |
+| **RAR multi-volume ou com senha** | Erro ao faltar `.part2.rar` ou senha desconhecida | Validar presença de volumes sequenciais quando aplicável, falhar graciosamente com mensagem descritiva em `status_notice` e nunca deixar diretório pela metade sem feedback. |
 | **Explosão de memória em LZMA2 `Máximo`** | Pico alto de RAM com dicionário gigante em múltiplos threads | Limitar tamanho máximo de dicionário/threads do nível `Máximo` para valores desktop seguros (ex.: dicionário 32–64 MiB em vez de 1 GiB) e testar consumo de RAM antes/depois. |
 | **Zip Slip / Traversal ao extrair** | Escrita arbitrária fora da pasta destino | Sanitização estrita componente a componente + bloqueio de symlinks saindo de `dest_dir` antes de criar qualquer arquivo. |
 | **Cancelamento deixando `.7z` corrompido** | Usuário cancela e fica arquivo quebrado na pasta | Escrever em arquivo temporário oculto `.__vfm_pack_*.tmp` (ou deletar `output_path` no `Drop`/cancelamento) e só renomear para o `.7z` final após finalizar com sucesso. |
@@ -184,11 +191,11 @@ Ao clicar em **Compactar** (e também durante uma **Extração** longa):
 - Adicionar chaves Fluent nos 6 arquivos `.ftl` e em `Strings` (`i18n.rs`).
 - Testes unitários de formatação de nomes padrão, detecção de extensão e validação das chaves `.ftl`.
 
-### Fase 2 — Engine de Extração e Compactação em `fm-fs`
-- Adicionar `sevenz-rust2` (puro Rust) no workspace + `fm-fs`.
-- Implementar `crates/fm-fs/src/archive_ops.rs` com `run_extract_job` (`.zip`, `.tar`, `.tar.gz`, `.7z`, anti-Zip-Slip) e `run_compress_job` (`.7z`, `.zip`, `.tar`, `.tar.gz` com os 4 níveis `Armazenar`, `Mínimo`, `Normal`, `Máximo`).
-- Integrar `ArchiveKind::SevenZ` opcionalmente na listagem virtual de `archive.rs`.
-- Testes unitários em `fm-fs`: roundtrip completo (compactar pasta mista + subpastas e extrair em `.7z`, `.zip`, `.tar`, `.tar.gz`), bloqueio de Zip Slip (`../../evil.txt`), cancelamento mid-stream apagando temporário e política de conflito.
+### Fase 2 — Engine de Extração (`.zip`, `.tar`, `.tar.gz`, `.7z`, `.rar`) e Compactação em `fm-fs`
+- Adicionar `sevenz-rust2` e `unrar-rs` (100% Rust puro, apenas decodificação RAR via feature `rar-extract`) no workspace + `fm-fs`.
+- Implementar `crates/fm-fs/src/archive_ops.rs` com `run_extract_job` (`.zip`, `.tar`, `.tar.gz`, `.7z`, `.rar`, anti-Zip-Slip) e `run_compress_job` (`.7z`, `.zip`, `.tar`, `.tar.gz` com os 4 níveis `Armazenar`, `Mínimo`, `Normal`, `Máximo` — sem compactação `.rar`).
+- Integrar `ArchiveKind::SevenZ` e `ArchiveKind::Rar` na detecção/listagem somente leitura de `archive.rs`.
+- Testes unitários em `fm-fs`: roundtrip completo (`.7z`, `.zip`, `.tar`, `.tar.gz`), extração `.rar` (fixture/teste de cabeçalho e proteção de caminho), bloqueio de Zip Slip (`../../evil.txt`), cancelamento mid-stream apagando temporário e política de conflito.
 
 ### Fase 3 — Menu de Contexto, Janela "Compactar como..." e Minimização (`fm-app`)
 - Adicionar itens no `ContextMenuKind::Entry` em `crates/fm-app/src/views/modals.rs` e ajustar `est_height`.
