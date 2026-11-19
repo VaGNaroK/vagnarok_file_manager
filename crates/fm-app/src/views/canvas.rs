@@ -325,13 +325,18 @@ fn action_bar<'a>(
                 tooltip::Position::Bottom,
                 palette,
             ));
-        if sel_count == 1 {
+        if sel_count >= 1 {
+            let rename_tip = if sel_count > 1 {
+                strings.br_title
+            } else {
+                strings.rename
+            };
             ops_row = ops_row.push(with_tooltip(
                 button(icon_pencil().size(14).color(palette.text_primary))
                     .padding([6, 8])
                     .style(styles::pill_secondary_button(palette))
                     .on_press(Message::OpenRenameDialog),
-                strings.rename,
+                rename_tip,
                 tooltip::Position::Bottom,
                 palette,
             ));

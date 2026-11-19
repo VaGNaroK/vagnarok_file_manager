@@ -2884,6 +2884,15 @@ pub fn context_menu_overlay<'a>(
                     Message::OpenRenameDialog,
                     palette,
                 ));
+                if fm_fs::archive::split_archive_path(path).is_none() {
+                    items = items.push(ctx_item(
+                        icon_pencil().size(14).color(palette.accent_primary).into(),
+                        strings.br_menu_item,
+                        palette.text_primary,
+                        Message::OpenBulkRenameDialog,
+                        palette,
+                    ));
+                }
             }
             if !is_in_trash && let Some(mode) = *posix_mode {
                 let exec_enabled = is_posix_executable(mode);
@@ -3250,6 +3259,18 @@ pub fn context_menu_overlay<'a>(
                 Message::OpenTerminal,
                 palette,
             ));
+            if app.last_bulk_rename_undo.is_some() {
+                items = items.push(ctx_item(
+                    icon_rotate_ccw()
+                        .size(14)
+                        .color(palette.accent_primary)
+                        .into(),
+                    strings.br_undo_last,
+                    palette.text_primary,
+                    Message::UndoLastBulkRename,
+                    palette,
+                ));
+            }
             if let Some(tab) = app.current_tab() {
                 if show_open_as_root
                     && !fm_core::is_virtual_trash_path(&tab.current_path)
@@ -3278,17 +3299,22 @@ pub fn context_menu_overlay<'a>(
     }
 
     let root_extra = if show_open_as_root { 36.0 } else { 0.0 };
+    let undo_extra = if app.last_bulk_rename_undo.is_some() {
+        36.0
+    } else {
+        0.0
+    };
     let est_height = match &menu.kind {
         ContextMenuKind::NewMenu => 84.0,
         ContextMenuKind::Entry {
             is_dir, posix_mode, ..
         } => {
             if *is_dir {
-                340.0 + root_extra
+                376.0 + root_extra
             } else if posix_mode.is_some() {
-                428.0
+                464.0
             } else {
-                372.0
+                408.0
             }
         }
         ContextMenuKind::SidebarPlace {
@@ -3315,7 +3341,7 @@ pub fn context_menu_overlay<'a>(
                 156.0 + root_extra
             }
         }
-        ContextMenuKind::Background => 284.0 + root_extra,
+        ContextMenuKind::Background => 284.0 + root_extra + undo_extra,
         ContextMenuKind::FilterMenu => 320.0,
         ContextMenuKind::LanguageMenu => 256.0,
         ContextMenuKind::PreferencesMenu => 84.0,

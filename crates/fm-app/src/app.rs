@@ -29,6 +29,10 @@ use iced::{
 };
 use tokio_util::sync::CancellationToken;
 
+pub use crate::bulk_rename::{
+    BulkRenameExtensionKind, BulkRenameInsertKind, BulkRenameModalState, BulkRenameMsg,
+    effective_bulk_rename_modal_rect,
+};
 use crate::views;
 
 pub fn search_input_id() -> Id {
@@ -516,6 +520,10 @@ pub enum Message {
     OpenWithExecPickerClose(window::Id),
     DragPropertiesWindow(window::Id),
     ClosePropertiesWindow(window::Id),
+    OpenBulkRenameDialog,
+    BulkRename(BulkRenameMsg),
+    UndoLastBulkRename,
+    UndoBulkRenameFinished(Result<usize, FsError>),
     OpenNewMenu,
     OpenFilterMenu,
     SetExtensionFilter(Option<CompactString>),
@@ -605,6 +613,8 @@ pub struct App {
     pub deep_search_request_id: u64,
     pub deep_search_cancel: Option<CancellationToken>,
     pub active_dialog: Option<ActiveDialog>,
+    pub bulk_rename_modal: Option<BulkRenameModalState>,
+    pub last_bulk_rename_undo: Option<Vec<(PathBuf, PathBuf)>>,
     pub prefs_open: bool,
     pub prefs_tab: PreferencesTab,
     pub clipboard: Option<ClipboardTransfer>,
@@ -612,6 +622,7 @@ pub struct App {
     pub active_transfer: Option<JobProgress>,
     pub transfer_cancel: Option<CancellationToken>,
     pub pending_select_path: Option<PathBuf>,
+    pub pending_select_paths: Vec<PathBuf>,
     pub marquee_base_selection: HashSet<EntryId>,
     pub metadata_cache: Option<Arc<DiskMetadataCache>>,
     pub disk_thumbnail_cache: Option<Arc<DiskThumbnailCache>>,
@@ -739,6 +750,8 @@ impl App {
             deep_search_request_id: 0,
             deep_search_cancel: None,
             active_dialog: None,
+            bulk_rename_modal: None,
+            last_bulk_rename_undo: None,
             prefs_open: false,
             prefs_tab: PreferencesTab::General,
             clipboard: None,
@@ -746,6 +759,7 @@ impl App {
             active_transfer: None,
             transfer_cancel: None,
             pending_select_path: None,
+            pending_select_paths: Vec::new(),
             marquee_base_selection: HashSet::new(),
             metadata_cache: None,
             disk_thumbnail_cache: None,
@@ -1560,18 +1574,44 @@ impl App {
                             apply_tab_filter(tab);
                             tab.title = display_tab_title(&tab.current_path);
 
-                            if tab_id == self.active_tab
-                                && let Some(target_path) = self.pending_select_path.take()
-                                && let Some(idx) = tab
-                                    .visible_entries
-                                    .iter()
-                                    .position(|e| e.path == target_path)
-                            {
-                                tab.selection.select_single(idx, &tab.visible_entries);
-                                let single =
-                                    tab.selection.single_selected(&tab.visible_entries).cloned();
-                                tab.selected_telemetry = single.as_ref().map(basic_file_telemetry);
-                                pending_selected_entry = single;
+                            if tab_id == self.active_tab {
+                                let pending_batch = std::mem::take(&mut self.pending_select_paths);
+                                if !pending_batch.is_empty() {
+                                    let target_set: HashSet<&PathBuf> =
+                                        pending_batch.iter().collect();
+                                    tab.selection.selected_ids.clear();
+                                    let mut first_idx = None;
+                                    for (idx, entry) in tab.visible_entries.iter().enumerate() {
+                                        if target_set.contains(&entry.path) {
+                                            tab.selection.selected_ids.insert(entry.id);
+                                            if first_idx.is_none() {
+                                                first_idx = Some(idx);
+                                            }
+                                        }
+                                    }
+                                    tab.selection.anchor = first_idx;
+                                    tab.selection.focused = first_idx;
+                                    if let Some(idx) = first_idx {
+                                        let single = (tab.selection.selected_ids.len() == 1)
+                                            .then(|| tab.visible_entries[idx].clone());
+                                        tab.selected_telemetry =
+                                            single.as_ref().map(basic_file_telemetry);
+                                        pending_selected_entry = single;
+                                    }
+                                    self.pending_select_path = None;
+                                } else if let Some(target_path) = self.pending_select_path.take()
+                                    && let Some(idx) = tab
+                                        .visible_entries
+                                        .iter()
+                                        .position(|e| e.path == target_path)
+                                {
+                                    tab.selection.select_single(idx, &tab.visible_entries);
+                                    let single =
+                                        tab.selection.single_selected(&tab.visible_entries).cloned();
+                                    tab.selected_telemetry =
+                                        single.as_ref().map(basic_file_telemetry);
+                                    pending_selected_entry = single;
+                                }
                             }
 
                             let cancel = self.tab_cancels.get(&tab_id).cloned().unwrap_or_default();
@@ -2085,6 +2125,13 @@ impl App {
             }
             Message::OpenRenameDialog => {
                 self.context_menu = None;
+                let selected_count = self
+                    .current_tab()
+                    .map(|t| t.selection.selected_ids.len())
+                    .unwrap_or(0);
+                if selected_count > 1 {
+                    return crate::bulk_rename::open_bulk_rename_modal(self);
+                }
                 let target = self
                     .current_tab()
                     .and_then(|t| t.selection.single_selected(&t.visible_entries))
@@ -2095,6 +2142,20 @@ impl App {
                 }
                 Task::none()
             }
+            Message::OpenBulkRenameDialog => crate::bulk_rename::open_bulk_rename_modal(self),
+            Message::BulkRename(msg) => crate::bulk_rename::handle_bulk_rename_msg(self, msg),
+            Message::UndoLastBulkRename => crate::bulk_rename::undo_last_bulk_rename(self),
+            Message::UndoBulkRenameFinished(res) => match res {
+                Ok(count) => {
+                    self.status_notice = Some(self.strings().format_items_count(count));
+                    self.update(Message::RefreshActiveTab)
+                }
+                Err(err) => {
+                    self.pending_select_paths.clear();
+                    self.status_notice = Some(err.to_string());
+                    self.update(Message::RefreshActiveTab)
+                }
+            },
             Message::RequestDelete(permanent) => {
                 self.context_menu = None;
                 let paths = self.selected_paths();
@@ -3158,6 +3219,10 @@ impl App {
                 self.resizing_columns_panel = None;
                 self.resizing_properties_modal = None;
                 self.dragging_properties_modal = None;
+                if let Some(modal) = &mut self.bulk_rename_modal {
+                    modal.dragging_modal = None;
+                    modal.resizing_modal = None;
+                }
                 let mut should_persist = self.resizing_grid.take().is_some();
                 if self.resizing_sidebar.take().is_some() {
                     should_persist = true;
@@ -3273,6 +3338,39 @@ impl App {
                         self.window_size,
                     );
                 }
+                if let Some(modal) = &mut self.bulk_rename_modal {
+                    if let Some((start, start_x, start_y)) = modal.dragging_modal {
+                        let (w, h) = crate::bulk_rename::clamp_modal_size(
+                            modal.modal_size.0,
+                            modal.modal_size.1,
+                            crate::bulk_rename::BULK_RENAME_MIN_W,
+                            crate::bulk_rename::BULK_RENAME_MIN_H,
+                            self.window_size,
+                        );
+                        modal.modal_offset = Some(crate::bulk_rename::clamp_modal_pos(
+                            start_x + (pos.x - start.x),
+                            start_y + (pos.y - start.y),
+                            w,
+                            h,
+                            self.window_size,
+                        ));
+                    }
+                    if let Some((start, anchor_x, anchor_y, initial_w, initial_h)) =
+                        modal.resizing_modal
+                    {
+                        modal.modal_size = crate::bulk_rename::compute_dragged_modal_size(
+                            (anchor_x, anchor_y),
+                            (initial_w, initial_h),
+                            (
+                                crate::bulk_rename::BULK_RENAME_MIN_W,
+                                crate::bulk_rename::BULK_RENAME_MIN_H,
+                            ),
+                            start,
+                            pos,
+                            self.window_size,
+                        );
+                    }
+                }
                 Task::none()
             }
             Message::MetaCacheReady(cache) => {
@@ -3309,6 +3407,11 @@ impl App {
             Message::MonitorSizeReady(None) => Task::none(),
             Message::WindowClosed(window_id) => {
                 if window_id == self.main_window_id {
+                    if let Some(mut modal) = self.bulk_rename_modal.take()
+                        && let Some(cancel) = modal.tags_cancel.take()
+                    {
+                        cancel.cancel();
+                    }
                     for (_, mut props) in self.properties_windows.drain() {
                         if let Some(cancel) = props.cancel.take() {
                             cancel.cancel();
@@ -3545,7 +3648,11 @@ impl App {
         .style(fm_theme::styles::canvas_container(palette));
 
         // Mantém `Stack` sempre como raiz para que abrir/fechar menus e modais não descarte o estado da árvore (ex.: scroll do canvas).
-        let overlay: Option<Element<'_, Message>> = if let Some(dialog) = &self.active_dialog {
+        let overlay: Option<Element<'_, Message>> = if let Some(modal) = &self.bulk_rename_modal {
+            Some(views::bulk_rename::bulk_rename_modal_overlay(
+                self, modal, palette, strings,
+            ))
+        } else if let Some(dialog) = &self.active_dialog {
             Some(views::modals::dialog_modal(dialog, palette, strings))
         } else if let Some(props) = self.properties_windows.get(&self.main_window_id) {
             Some(views::modals::properties_modal_overlay(
@@ -4942,6 +5049,9 @@ impl App {
             keyboard::Key::Character(c) if c.eq_ignore_ascii_case("q") && modifiers.control()
         );
         if is_ctrl_q {
+            if self.bulk_rename_modal.is_some() {
+                return self.update(Message::BulkRename(BulkRenameMsg::Close));
+            }
             if self.properties_windows.contains_key(&window_id) {
                 return self.update(Message::ClosePropertiesWindow(window_id));
             }
@@ -4966,7 +5076,8 @@ impl App {
             }
             return Task::none();
         }
-        let text_input_modal_active = self.active_dialog.is_some()
+        let text_input_modal_active = self.bulk_rename_modal.is_some()
+            || self.active_dialog.is_some()
             || self.deep_search_open
             || self.path_editing
             || self.prefs_open;
@@ -4975,7 +5086,9 @@ impl App {
                 return self.autocomplete_path_draft();
             }
             if matches!(key.as_ref(), keyboard::Key::Named(Named::Escape)) {
-                if self.active_dialog.is_some() {
+                if self.bulk_rename_modal.is_some() {
+                    return self.update(Message::BulkRename(BulkRenameMsg::Close));
+                } else if self.active_dialog.is_some() {
                     return self.update(Message::CloseDialog);
                 } else if self.prefs_open {
                     return self.update(Message::ClosePreferences);
@@ -5507,15 +5620,13 @@ pub fn effective_properties_modal_size(app: &App) -> (f32, f32) {
 }
 
 pub fn effective_properties_modal_rect(app: &App) -> (f32, f32, f32, f32) {
-    let (w, h) = effective_properties_modal_size(app);
-    let (raw_x, raw_y) = app.properties_modal_offset.unwrap_or_else(|| {
-        (
-            ((app.window_size.width - w) * 0.5).max(8.0),
-            ((app.window_size.height - h) * 0.5).max(8.0),
-        )
-    });
-    let (x, y) = clamp_properties_modal_pos(raw_x, raw_y, w, h, app.window_size);
-    (x, y, w, h)
+    crate::bulk_rename::effective_modal_rect(
+        app.properties_modal_size,
+        app.properties_modal_offset,
+        560.0,
+        420.0,
+        app.window_size,
+    )
 }
 
 fn clamp_properties_modal_pos(
@@ -5525,15 +5636,11 @@ fn clamp_properties_modal_pos(
     height: f32,
     window_size: Size,
 ) -> (f32, f32) {
-    let max_x = (window_size.width - width - 8.0).max(8.0);
-    let max_y = (window_size.height - height - 8.0).max(8.0);
-    (x.clamp(8.0, max_x), y.clamp(8.0, max_y))
+    crate::bulk_rename::clamp_modal_pos(x, y, width, height, window_size)
 }
 
 fn clamp_properties_modal_size(width: f32, height: f32, window_size: Size) -> (f32, f32) {
-    let max_w = (window_size.width - 16.0).max(560.0);
-    let max_h = (window_size.height - 16.0).max(420.0);
-    (width.clamp(560.0, max_w), height.clamp(420.0, max_h))
+    crate::bulk_rename::clamp_modal_size(width, height, 560.0, 420.0, window_size)
 }
 
 fn compute_dragged_properties_modal_size(
@@ -5545,11 +5652,14 @@ fn compute_dragged_properties_modal_size(
     current: Point,
     window_size: Size,
 ) -> (f32, f32) {
-    let max_w = (window_size.width - anchor_x - 8.0).max(560.0);
-    let max_h = (window_size.height - anchor_y - 8.0).max(420.0);
-    let next_w = (initial_w + (current.x - start.x)).clamp(560.0, max_w);
-    let next_h = (initial_h + (current.y - start.y)).clamp(420.0, max_h);
-    (next_w, next_h)
+    crate::bulk_rename::compute_dragged_modal_size(
+        (anchor_x, anchor_y),
+        (initial_w, initial_h),
+        (560.0, 420.0),
+        start,
+        current,
+        window_size,
+    )
 }
 
 fn rgba_arc_to_handle(thumb: Arc<ThumbnailRgba>) -> image::Handle {

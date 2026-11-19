@@ -261,6 +261,90 @@ pub struct Strings {
     pub open_with_saved: &'static str,
     pub open_with_reset_done: &'static str,
     pub open_with_pick_exec: &'static str,
+    pub br_title: &'static str,
+    pub br_menu_item: &'static str,
+    pub br_clear_rules: &'static str,
+    pub br_rules_header: &'static str,
+    pub br_preview_header: &'static str,
+    pub br_col_status: &'static str,
+    pub br_col_original: &'static str,
+    pub br_col_new: &'static str,
+    pub br_unchanged: &'static str,
+    pub br_skipped_folder: &'static str,
+    pub br_conflict_internal: &'static str,
+    pub br_conflict_external: &'static str,
+    pub br_invalid_name: &'static str,
+    pub br_replace_title: &'static str,
+    pub br_find_label: &'static str,
+    pub br_replace_label: &'static str,
+    pub br_where_label: &'static str,
+    pub br_scope_anywhere: &'static str,
+    pub br_scope_start_name: &'static str,
+    pub br_scope_end_name: &'static str,
+    pub br_scope_word_start: &'static str,
+    pub br_scope_word_end: &'static str,
+    pub br_scope_whole_word: &'static str,
+    pub br_match_case: &'static str,
+    pub br_first_only: &'static str,
+    pub br_advanced_regex: &'static str,
+    pub br_use_regex: &'static str,
+    pub br_remove_title: &'static str,
+    pub br_remove_first: &'static str,
+    pub br_remove_last: &'static str,
+    pub br_remove_text_label: &'static str,
+    pub br_remove_digits: &'static str,
+    pub br_remove_symbols: &'static str,
+    pub br_collapse_spaces: &'static str,
+    pub br_insert_title: &'static str,
+    pub br_insert_text_label: &'static str,
+    pub br_insert_pos_label: &'static str,
+    pub br_insert_start: &'static str,
+    pub br_insert_end: &'static str,
+    pub br_insert_offset_start: &'static str,
+    pub br_insert_offset_end: &'static str,
+    pub br_case_title: &'static str,
+    pub br_case_keep: &'static str,
+    pub br_case_upper: &'static str,
+    pub br_case_lower: &'static str,
+    pub br_case_title_words: &'static str,
+    pub br_case_sentence: &'static str,
+    pub br_number_title: &'static str,
+    pub br_number_append: &'static str,
+    pub br_number_prepend: &'static str,
+    pub br_number_replace: &'static str,
+    pub br_number_start: &'static str,
+    pub br_number_step: &'static str,
+    pub br_number_digits: &'static str,
+    pub br_number_sep: &'static str,
+    pub br_sort_label: &'static str,
+    pub br_sort_selection: &'static str,
+    pub br_sort_name_asc: &'static str,
+    pub br_sort_name_desc: &'static str,
+    pub br_sort_date_desc: &'static str,
+    pub br_sort_date_asc: &'static str,
+    pub br_sort_size_asc: &'static str,
+    pub br_sort_size_desc: &'static str,
+    pub br_media_title: &'static str,
+    pub br_media_exif_ymd: &'static str,
+    pub br_media_exif_datetime: &'static str,
+    pub br_media_exif_camera: &'static str,
+    pub br_media_id3_track: &'static str,
+    pub br_media_id3_artist: &'static str,
+    pub br_media_id3_album: &'static str,
+    pub br_media_id3_title: &'static str,
+    pub br_media_id3_year: &'static str,
+    pub br_media_loading: &'static str,
+    pub br_ext_title: &'static str,
+    pub br_ext_keep: &'static str,
+    pub br_ext_lower: &'static str,
+    pub br_ext_upper: &'static str,
+    pub br_ext_replace: &'static str,
+    pub br_ext_remove: &'static str,
+    pub br_include_folders: &'static str,
+    pub br_apply: &'static str,
+    pub br_applying: &'static str,
+    pub br_undo_last: &'static str,
+    pub br_readonly_error: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -684,6 +768,90 @@ impl Strings {
         let open_with_saved = resolve("open-with-saved");
         let open_with_reset_done = resolve("open-with-reset-done");
         let open_with_pick_exec = resolve("open-with-pick-exec");
+        let br_title = resolve("br-title");
+        let br_menu_item = resolve("br-menu-item");
+        let br_clear_rules = resolve("br-clear-rules");
+        let br_rules_header = resolve("br-rules-header");
+        let br_preview_header = resolve("br-preview-header");
+        let br_col_status = resolve("br-col-status");
+        let br_col_original = resolve("br-col-original");
+        let br_col_new = resolve("br-col-new");
+        let br_unchanged = resolve("br-unchanged");
+        let br_skipped_folder = resolve("br-skipped-folder");
+        let br_conflict_internal = resolve("br-conflict-internal");
+        let br_conflict_external = resolve("br-conflict-external");
+        let br_invalid_name = resolve("br-invalid-name");
+        let br_replace_title = resolve("br-replace-title");
+        let br_find_label = resolve("br-find-label");
+        let br_replace_label = resolve("br-replace-label");
+        let br_where_label = resolve("br-where-label");
+        let br_scope_anywhere = resolve("br-scope-anywhere");
+        let br_scope_start_name = resolve("br-scope-start-name");
+        let br_scope_end_name = resolve("br-scope-end-name");
+        let br_scope_word_start = resolve("br-scope-word-start");
+        let br_scope_word_end = resolve("br-scope-word-end");
+        let br_scope_whole_word = resolve("br-scope-whole-word");
+        let br_match_case = resolve("br-match-case");
+        let br_first_only = resolve("br-first-only");
+        let br_advanced_regex = resolve("br-advanced-regex");
+        let br_use_regex = resolve("br-use-regex");
+        let br_remove_title = resolve("br-remove-title");
+        let br_remove_first = resolve("br-remove-first");
+        let br_remove_last = resolve("br-remove-last");
+        let br_remove_text_label = resolve("br-remove-text-label");
+        let br_remove_digits = resolve("br-remove-digits");
+        let br_remove_symbols = resolve("br-remove-symbols");
+        let br_collapse_spaces = resolve("br-collapse-spaces");
+        let br_insert_title = resolve("br-insert-title");
+        let br_insert_text_label = resolve("br-insert-text-label");
+        let br_insert_pos_label = resolve("br-insert-pos-label");
+        let br_insert_start = resolve("br-insert-start");
+        let br_insert_end = resolve("br-insert-end");
+        let br_insert_offset_start = resolve("br-insert-offset-start");
+        let br_insert_offset_end = resolve("br-insert-offset-end");
+        let br_case_title = resolve("br-case-title");
+        let br_case_keep = resolve("br-case-keep");
+        let br_case_upper = resolve("br-case-upper");
+        let br_case_lower = resolve("br-case-lower");
+        let br_case_title_words = resolve("br-case-title-words");
+        let br_case_sentence = resolve("br-case-sentence");
+        let br_number_title = resolve("br-number-title");
+        let br_number_append = resolve("br-number-append");
+        let br_number_prepend = resolve("br-number-prepend");
+        let br_number_replace = resolve("br-number-replace");
+        let br_number_start = resolve("br-number-start");
+        let br_number_step = resolve("br-number-step");
+        let br_number_digits = resolve("br-number-digits");
+        let br_number_sep = resolve("br-number-sep");
+        let br_sort_label = resolve("br-sort-label");
+        let br_sort_selection = resolve("br-sort-selection");
+        let br_sort_name_asc = resolve("br-sort-name-asc");
+        let br_sort_name_desc = resolve("br-sort-name-desc");
+        let br_sort_date_desc = resolve("br-sort-date-desc");
+        let br_sort_date_asc = resolve("br-sort-date-asc");
+        let br_sort_size_asc = resolve("br-sort-size-asc");
+        let br_sort_size_desc = resolve("br-sort-size-desc");
+        let br_media_title = resolve("br-media-title");
+        let br_media_exif_ymd = resolve("br-media-exif-ymd");
+        let br_media_exif_datetime = resolve("br-media-exif-datetime");
+        let br_media_exif_camera = resolve("br-media-exif-camera");
+        let br_media_id3_track = resolve("br-media-id3-track");
+        let br_media_id3_artist = resolve("br-media-id3-artist");
+        let br_media_id3_album = resolve("br-media-id3-album");
+        let br_media_id3_title = resolve("br-media-id3-title");
+        let br_media_id3_year = resolve("br-media-id3-year");
+        let br_media_loading = resolve("br-media-loading");
+        let br_ext_title = resolve("br-ext-title");
+        let br_ext_keep = resolve("br-ext-keep");
+        let br_ext_lower = resolve("br-ext-lower");
+        let br_ext_upper = resolve("br-ext-upper");
+        let br_ext_replace = resolve("br-ext-replace");
+        let br_ext_remove = resolve("br-ext-remove");
+        let br_include_folders = resolve("br-include-folders");
+        let br_apply = resolve("br-apply");
+        let br_applying = resolve("br-applying");
+        let br_undo_last = resolve("br-undo-last");
+        let br_readonly_error = resolve("br-readonly-error");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -914,6 +1082,90 @@ impl Strings {
             open_with_saved,
             open_with_reset_done,
             open_with_pick_exec,
+            br_title,
+            br_menu_item,
+            br_clear_rules,
+            br_rules_header,
+            br_preview_header,
+            br_col_status,
+            br_col_original,
+            br_col_new,
+            br_unchanged,
+            br_skipped_folder,
+            br_conflict_internal,
+            br_conflict_external,
+            br_invalid_name,
+            br_replace_title,
+            br_find_label,
+            br_replace_label,
+            br_where_label,
+            br_scope_anywhere,
+            br_scope_start_name,
+            br_scope_end_name,
+            br_scope_word_start,
+            br_scope_word_end,
+            br_scope_whole_word,
+            br_match_case,
+            br_first_only,
+            br_advanced_regex,
+            br_use_regex,
+            br_remove_title,
+            br_remove_first,
+            br_remove_last,
+            br_remove_text_label,
+            br_remove_digits,
+            br_remove_symbols,
+            br_collapse_spaces,
+            br_insert_title,
+            br_insert_text_label,
+            br_insert_pos_label,
+            br_insert_start,
+            br_insert_end,
+            br_insert_offset_start,
+            br_insert_offset_end,
+            br_case_title,
+            br_case_keep,
+            br_case_upper,
+            br_case_lower,
+            br_case_title_words,
+            br_case_sentence,
+            br_number_title,
+            br_number_append,
+            br_number_prepend,
+            br_number_replace,
+            br_number_start,
+            br_number_step,
+            br_number_digits,
+            br_number_sep,
+            br_sort_label,
+            br_sort_selection,
+            br_sort_name_asc,
+            br_sort_name_desc,
+            br_sort_date_desc,
+            br_sort_date_asc,
+            br_sort_size_asc,
+            br_sort_size_desc,
+            br_media_title,
+            br_media_exif_ymd,
+            br_media_exif_datetime,
+            br_media_exif_camera,
+            br_media_id3_track,
+            br_media_id3_artist,
+            br_media_id3_album,
+            br_media_id3_title,
+            br_media_id3_year,
+            br_media_loading,
+            br_ext_title,
+            br_ext_keep,
+            br_ext_lower,
+            br_ext_upper,
+            br_ext_replace,
+            br_ext_remove,
+            br_include_folders,
+            br_apply,
+            br_applying,
+            br_undo_last,
+            br_readonly_error,
         }
     }
 }

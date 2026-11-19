@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod bulk_rename;
 mod views;
 
 use mimalloc::MiMalloc;
