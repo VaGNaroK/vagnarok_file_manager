@@ -595,7 +595,9 @@ pub struct App {
     pub resizing_sidebar: Option<(f32, f32)>,
     pub sidebar_divider_hovered: bool,
     pub properties_modal_size: (f32, f32),
-    pub resizing_properties_modal: Option<(Point, f32, f32)>,
+    pub properties_modal_offset: Option<(f32, f32)>,
+    pub resizing_properties_modal: Option<(Point, f32, f32, f32, f32)>,
+    pub dragging_properties_modal: Option<(Point, f32, f32)>,
     pub deep_search_open: bool,
     pub deep_search_query: String,
     pub deep_search_loading: bool,
@@ -727,7 +729,9 @@ impl App {
             resizing_sidebar: None,
             sidebar_divider_hovered: false,
             properties_modal_size: (760.0, 560.0),
+            properties_modal_offset: None,
             resizing_properties_modal: None,
+            dragging_properties_modal: None,
             deep_search_open: false,
             deep_search_query: String::new(),
             deep_search_loading: false,
@@ -3050,6 +3054,9 @@ impl App {
             }
             Message::DragPropertiesWindow(window_id) => {
                 if window_id == self.main_window_id {
+                    let (x, y, _, _) = effective_properties_modal_rect(self);
+                    self.properties_modal_offset = Some((x, y));
+                    self.dragging_properties_modal = Some((self.cursor_position, x, y));
                     Task::none()
                 } else {
                     window::drag(window_id)
@@ -3065,6 +3072,9 @@ impl App {
                     self.open_with_icons.clear();
                     self.open_with_icons.shrink_to_fit();
                     self.open_with_icons_in_flight.clear();
+                    self.dragging_properties_modal = None;
+                    self.resizing_properties_modal = None;
+                    self.properties_modal_offset = None;
                 }
                 if window_id == self.main_window_id {
                     Task::none()
@@ -3126,8 +3136,9 @@ impl App {
                 Task::none()
             }
             Message::StartPropertiesResize => {
-                let (w, h) = effective_properties_modal_size(self);
-                self.resizing_properties_modal = Some((self.cursor_position, w, h));
+                let (x, y, w, h) = effective_properties_modal_rect(self);
+                self.properties_modal_offset = Some((x, y));
+                self.resizing_properties_modal = Some((self.cursor_position, x, y, w, h));
                 Task::none()
             }
             Message::SidebarDividerHovered(hovered) => {
@@ -3146,6 +3157,7 @@ impl App {
                 self.resizing_col = None;
                 self.resizing_columns_panel = None;
                 self.resizing_properties_modal = None;
+                self.dragging_properties_modal = None;
                 let mut should_persist = self.resizing_grid.take().is_some();
                 if self.resizing_sidebar.take().is_some() {
                     should_persist = true;
@@ -3238,8 +3250,22 @@ impl App {
                         self.window_size.width,
                     ));
                 }
-                if let Some((start, initial_w, initial_h)) = self.resizing_properties_modal {
+                if let Some((start, start_x, start_y)) = self.dragging_properties_modal {
+                    let (w, h) = effective_properties_modal_size(self);
+                    self.properties_modal_offset = Some(clamp_properties_modal_pos(
+                        start_x + (pos.x - start.x),
+                        start_y + (pos.y - start.y),
+                        w,
+                        h,
+                        self.window_size,
+                    ));
+                }
+                if let Some((start, anchor_x, anchor_y, initial_w, initial_h)) =
+                    self.resizing_properties_modal
+                {
                     self.properties_modal_size = compute_dragged_properties_modal_size(
+                        anchor_x,
+                        anchor_y,
                         initial_w,
                         initial_h,
                         start,
@@ -5480,23 +5506,50 @@ pub fn effective_properties_modal_size(app: &App) -> (f32, f32) {
     )
 }
 
+pub fn effective_properties_modal_rect(app: &App) -> (f32, f32, f32, f32) {
+    let (w, h) = effective_properties_modal_size(app);
+    let (raw_x, raw_y) = app.properties_modal_offset.unwrap_or_else(|| {
+        (
+            ((app.window_size.width - w) * 0.5).max(8.0),
+            ((app.window_size.height - h) * 0.5).max(8.0),
+        )
+    });
+    let (x, y) = clamp_properties_modal_pos(raw_x, raw_y, w, h, app.window_size);
+    (x, y, w, h)
+}
+
+fn clamp_properties_modal_pos(
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    window_size: Size,
+) -> (f32, f32) {
+    let max_x = (window_size.width - width - 8.0).max(8.0);
+    let max_y = (window_size.height - height - 8.0).max(8.0);
+    (x.clamp(8.0, max_x), y.clamp(8.0, max_y))
+}
+
 fn clamp_properties_modal_size(width: f32, height: f32, window_size: Size) -> (f32, f32) {
-    let max_w = (window_size.width - 32.0).max(560.0);
-    let max_h = (window_size.height - 32.0).max(420.0);
+    let max_w = (window_size.width - 16.0).max(560.0);
+    let max_h = (window_size.height - 16.0).max(420.0);
     (width.clamp(560.0, max_w), height.clamp(420.0, max_h))
 }
 
 fn compute_dragged_properties_modal_size(
+    anchor_x: f32,
+    anchor_y: f32,
     initial_w: f32,
     initial_h: f32,
     start: Point,
     current: Point,
     window_size: Size,
 ) -> (f32, f32) {
-    // Modal centralizado cresce simetricamente conforme o canto inferior direito é arrastado.
-    let next_w = initial_w + (current.x - start.x) * 2.0;
-    let next_h = initial_h + (current.y - start.y) * 2.0;
-    clamp_properties_modal_size(next_w, next_h, window_size)
+    let max_w = (window_size.width - anchor_x - 8.0).max(560.0);
+    let max_h = (window_size.height - anchor_y - 8.0).max(420.0);
+    let next_w = (initial_w + (current.x - start.x)).clamp(560.0, max_w);
+    let next_h = (initial_h + (current.y - start.y)).clamp(420.0, max_h);
+    (next_w, next_h)
 }
 
 fn rgba_arc_to_handle(thumb: Arc<ThumbnailRgba>) -> image::Handle {
@@ -5779,20 +5832,24 @@ mod tests {
     }
 
     #[test]
-    fn properties_modal_resize_clamps_within_viewport() {
+    fn properties_modal_resize_and_drag_clamp_within_viewport() {
         let win = Size::new(1000.0, 700.0);
         assert_eq!(
             super::compute_dragged_properties_modal_size(
+                120.0,
+                70.0,
                 760.0,
                 560.0,
                 iced::Point::new(880.0, 630.0),
                 iced::Point::new(920.0, 650.0),
                 win,
             ),
-            (840.0, 600.0)
+            (800.0, 580.0)
         );
         assert_eq!(
             super::compute_dragged_properties_modal_size(
+                120.0,
+                70.0,
                 760.0,
                 560.0,
                 iced::Point::new(880.0, 630.0),
@@ -5800,6 +5857,10 @@ mod tests {
                 win,
             ),
             (560.0, 420.0)
+        );
+        assert_eq!(
+            super::clamp_properties_modal_pos(-20.0, 500.0, 760.0, 560.0, win),
+            (8.0, 132.0)
         );
     }
 }

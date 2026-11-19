@@ -11,7 +11,7 @@ use fm_core::{
 };
 use fm_theme::{FONT_UI, ThemePalette, styles};
 use iced::widget::{Text, container, image, opaque, text, tooltip};
-use iced::{Alignment::Center, Color, ContentFit, Element, Length};
+use iced::{Alignment::Center, Color, ContentFit, Element, Length, Padding};
 use lucide_icons::iced::{
     icon_file_archive, icon_file_code, icon_file_json, icon_file_text, icon_folder, icon_image,
     icon_terminal,
@@ -196,6 +196,26 @@ pub fn modal_overlay_backdrop<'a, M: 'a>(card: impl Into<Element<'a, M>>) -> Ele
             .height(Length::Fill)
             .align_x(Center)
             .align_y(Center)
+            .style(move |_| styles::modal_backdrop()(&iced::Theme::Light)),
+    )
+}
+
+/// Posiciona um card modal em `(x, y)` sobre backdrop escurecido e bloqueia cliques ao fundo.
+pub fn modal_overlay_backdrop_at<'a, M: 'a>(
+    card: impl Into<Element<'a, M>>,
+    x: f32,
+    y: f32,
+) -> Element<'a, M> {
+    opaque(
+        container(card)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(Padding {
+                top: y.max(0.0),
+                right: 0.0,
+                bottom: 0.0,
+                left: x.max(0.0),
+            })
             .style(move |_| styles::modal_backdrop()(&iced::Theme::Light)),
     )
 }

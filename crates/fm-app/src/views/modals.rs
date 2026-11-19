@@ -24,10 +24,13 @@ use lucide_icons::iced::{
 
 use crate::app::{
     ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, PreferencesTab, PropertiesTab,
-    PropertiesWindowState, dialog_input_id, effective_properties_modal_size,
+    PropertiesWindowState, dialog_input_id, effective_properties_modal_rect,
     open_with_props_type_key,
 };
-use crate::views::{entry_icon, modal_overlay_backdrop, sanitize_single_line, with_tooltip};
+use crate::views::{
+    entry_icon, modal_overlay_backdrop, modal_overlay_backdrop_at, sanitize_single_line,
+    with_tooltip,
+};
 
 pub fn dialog_modal<'a>(
     dialog: &'a ActiveDialog,
@@ -388,14 +391,14 @@ pub fn properties_modal_overlay<'a>(
     palette: ThemePalette,
     strings: Strings,
 ) -> Element<'a, Message> {
-    let (modal_w, modal_h) = effective_properties_modal_size(app);
+    let (x, y, modal_w, modal_h) = effective_properties_modal_rect(app);
     let card = container(properties_window_view(app, win_id, props, palette, strings))
         .width(Length::Fixed(modal_w))
         .height(Length::Fixed(modal_h))
         .clip(true)
         .style(styles::modal_card(palette));
 
-    modal_overlay_backdrop(card)
+    modal_overlay_backdrop_at(card, x, y)
 }
 
 pub fn properties_window_view<'a>(
@@ -438,6 +441,11 @@ pub fn properties_window_view<'a>(
         .spacing(10)
         .align_y(Center),
     )
+    .interaction(if app.dragging_properties_modal.is_some() {
+        mouse::Interaction::Grabbing
+    } else {
+        mouse::Interaction::Grab
+    })
     .on_press(Message::DragPropertiesWindow(win_id));
 
     let header = row![
