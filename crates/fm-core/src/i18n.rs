@@ -244,6 +244,23 @@ pub struct Strings {
     pub tip_grid_alignment: &'static str,
     pub tip_system_icons: &'static str,
     pub perm_allow_exec: &'static str,
+    pub open_with: &'static str,
+    pub prop_tab_open_with: &'static str,
+    pub open_with_prompt: &'static str,
+    pub open_with_default_app: &'static str,
+    pub open_with_recommended_apps: &'static str,
+    pub open_with_other_apps: &'static str,
+    pub open_with_custom_hint: &'static str,
+    pub open_with_custom_placeholder: &'static str,
+    pub open_with_add_to_list: &'static str,
+    pub open_with_set_default: &'static str,
+    pub open_with_reset_default: &'static str,
+    pub open_with_open_once: &'static str,
+    pub open_with_loading: &'static str,
+    pub open_with_empty: &'static str,
+    pub open_with_saved: &'static str,
+    pub open_with_reset_done: &'static str,
+    pub open_with_pick_exec: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -650,6 +667,23 @@ impl Strings {
         let tip_grid_alignment = resolve("tip-grid-alignment");
         let tip_system_icons = resolve("tip-system-icons");
         let perm_allow_exec = resolve("perm-allow-exec");
+        let open_with = resolve("open-with");
+        let prop_tab_open_with = resolve("prop-tab-open-with");
+        let open_with_prompt = resolve("open-with-prompt");
+        let open_with_default_app = resolve("open-with-default-app");
+        let open_with_recommended_apps = resolve("open-with-recommended-apps");
+        let open_with_other_apps = resolve("open-with-other-apps");
+        let open_with_custom_hint = resolve("open-with-custom-hint");
+        let open_with_custom_placeholder = resolve("open-with-custom-placeholder");
+        let open_with_add_to_list = resolve("open-with-add-to-list");
+        let open_with_set_default = resolve("open-with-set-default");
+        let open_with_reset_default = resolve("open-with-reset-default");
+        let open_with_open_once = resolve("open-with-open-once");
+        let open_with_loading = resolve("open-with-loading");
+        let open_with_empty = resolve("open-with-empty");
+        let open_with_saved = resolve("open-with-saved");
+        let open_with_reset_done = resolve("open-with-reset-done");
+        let open_with_pick_exec = resolve("open-with-pick-exec");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -863,6 +897,23 @@ impl Strings {
             tip_grid_alignment,
             tip_system_icons,
             perm_allow_exec,
+            open_with,
+            prop_tab_open_with,
+            open_with_prompt,
+            open_with_default_app,
+            open_with_recommended_apps,
+            open_with_other_apps,
+            open_with_custom_hint,
+            open_with_custom_placeholder,
+            open_with_add_to_list,
+            open_with_set_default,
+            open_with_reset_default,
+            open_with_open_once,
+            open_with_loading,
+            open_with_empty,
+            open_with_saved,
+            open_with_reset_done,
+            open_with_pick_exec,
         }
     }
 }

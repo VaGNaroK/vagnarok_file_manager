@@ -6,12 +6,17 @@ pub mod archive;
 pub mod config;
 pub mod copy_engine;
 pub mod icons;
+pub mod open_with;
 mod trash_bin;
 
 pub use archive::is_archive_file;
 pub use config::{config_file_path, load_config, save_config};
 pub use copy_engine::run_transfer_job;
-pub use icons::resolve_system_icon;
+pub use icons::{resolve_app_icon, resolve_system_icon};
+pub use open_with::{
+    discover_open_with_catalog, open_with_type_key_for_path, reset_open_with_system_default,
+    save_open_with_system_default,
+};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -34,8 +39,9 @@ use std::path::{Path, PathBuf};
 use compact_str::CompactString;
 use directories::{BaseDirs, UserDirs};
 use fm_core::{
-    DirectorySnapshot, DriveInfo, EntryExtraInfo, EntryKind, FileEntry, FsError, PermissionsMeta,
-    UserPlaces, VfsProvider, VolumeSpace, compute_entry_id, is_virtual_trash_path,
+    DirectorySnapshot, DriveInfo, EntryExtraInfo, EntryKind, FileEntry, FsError,
+    OpenWithAssociation, PermissionsMeta, UserPlaces, VfsProvider, VolumeSpace, compute_entry_id,
+    is_virtual_trash_path,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -386,6 +392,17 @@ impl VfsProvider for LocalFs {
     async fn open_default(&self, path: &Path) -> Result<(), FsError> {
         let target = path.to_path_buf();
         tokio::task::spawn_blocking(move || platform::open_default(&target))
+            .await
+            .map_err(|err| FsError::Io {
+                path: path.to_path_buf(),
+                message: err.to_string(),
+            })?
+    }
+
+    async fn open_with(&self, path: &Path, assoc: &OpenWithAssociation) -> Result<(), FsError> {
+        let target = path.to_path_buf();
+        let assoc_owned = assoc.clone();
+        tokio::task::spawn_blocking(move || open_with::launch_open_with_sync(&target, &assoc_owned))
             .await
             .map_err(|err| FsError::Io {
                 path: path.to_path_buf(),

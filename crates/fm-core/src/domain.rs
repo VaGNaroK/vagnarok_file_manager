@@ -559,6 +559,100 @@ pub enum SystemIconPayload {
     },
 }
 
+/// Descritor de aplicativo disponível para abrir um arquivo via "Abrir com...".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenWithApp {
+    /// Identificador estável (`org.videolan.VLC.desktop`, ProgId/caminho `.exe` ou `custom:<cmd>`).
+    pub id: CompactString,
+    pub display_name: CompactString,
+    /// Linha de comando (`Exec=` no Linux ou caminho do executável no Windows).
+    pub exec: String,
+    /// Nome de ícone FreeDesktop ou caminho de executável/arquivo de ícone.
+    #[serde(default)]
+    pub icon_hint: Option<String>,
+    #[serde(default)]
+    pub is_recommended: bool,
+    #[serde(default)]
+    pub is_default: bool,
+    #[serde(default)]
+    pub is_custom: bool,
+    #[serde(default)]
+    pub runs_in_terminal: bool,
+}
+
+impl OpenWithApp {
+    /// Converte o item descoberto em associação persistível no `AppConfig`.
+    #[must_use]
+    pub fn to_association(&self) -> OpenWithAssociation {
+        OpenWithAssociation {
+            app_id: self.id.to_string(),
+            display_name: self.display_name.to_string(),
+            exec: self.exec.clone(),
+            icon_hint: self.icon_hint.clone(),
+            runs_in_terminal: self.runs_in_terminal,
+        }
+    }
+}
+
+/// Preferência persistida de "Abrir com..." para uma extensão ou tipo MIME.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenWithAssociation {
+    pub app_id: String,
+    pub display_name: String,
+    pub exec: String,
+    #[serde(default)]
+    pub icon_hint: Option<String>,
+    #[serde(default)]
+    pub runs_in_terminal: bool,
+}
+
+impl OpenWithAssociation {
+    /// Constrói um `OpenWithApp` pronto para exibição na lista de aplicativos.
+    #[must_use]
+    pub fn to_app(&self, is_recommended: bool, is_default: bool, is_custom: bool) -> OpenWithApp {
+        OpenWithApp {
+            id: CompactString::from(self.app_id.as_str()),
+            display_name: CompactString::from(self.display_name.as_str()),
+            exec: self.exec.clone(),
+            icon_hint: self.icon_hint.clone(),
+            is_recommended,
+            is_default,
+            is_custom,
+            runs_in_terminal: self.runs_in_terminal,
+        }
+    }
+}
+
+/// Catálogo categorizado de aplicativos para um arquivo específico.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenWithCatalog {
+    pub type_key: CompactString,
+    pub type_label: CompactString,
+    pub system_default: Option<OpenWithApp>,
+    pub recommended: Vec<OpenWithApp>,
+    pub others: Vec<OpenWithApp>,
+}
+
+/// Calcula a chave normalizada de tipo (`mime` específico, `.ext` em minúsculas ou `application/octet-stream`).
+#[must_use]
+pub fn open_with_type_key(path: &Path, mime: Option<&str>) -> String {
+    if let Some(m) = mime
+        .map(str::trim)
+        .filter(|m| !m.is_empty() && !m.eq_ignore_ascii_case("application/octet-stream"))
+    {
+        return m.to_ascii_lowercase();
+    }
+    if let Some(ext) = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+    {
+        return format!(".{}", ext.to_ascii_lowercase());
+    }
+    "application/octet-stream".to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

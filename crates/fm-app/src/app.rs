@@ -7,10 +7,10 @@ use compact_str::CompactString;
 use fm_core::{
     AppConfig, ClipboardTransfer, ConflictPolicy, CopyMode, DIR_FILTER_SENTINEL, DirectorySnapshot,
     DriveInfo, EntryExtraInfo, EntryId, FileEntry, FolderSummary, FsError, IconThemeMode,
-    JobProgress, JobState, Language, PermissionsMeta, RecursiveSize, SelectedFileTelemetry,
-    SelectionModifiers, SortDirection, SortField, Strings, SystemIconBucket, SystemIconKey,
-    SystemPlaceKind, TabId, TabState, ThemePreset, UserPlaces, VfsProvider, ViewMode, VolumeSpace,
-    WindowDecorationsMode,
+    JobProgress, JobState, Language, OpenWithAssociation, OpenWithCatalog, PermissionsMeta,
+    RecursiveSize, SelectedFileTelemetry, SelectionModifiers, SortDirection, SortField, Strings,
+    SystemIconBucket, SystemIconKey, SystemPlaceKind, TabId, TabState, ThemePreset, UserPlaces,
+    VfsProvider, ViewMode, VolumeSpace, WindowDecorationsMode,
 };
 use fm_fs::LocalFs;
 use fm_index::SearchHit;
@@ -97,6 +97,15 @@ pub enum PropertiesTab {
     History,
     Metadata,
     Permissions,
+    OpenWith,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecPickerState {
+    pub current_dir: PathBuf,
+    pub entries: Vec<FileEntry>,
+    pub loading: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -116,10 +125,21 @@ pub struct PropertiesWindowState {
     pub posix_mode_draft: Option<u32>,
     pub initial_posix_mode: Option<u32>,
     pub applying: bool,
+    pub open_with_loading: bool,
+    pub open_with_catalog: Option<OpenWithCatalog>,
+    pub open_with_selected_id: Option<String>,
+    pub open_with_custom_command: String,
+    pub exec_picker: Option<ExecPickerState>,
     pub cancel: Option<CancellationToken>,
 }
 
 impl PropertiesWindowState {
+    pub fn supports_open_with(&self) -> bool {
+        !self.entry.kind.is_dir_like()
+            && !self.is_archive()
+            && !fm_core::is_virtual_trash_path(&self.entry.path)
+    }
+
     pub fn is_archive(&self) -> bool {
         fm_fs::archive::split_archive_path(&self.entry.path).is_some()
     }
@@ -423,7 +443,11 @@ pub enum Message {
     ConfigSaved(Option<String>),
     OpenDefaultFinished(Result<(), FsError>),
     OpenProperties(PathBuf),
-    PropertiesEntryStatLoaded(Result<FileEntry, FsError>),
+    OpenWithDialog(PathBuf),
+    PropertiesEntryStatLoaded {
+        result: Result<FileEntry, FsError>,
+        tab: PropertiesTab,
+    },
     PropertiesFolderSizeReady {
         window_id: window::Id,
         path: PathBuf,
@@ -471,6 +495,31 @@ pub enum Message {
         result: Result<(FileEntry, EntryExtraInfo), FsError>,
     },
     PropertiesOpenDefault(PathBuf),
+    PropertiesOpenWithLoaded {
+        window_id: window::Id,
+        path: PathBuf,
+        result: Result<OpenWithCatalog, FsError>,
+    },
+    OpenWithIconLoaded {
+        hint: String,
+        handle: Option<image::Handle>,
+    },
+    OpenWithSelectApp(window::Id, String),
+    OpenWithCustomCommandChanged(window::Id, String),
+    OpenWithAddCustom(window::Id),
+    OpenWithSetDefault(window::Id),
+    OpenWithResetDefault(window::Id),
+    OpenWithSystemSyncFinished(Result<(), FsError>),
+    OpenWithOpenNow(window::Id),
+    OpenWithToggleExecPicker(window::Id),
+    OpenWithExecPickerNavigate(window::Id, PathBuf),
+    OpenWithExecPickerLoaded {
+        window_id: window::Id,
+        dir: PathBuf,
+        result: Result<DirectorySnapshot, FsError>,
+    },
+    OpenWithExecPickerPick(window::Id, PathBuf),
+    OpenWithExecPickerClose(window::Id),
     DragPropertiesWindow(window::Id),
     ClosePropertiesWindow(window::Id),
     OpenNewMenu,
@@ -574,6 +623,8 @@ pub struct App {
     pub gpu_system_icons: HashMap<(SystemIconKey, SystemIconBucket), image::Handle>,
     pub in_flight_system_icons: HashSet<(SystemIconKey, SystemIconBucket)>,
     pub system_icon_generation: u64,
+    pub open_with_icons: HashMap<String, image::Handle>,
+    pub open_with_icons_in_flight: HashSet<String>,
     pub breadcrumb_menu: Option<(PathBuf, Vec<FileEntry>)>,
     pub breadcrumb_menu_cancel: Option<CancellationToken>,
     pub quicklook_editor: text_editor::Content,
@@ -703,6 +754,8 @@ impl App {
             gpu_system_icons: HashMap::new(),
             in_flight_system_icons: HashSet::new(),
             system_icon_generation: 0,
+            open_with_icons: HashMap::new(),
+            open_with_icons_in_flight: HashSet::new(),
             breadcrumb_menu: None,
             breadcrumb_menu_cancel: None,
             quicklook_editor: text_editor::Content::new(),
@@ -1245,12 +1298,8 @@ impl App {
                     if fm_fs::archive::split_archive_path(&entry.path).is_some() {
                         return self.update(Message::ToggleQuickLook);
                     }
-                    let vfs = Arc::clone(&self.vfs);
                     let path = entry.path;
-                    return Task::perform(
-                        async move { vfs.open_default(&path).await },
-                        Message::OpenDefaultFinished,
-                    );
+                    return self.open_file_respecting_preference(path);
                 }
                 Task::none()
             }
@@ -2396,31 +2445,13 @@ impl App {
                 clipboard::write(text)
             }
             Message::OpenProperties(path) => {
-                self.context_menu = None;
-                if let Some((&existing_id, _)) = self
-                    .properties_windows
-                    .iter()
-                    .find(|(_, props)| props.entry.path == path)
-                {
-                    if existing_id != self.main_window_id {
-                        return window::gain_focus(existing_id);
-                    }
-                    return Task::none();
-                }
-                let entry = self.current_tab().and_then(|t| {
-                    t.visible_entries
-                        .iter()
-                        .find(|e| e.path == path)
-                        .or_else(|| t.raw_entries.iter().find(|e| e.path == path))
-                        .cloned()
-                });
-                if let Some(entry) = entry {
-                    return self.open_properties_window(entry);
-                }
-                Task::perform(fm_fs::stat_entry(path), Message::PropertiesEntryStatLoaded)
+                self.open_properties_request(path, PropertiesTab::General)
             }
-            Message::PropertiesEntryStatLoaded(result) => match result {
-                Ok(entry) => self.open_properties_window(entry),
+            Message::OpenWithDialog(path) => {
+                self.open_properties_request(path, PropertiesTab::OpenWith)
+            }
+            Message::PropertiesEntryStatLoaded { result, tab } => match result {
+                Ok(entry) => self.open_properties_window(entry, tab),
                 Err(err) => {
                     self.status_notice = Some(err.to_string());
                     Task::none()
@@ -2498,6 +2529,9 @@ impl App {
             Message::PropertiesSelectTab(window_id, tab) => {
                 if let Some(props) = self.properties_windows.get_mut(&window_id) {
                     props.active_tab = tab;
+                }
+                if tab == PropertiesTab::OpenWith {
+                    return self.maybe_load_open_with_catalog(window_id);
                 }
                 Task::none()
             }
@@ -2776,12 +2810,236 @@ impl App {
                     Task::none()
                 }
             },
-            Message::PropertiesOpenDefault(path) => {
+            Message::PropertiesOpenDefault(path) => self.open_file_respecting_preference(path),
+            Message::PropertiesOpenWithLoaded {
+                window_id,
+                path,
+                result,
+            } => {
+                let mut icon_task = Task::none();
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && props.entry.path == path
+                {
+                    props.open_with_loading = false;
+                    match result {
+                        Ok(catalog) => {
+                            let saved_default = self
+                                .config
+                                .open_with_defaults
+                                .get(catalog.type_key.as_str())
+                                .map(|a| a.app_id.clone());
+                            if props.open_with_selected_id.is_none() {
+                                props.open_with_selected_id = saved_default
+                                    .or_else(|| {
+                                        catalog.system_default.as_ref().map(|a| a.id.to_string())
+                                    })
+                                    .or_else(|| {
+                                        catalog.recommended.first().map(|a| a.id.to_string())
+                                    });
+                            }
+                            icon_task = self.queue_open_with_icons(&catalog);
+                            if let Some(props_mut) = self.properties_windows.get_mut(&window_id) {
+                                props_mut.open_with_catalog = Some(catalog);
+                            }
+                        }
+                        Err(err) => {
+                            if !matches!(err, FsError::Cancelled) {
+                                self.status_notice = Some(err.to_string());
+                            }
+                        }
+                    }
+                }
+                icon_task
+            }
+            Message::OpenWithIconLoaded { hint, handle } => {
+                self.open_with_icons_in_flight.remove(&hint);
+                if let Some(h) = handle {
+                    self.open_with_icons.insert(hint, h);
+                }
+                Task::none()
+            }
+            Message::OpenWithSelectApp(window_id, app_id) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id) {
+                    props.open_with_selected_id = Some(app_id);
+                }
+                Task::none()
+            }
+            Message::OpenWithCustomCommandChanged(window_id, val) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id) {
+                    props.open_with_custom_command = val;
+                    if !props.open_with_custom_command.trim().is_empty() {
+                        props.open_with_selected_id = None;
+                    }
+                }
+                Task::none()
+            }
+            Message::OpenWithAddCustom(window_id) => {
+                let Some(props) = self.properties_windows.get(&window_id).cloned() else {
+                    return Task::none();
+                };
+                let cmd = props.open_with_custom_command.trim();
+                let Some(assoc) = custom_association_from_command(cmd) else {
+                    return Task::none();
+                };
+                let type_key = open_with_props_type_key(&props);
+                let list = self
+                    .config
+                    .open_with_custom_apps
+                    .entry(type_key.clone())
+                    .or_default();
+                if let Some(existing) = list.iter_mut().find(|a| a.app_id == assoc.app_id) {
+                    *existing = assoc.clone();
+                } else {
+                    list.push(assoc.clone());
+                }
+                if let Some(props_mut) = self.properties_windows.get_mut(&window_id) {
+                    props_mut.open_with_selected_id = Some(assoc.app_id.clone());
+                    props_mut.open_with_custom_command.clear();
+                }
+                let icon_task = self.queue_single_open_with_icon(assoc.icon_hint.as_deref());
+                let save_task = self.persist_config_task();
+                Task::batch([save_task, icon_task])
+            }
+            Message::OpenWithSetDefault(window_id) => {
+                let Some(props) = self.properties_windows.get(&window_id).cloned() else {
+                    return Task::none();
+                };
+                let Some((type_key, assoc)) = self.resolve_open_with_selection(&props) else {
+                    return Task::none();
+                };
+                self.config
+                    .open_with_defaults
+                    .insert(type_key.clone(), assoc.clone());
+                if assoc.app_id.starts_with("custom:") {
+                    let list = self
+                        .config
+                        .open_with_custom_apps
+                        .entry(type_key.clone())
+                        .or_default();
+                    if !list.iter().any(|a| a.app_id == assoc.app_id) {
+                        list.push(assoc.clone());
+                    }
+                }
+                if let Some(props_mut) = self.properties_windows.get_mut(&window_id) {
+                    props_mut.open_with_selected_id = Some(assoc.app_id.clone());
+                }
+                self.status_notice = Some(self.strings().open_with_saved.to_owned());
+                let save_cfg = self.persist_config_task();
+                let sync_sys = Task::perform(
+                    fm_fs::save_open_with_system_default(type_key, assoc),
+                    Message::OpenWithSystemSyncFinished,
+                );
+                Task::batch([save_cfg, sync_sys])
+            }
+            Message::OpenWithResetDefault(window_id) => {
+                let Some(props) = self.properties_windows.get(&window_id).cloned() else {
+                    return Task::none();
+                };
+                let type_key = open_with_props_type_key(&props);
+                self.config.open_with_defaults.remove(&type_key);
+                if let Some(ext_key) = extension_fallback_key(&props.entry.path) {
+                    self.config.open_with_defaults.remove(&ext_key);
+                }
+                if let Some(props_mut) = self.properties_windows.get_mut(&window_id) {
+                    props_mut.open_with_selected_id = None;
+                    props_mut.open_with_catalog = None;
+                }
+                self.status_notice = Some(self.strings().open_with_reset_done.to_owned());
+                let save_cfg = self.persist_config_task();
+                let reset_sys = Task::perform(
+                    fm_fs::reset_open_with_system_default(type_key),
+                    Message::OpenWithSystemSyncFinished,
+                );
+                let reload = self.maybe_load_open_with_catalog(window_id);
+                Task::batch([save_cfg, reset_sys, reload])
+            }
+            Message::OpenWithSystemSyncFinished(result) => {
+                if let Err(err) = result {
+                    self.status_notice = Some(err.to_string());
+                }
+                Task::none()
+            }
+            Message::OpenWithOpenNow(window_id) => {
+                let Some(props) = self.properties_windows.get(&window_id) else {
+                    return Task::none();
+                };
+                let Some((_, assoc)) = self.resolve_open_with_selection(props) else {
+                    return Task::none();
+                };
+                let path = props.entry.path.clone();
                 let vfs = Arc::clone(&self.vfs);
                 Task::perform(
-                    async move { vfs.open_default(&path).await },
+                    async move { vfs.open_with(&path, &assoc).await },
                     Message::OpenDefaultFinished,
                 )
+            }
+            Message::OpenWithToggleExecPicker(window_id) => {
+                let Some(props) = self.properties_windows.get_mut(&window_id) else {
+                    return Task::none();
+                };
+                if props.exec_picker.is_some() {
+                    props.exec_picker = None;
+                    return Task::none();
+                }
+                let start_dir = default_exec_picker_dir(&self.places);
+                props.exec_picker = Some(ExecPickerState {
+                    current_dir: start_dir.clone(),
+                    entries: Vec::new(),
+                    loading: true,
+                    error: None,
+                });
+                self.load_exec_picker_dir(window_id, start_dir)
+            }
+            Message::OpenWithExecPickerNavigate(window_id, dir) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && let Some(picker) = &mut props.exec_picker
+                {
+                    picker.current_dir = dir.clone();
+                    picker.loading = true;
+                    picker.error = None;
+                }
+                self.load_exec_picker_dir(window_id, dir)
+            }
+            Message::OpenWithExecPickerLoaded {
+                window_id,
+                dir,
+                result,
+            } => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && let Some(picker) = &mut props.exec_picker
+                    && picker.current_dir == dir
+                {
+                    picker.loading = false;
+                    match result {
+                        Ok(snap) => {
+                            let mut entries: Vec<FileEntry> =
+                                snap.entries.into_iter().filter(|e| !e.is_hidden).collect();
+                            let sort = fm_core::SortSpec::default();
+                            entries.sort_by(|a, b| sort.compare(a, b));
+                            picker.entries = entries;
+                            picker.error = None;
+                        }
+                        Err(err) => {
+                            picker.entries.clear();
+                            picker.error = Some(err.to_string());
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::OpenWithExecPickerPick(window_id, path) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id) {
+                    props.open_with_custom_command = quote_exec_path_if_needed(&path);
+                    props.open_with_selected_id = None;
+                    props.exec_picker = None;
+                }
+                Task::none()
+            }
+            Message::OpenWithExecPickerClose(window_id) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id) {
+                    props.exec_picker = None;
+                }
+                Task::none()
             }
             Message::DragPropertiesWindow(window_id) => {
                 if window_id == self.main_window_id {
@@ -3146,7 +3404,7 @@ impl App {
         if window_id != self.main_window_id
             && let Some(props) = self.properties_windows.get(&window_id)
         {
-            return views::modals::properties_window_view(window_id, props, palette, strings);
+            return views::modals::properties_window_view(self, window_id, props, palette, strings);
         }
         let tab = self.current_tab();
 
@@ -3238,6 +3496,7 @@ impl App {
             Some(views::modals::dialog_modal(dialog, palette, strings))
         } else if let Some(props) = self.properties_windows.get(&self.main_window_id) {
             Some(views::modals::properties_modal_overlay(
+                self,
                 self.main_window_id,
                 props,
                 palette,
@@ -3274,14 +3533,54 @@ impl App {
         id
     }
 
+    fn open_properties_request(&mut self, path: PathBuf, tab: PropertiesTab) -> Task<Message> {
+        self.context_menu = None;
+        if let Some((&existing_id, _)) = self
+            .properties_windows
+            .iter()
+            .find(|(_, props)| props.entry.path == path)
+        {
+            let focus = if existing_id != self.main_window_id {
+                window::gain_focus(existing_id)
+            } else {
+                Task::none()
+            };
+            let select = self.update(Message::PropertiesSelectTab(existing_id, tab));
+            return Task::batch([focus, select]);
+        }
+        let entry = self.current_tab().and_then(|t| {
+            t.visible_entries
+                .iter()
+                .find(|e| e.path == path)
+                .or_else(|| t.raw_entries.iter().find(|e| e.path == path))
+                .cloned()
+        });
+        if let Some(entry) = entry {
+            return self.open_properties_window(entry, tab);
+        }
+        Task::perform(fm_fs::stat_entry(path), move |result| {
+            Message::PropertiesEntryStatLoaded { result, tab }
+        })
+    }
+
     /// Opens (or focuses) a floating centered Properties window for `entry`.
-    fn open_properties_window(&mut self, entry: FileEntry) -> Task<Message> {
+    fn open_properties_window(
+        &mut self,
+        entry: FileEntry,
+        initial_tab: PropertiesTab,
+    ) -> Task<Message> {
         if let Some((&existing_id, _)) = self
             .properties_windows
             .iter()
             .find(|(_, props)| props.entry.path == entry.path)
         {
-            return window::gain_focus(existing_id);
+            let focus = if existing_id != self.main_window_id {
+                window::gain_focus(existing_id)
+            } else {
+                Task::none()
+            };
+            let select = self.update(Message::PropertiesSelectTab(existing_id, initial_tab));
+            return Task::batch([focus, select]);
         }
         let existing_telemetry = self.current_tab().and_then(|t| {
             let selected = t.selection.single_selected(&t.visible_entries)?;
@@ -3442,6 +3741,15 @@ impl App {
         let draft_name = entry.name.to_string();
         let initial_hidden = entry.is_hidden;
 
+        let can_open_with = !entry.kind.is_dir_like()
+            && !is_archive
+            && !fm_core::is_virtual_trash_path(&entry.path);
+        let active_tab = if initial_tab == PropertiesTab::OpenWith && !can_open_with {
+            PropertiesTab::General
+        } else {
+            initial_tab
+        };
+
         self.properties_windows.insert(
             win_id,
             PropertiesWindowState {
@@ -3451,7 +3759,7 @@ impl App {
                 volume_space: initial_volume_space,
                 size_loading,
                 extra: None,
-                active_tab: PropertiesTab::General,
+                active_tab,
                 draft_name,
                 readonly_draft: initial_readonly,
                 initial_readonly,
@@ -3460,10 +3768,221 @@ impl App {
                 posix_mode_draft: initial_posix_mode,
                 initial_posix_mode,
                 applying: false,
+                open_with_loading: false,
+                open_with_catalog: None,
+                open_with_selected_id: None,
+                open_with_custom_command: String::new(),
+                exec_picker: None,
                 cancel: Some(win_cancel),
             },
         );
+        if active_tab == PropertiesTab::OpenWith {
+            tasks.push(self.maybe_load_open_with_catalog(win_id));
+        }
         Task::batch(tasks)
+    }
+
+    fn resolve_open_with_default_for_path(
+        &self,
+        path: &std::path::Path,
+    ) -> Option<OpenWithAssociation> {
+        let telemetry_mime = self
+            .current_tab()
+            .and_then(|t| {
+                let selected = t.selection.single_selected(&t.visible_entries)?;
+                (selected.path == path)
+                    .then_some(t.selected_telemetry.as_ref())
+                    .flatten()
+            })
+            .and_then(|tel| tel.mime_type.as_deref())
+            .filter(|m| !m.starts_with("ext/"));
+
+        let primary_key = fm_fs::open_with_type_key_for_path(path, telemetry_mime);
+        if let Some(assoc) = self.config.open_with_defaults.get(&primary_key) {
+            return Some(assoc.clone());
+        }
+        if let Some(ext_key) = extension_fallback_key(path)
+            && ext_key != primary_key
+            && let Some(assoc) = self.config.open_with_defaults.get(&ext_key)
+        {
+            return Some(assoc.clone());
+        }
+        None
+    }
+
+    fn open_file_respecting_preference(&self, path: PathBuf) -> Task<Message> {
+        let vfs = Arc::clone(&self.vfs);
+        if let Some(assoc) = self.resolve_open_with_default_for_path(&path) {
+            Task::perform(
+                async move { vfs.open_with(&path, &assoc).await },
+                Message::OpenDefaultFinished,
+            )
+        } else {
+            Task::perform(
+                async move { vfs.open_default(&path).await },
+                Message::OpenDefaultFinished,
+            )
+        }
+    }
+
+    fn maybe_load_open_with_catalog(&mut self, window_id: window::Id) -> Task<Message> {
+        let Some(props) = self.properties_windows.get_mut(&window_id) else {
+            return Task::none();
+        };
+        if !props.supports_open_with()
+            || props.open_with_loading
+            || props.open_with_catalog.is_some()
+        {
+            return Task::none();
+        }
+        props.open_with_loading = true;
+        let path = props.entry.path.clone();
+        let mime_hint = props
+            .telemetry
+            .as_ref()
+            .and_then(|t| t.mime_type.as_deref())
+            .filter(|m| !m.starts_with("ext/"))
+            .map(ToOwned::to_owned);
+        let cancel = props.cancel.clone().unwrap_or_else(CancellationToken::new);
+
+        Task::perform(
+            async move {
+                let result =
+                    fm_fs::discover_open_with_catalog(path.clone(), mime_hint, cancel).await;
+                (window_id, path, result)
+            },
+            |(window_id, path, result)| Message::PropertiesOpenWithLoaded {
+                window_id,
+                path,
+                result,
+            },
+        )
+    }
+
+    fn queue_open_with_icons(&mut self, catalog: &OpenWithCatalog) -> Task<Message> {
+        let mut hints: Vec<String> = Vec::new();
+        let mut seen = HashSet::new();
+        let mut push_hint = |opt: Option<&str>| {
+            if let Some(h) = opt.map(str::trim).filter(|s| !s.is_empty())
+                && seen.insert(h.to_owned())
+            {
+                hints.push(h.to_owned());
+            }
+        };
+
+        if let Some(def) = &catalog.system_default {
+            push_hint(def.icon_hint.as_deref());
+        }
+        for app in &catalog.recommended {
+            push_hint(app.icon_hint.as_deref());
+        }
+        for app in &catalog.others {
+            push_hint(app.icon_hint.as_deref());
+        }
+        if let Some(assoc) = self
+            .config
+            .open_with_defaults
+            .get(catalog.type_key.as_str())
+        {
+            push_hint(assoc.icon_hint.as_deref());
+        }
+        if let Some(customs) = self
+            .config
+            .open_with_custom_apps
+            .get(catalog.type_key.as_str())
+        {
+            for assoc in customs {
+                push_hint(assoc.icon_hint.as_deref());
+            }
+        }
+
+        let mut tasks = Vec::new();
+        for hint in hints {
+            tasks.push(self.queue_single_open_with_icon(Some(&hint)));
+        }
+        Task::batch(tasks)
+    }
+
+    fn queue_single_open_with_icon(&mut self, opt_hint: Option<&str>) -> Task<Message> {
+        let Some(hint) = opt_hint.map(str::trim).filter(|s| !s.is_empty()) else {
+            return Task::none();
+        };
+        if self.open_with_icons.contains_key(hint)
+            || !self.open_with_icons_in_flight.insert(hint.to_owned())
+        {
+            return Task::none();
+        }
+        let hint_owned = hint.to_owned();
+        Task::perform(
+            tokio::task::spawn_blocking(move || {
+                let payload = fm_fs::resolve_app_icon(&hint_owned, SystemIconBucket::Small24)?;
+                let cancel = CancellationToken::new();
+                let rgba = rasterize_system_icon(payload, SystemIconBucket::Small24, &cancel)?;
+                Some((
+                    hint_owned,
+                    image::Handle::from_rgba(rgba.width, rgba.height, rgba.pixels.clone()),
+                ))
+            }),
+            {
+                let hint_fallback = hint.to_owned();
+                move |res| match res {
+                    Ok(Some((hint, handle))) => Message::OpenWithIconLoaded {
+                        hint,
+                        handle: Some(handle),
+                    },
+                    _ => Message::OpenWithIconLoaded {
+                        hint: hint_fallback.clone(),
+                        handle: None,
+                    },
+                }
+            },
+        )
+    }
+
+    fn resolve_open_with_selection(
+        &self,
+        props: &PropertiesWindowState,
+    ) -> Option<(String, OpenWithAssociation)> {
+        let type_key = open_with_props_type_key(props);
+        if let Some(sel_id) = props.open_with_selected_id.as_deref() {
+            if let Some(def) = self.config.open_with_defaults.get(&type_key)
+                && def.app_id == sel_id
+            {
+                return Some((type_key, def.clone()));
+            }
+            if let Some(customs) = self.config.open_with_custom_apps.get(&type_key)
+                && let Some(found) = customs.iter().find(|a| a.app_id == sel_id)
+            {
+                return Some((type_key, found.clone()));
+            }
+            if let Some(cat) = &props.open_with_catalog
+                && let Some(app) = cat
+                    .system_default
+                    .iter()
+                    .chain(cat.recommended.iter())
+                    .chain(cat.others.iter())
+                    .find(|a| a.id.as_str() == sel_id)
+            {
+                return Some((type_key, app.to_association()));
+            }
+        }
+        let custom_cmd = props.open_with_custom_command.trim();
+        custom_association_from_command(custom_cmd).map(|assoc| (type_key, assoc))
+    }
+
+    fn load_exec_picker_dir(&self, window_id: window::Id, dir: PathBuf) -> Task<Message> {
+        let vfs = Arc::clone(&self.vfs);
+        Task::perform(
+            async move {
+                let result = vfs.list_dir(&dir, 0, CancellationToken::new()).await;
+                (window_id, dir, result)
+            },
+            |(window_id, dir, result)| Message::OpenWithExecPickerLoaded {
+                window_id,
+                dir,
+                result,
+            },
+        )
     }
 
     fn reset_tab_cancel(&mut self, tab_id: TabId) -> CancellationToken {
@@ -4931,6 +5450,73 @@ fn longest_common_prefix<'a>(items: &[&'a str]) -> &'a str {
     &first[..prefix_len]
 }
 
+pub(crate) fn open_with_props_type_key(props: &PropertiesWindowState) -> String {
+    if let Some(cat) = &props.open_with_catalog {
+        return cat.type_key.to_string();
+    }
+    let mime_hint = props
+        .telemetry
+        .as_ref()
+        .and_then(|t| t.mime_type.as_deref())
+        .filter(|m| !m.starts_with("ext/"));
+    fm_fs::open_with_type_key_for_path(&props.entry.path, mime_hint)
+}
+
+fn extension_fallback_key(path: &std::path::Path) -> Option<String> {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .map(|e| format!(".{}", e.to_ascii_lowercase()))
+}
+
+fn custom_association_from_command(raw_cmd: &str) -> Option<OpenWithAssociation> {
+    let trimmed = raw_cmd.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let first_tok = if let Some(rest) = trimmed.strip_prefix('"') {
+        rest.split('"').next().unwrap_or(trimmed)
+    } else if let Some(rest) = trimmed.strip_prefix('\'') {
+        rest.split('\'').next().unwrap_or(trimmed)
+    } else {
+        trimmed.split_whitespace().next().unwrap_or(trimmed)
+    };
+    let display_name = std::path::Path::new(first_tok)
+        .file_stem()
+        .or_else(|| std::path::Path::new(first_tok).file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| first_tok.to_owned());
+
+    Some(OpenWithAssociation {
+        app_id: format!("custom:{trimmed}"),
+        display_name,
+        exec: trimmed.to_owned(),
+        icon_hint: (!first_tok.is_empty()).then(|| first_tok.to_owned()),
+        runs_in_terminal: false,
+    })
+}
+
+fn default_exec_picker_dir(places: &UserPlaces) -> PathBuf {
+    for candidate in ["/usr/bin", r"C:\Program Files"] {
+        let p = PathBuf::from(candidate);
+        if p.is_dir() {
+            return p;
+        }
+    }
+    places.home.clone()
+}
+
+fn quote_exec_path_if_needed(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    if s.chars().any(char::is_whitespace) {
+        format!("\"{s}\"")
+    } else {
+        s.into_owned()
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn apply_window_vibrancy(id: window::Id, theme: ThemePreset) -> Task<Message> {
     let is_dark = theme == ThemePreset::ObsidianFlow;
@@ -5114,6 +5700,22 @@ mod tests {
         assert_eq!(
             compute_dragged_sidebar_width(350.0, 355.0, 700.0, 720.0),
             440.0
+        );
+    }
+
+    #[test]
+    fn custom_open_with_command_builds_association_and_quotes_paths() {
+        let assoc = super::custom_association_from_command(r#""/opt/My App/player" --fs"#)
+            .expect("valid custom command");
+        assert_eq!(assoc.display_name, "player");
+        assert_eq!(assoc.icon_hint.as_deref(), Some("/opt/My App/player"));
+        assert_eq!(
+            super::quote_exec_path_if_needed(std::path::Path::new("/usr/bin/mpv")),
+            "/usr/bin/mpv"
+        );
+        assert_eq!(
+            super::quote_exec_path_if_needed(std::path::Path::new("/opt/My App/bin")),
+            "\"/opt/My App/bin\""
         );
     }
 }

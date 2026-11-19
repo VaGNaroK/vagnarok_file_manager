@@ -8,6 +8,8 @@ use fm_core::{SystemIconBucket, SystemIconKey, SystemIconPayload};
 mod linux;
 #[cfg(target_os = "linux")]
 use linux as platform;
+#[cfg(target_os = "linux")]
+pub(crate) use linux::lookup_mime_for_path;
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -25,4 +27,13 @@ pub fn resolve_system_icon(
     bucket: SystemIconBucket,
 ) -> Option<SystemIconPayload> {
     platform::resolve_system_icon(key, bucket)
+}
+
+/// Resolve o ícone de um aplicativo instalado a partir do `Icon=` (`.desktop`) ou caminho `.exe`/`.ico`.
+pub fn resolve_app_icon(icon_hint: &str, bucket: SystemIconBucket) -> Option<SystemIconPayload> {
+    let trimmed = icon_hint.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    platform::resolve_icon_by_hint(trimmed, bucket)
 }

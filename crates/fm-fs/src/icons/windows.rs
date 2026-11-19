@@ -91,6 +91,54 @@ pub(super) fn resolve_system_icon(
     hicon_to_rgba8(&hicon)
 }
 
+/// Extrai o ícone embutido de um executável `.exe`/`.ico` para exibição em "Abrir com...".
+pub(super) fn resolve_icon_by_hint(
+    icon_hint: &str,
+    bucket: SystemIconBucket,
+) -> Option<SystemIconPayload> {
+    let size_flag = match bucket {
+        SystemIconBucket::Small24 => SHGFI_SMALLICON,
+        SystemIconBucket::Large64 => SHGFI_LARGEICON,
+    };
+    let clean_path = strip_windows_icon_index(icon_hint);
+    if clean_path.is_empty() {
+        return None;
+    }
+    let wide = to_wide_null(OsStr::new(clean_path));
+    let mut info = SHFILEINFOW::default();
+    let ok = unsafe {
+        SHGetFileInfoW(
+            PCWSTR(wide.as_ptr()),
+            Default::default(),
+            Some(&mut info),
+            std::mem::size_of::<SHFILEINFOW>() as u32,
+            SHGFI_ICON | size_flag,
+        )
+    };
+    if ok == 0 || info.hIcon.is_invalid() {
+        return None;
+    }
+    let hicon = OwnedHicon(info.hIcon);
+    hicon_to_rgba8(&hicon)
+}
+
+fn strip_windows_icon_index(raw: &str) -> &str {
+    let trimmed = raw.trim().trim_matches('"');
+    if let Some((path_part, idx_part)) = trimmed.rsplit_once(',') {
+        let idx_clean = idx_part.trim();
+        if !idx_clean.is_empty()
+            && idx_clean
+                .strip_prefix('-')
+                .unwrap_or(idx_clean)
+                .chars()
+                .all(|c| c.is_ascii_digit())
+        {
+            return path_part.trim().trim_matches('"');
+        }
+    }
+    trimmed
+}
+
 fn to_wide_null(s: &OsStr) -> Vec<u16> {
     s.encode_wide().chain(std::iter::once(0)).collect()
 }

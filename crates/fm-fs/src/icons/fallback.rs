@@ -6,3 +6,10 @@ pub(super) fn resolve_system_icon(
 ) -> Option<SystemIconPayload> {
     None
 }
+
+pub(super) fn resolve_icon_by_hint(
+    _icon_hint: &str,
+    _bucket: SystemIconBucket,
+) -> Option<SystemIconPayload> {
+    None
+}

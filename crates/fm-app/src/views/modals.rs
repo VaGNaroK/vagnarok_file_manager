@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use fm_core::{
-    ConflictPolicy, DIR_FILTER_SENTINEL, FileEntry, Language, PermissionsMeta, Strings,
-    ThemePreset, ViewMode, WindowDecorationsMode, format_bytes, is_posix_executable,
+    ConflictPolicy, DIR_FILTER_SENTINEL, FileEntry, Language, OpenWithApp, PermissionsMeta,
+    Strings, ThemePreset, ViewMode, WindowDecorationsMode, format_bytes, is_posix_executable,
     toggle_posix_executable_mode,
 };
 use fm_theme::{
@@ -10,12 +10,12 @@ use fm_theme::{
 };
 use iced::Alignment::Center;
 use iced::widget::{
-    Space, button, column, container, mouse_area, pick_list, row, scrollable, space, text,
-    text_input,
+    Space, button, column, container, image, mouse_area, pick_list, row, scrollable, space, text,
+    text_input, tooltip,
 };
 use iced::{Background, Border, Color, Element, Length, Padding, border::Radius, window};
 use lucide_icons::iced::{
-    icon_arrow_up_from_line, icon_check, icon_check_square, icon_clipboard_copy,
+    icon_arrow_left, icon_arrow_up_from_line, icon_check, icon_check_square, icon_clipboard_copy,
     icon_clipboard_paste, icon_copy, icon_external_link, icon_eye, icon_file_plus, icon_file_text,
     icon_filter, icon_folder, icon_folder_plus, icon_hard_drive, icon_info, icon_lock, icon_pencil,
     icon_plug, icon_rotate_ccw, icon_scissors, icon_settings, icon_shield_alert, icon_shield_check,
@@ -24,9 +24,9 @@ use lucide_icons::iced::{
 
 use crate::app::{
     ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, PreferencesTab, PropertiesTab,
-    PropertiesWindowState, dialog_input_id,
+    PropertiesWindowState, dialog_input_id, open_with_props_type_key,
 };
-use crate::views::{entry_icon, sanitize_single_line};
+use crate::views::{entry_icon, sanitize_single_line, with_tooltip};
 
 pub fn dialog_modal<'a>(
     dialog: &'a ActiveDialog,
@@ -387,12 +387,13 @@ pub fn dialog_modal<'a>(
 }
 
 pub fn properties_modal_overlay<'a>(
+    app: &'a App,
     win_id: window::Id,
     props: &'a PropertiesWindowState,
     palette: ThemePalette,
     strings: Strings,
 ) -> Element<'a, Message> {
-    let card = container(properties_window_view(win_id, props, palette, strings))
+    let card = container(properties_window_view(app, win_id, props, palette, strings))
         .width(Length::Fixed(720.0))
         .height(Length::Fixed(520.0))
         .style(styles::modal_card(palette));
@@ -407,6 +408,7 @@ pub fn properties_modal_overlay<'a>(
 }
 
 pub fn properties_window_view<'a>(
+    app: &'a App,
     win_id: window::Id,
     props: &'a PropertiesWindowState,
     palette: ThemePalette,
@@ -467,16 +469,25 @@ pub fn properties_window_view<'a>(
         )
     };
 
+    let mut tabs_row = row![
+        tab_item(PropertiesTab::General, strings.prop_tab_general),
+        tab_item(PropertiesTab::Security, strings.prop_tab_security),
+        tab_item(PropertiesTab::History, strings.prop_tab_history),
+        tab_item(PropertiesTab::Metadata, strings.prop_tab_metadata),
+        tab_item(PropertiesTab::Permissions, strings.prop_tab_permissions),
+    ]
+    .spacing(4)
+    .width(Length::Fill);
+
+    if props.supports_open_with() {
+        tabs_row = tabs_row.push(tab_item(
+            PropertiesTab::OpenWith,
+            strings.prop_tab_open_with,
+        ));
+    }
+
     let tab_bar = column![
-        row![
-            tab_item(PropertiesTab::General, strings.prop_tab_general),
-            tab_item(PropertiesTab::Security, strings.prop_tab_security),
-            tab_item(PropertiesTab::History, strings.prop_tab_history),
-            tab_item(PropertiesTab::Metadata, strings.prop_tab_metadata),
-            tab_item(PropertiesTab::Permissions, strings.prop_tab_permissions),
-        ]
-        .spacing(4)
-        .width(Length::Fill),
+        tabs_row,
         container(Space::new().width(Length::Fill).height(1)).style(styles::divider_line(palette)),
     ];
 
@@ -487,6 +498,7 @@ pub fn properties_window_view<'a>(
         PropertiesTab::History => properties_history_tab(props, palette, strings),
         PropertiesTab::Metadata => properties_metadata_tab(props, palette, strings, is_dir),
         PropertiesTab::Permissions => properties_permissions_tab(win_id, props, palette, strings),
+        PropertiesTab::OpenWith => properties_open_with_tab(app, win_id, props, palette, strings),
     };
 
     // 4. Rodapé (Confirmar | Cancelar | Aplicar)
@@ -1567,6 +1579,525 @@ fn properties_permissions_tab<'a>(
     .into()
 }
 
+fn properties_open_with_tab<'a>(
+    app: &'a App,
+    win_id: window::Id,
+    props: &'a PropertiesWindowState,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    if let Some(picker) = &props.exec_picker {
+        return open_with_exec_picker_view(win_id, picker, palette, strings);
+    }
+
+    let type_key = open_with_props_type_key(props);
+    let type_label = props
+        .open_with_catalog
+        .as_ref()
+        .map(|c| c.type_label.as_str())
+        .unwrap_or(type_key.as_str());
+
+    let intro_card = container(
+        row![
+            container(
+                icon_sliders_horizontal()
+                    .size(16)
+                    .color(palette.accent_primary)
+            )
+            .padding(8)
+            .style(move |_| styles::panel_surface(
+                palette.accent_surface,
+                palette.accent_border,
+                8.0
+            )),
+            column![
+                text(strings.open_with_prompt)
+                    .size(12)
+                    .font(FONT_UI)
+                    .color(palette.text_secondary),
+                row![
+                    text(sanitize_single_line(props.entry.name.as_str()))
+                        .size(12)
+                        .font(FONT_UI_SEMIBOLD)
+                        .color(palette.text_primary),
+                    container(
+                        text(format!("{type_label} ({type_key})"))
+                            .size(11)
+                            .font(FONT_MONO)
+                            .color(palette.accent_primary),
+                    )
+                    .padding([2, 8])
+                    .style(move |_| styles::panel_surface(
+                        palette.accent_surface,
+                        palette.accent_border,
+                        9999.0
+                    )),
+                ]
+                .spacing(8)
+                .align_y(Center),
+            ]
+            .spacing(4)
+            .width(Length::Fill),
+        ]
+        .spacing(10)
+        .align_y(Center),
+    )
+    .width(Length::Fill)
+    .padding(10)
+    .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0));
+
+    let list_body: Element<'a, Message> = if props.open_with_loading {
+        container(
+            text(strings.open_with_loading)
+                .size(12)
+                .font(FONT_UI)
+                .color(palette.text_muted),
+        )
+        .width(Length::Fill)
+        .padding(20)
+        .into()
+    } else if let Some(catalog) = &props.open_with_catalog {
+        let user_override = app.config.open_with_defaults.get(&type_key);
+        let active_default: Option<OpenWithApp> = user_override
+            .map(|a| a.to_app(true, true, a.app_id.starts_with("custom:")))
+            .or_else(|| catalog.system_default.clone());
+        let active_default_id = active_default.as_ref().map(|a| a.id.as_str().to_owned());
+
+        let mut list_col = column![].spacing(4).width(Length::Fill);
+
+        if let Some(def_app) = active_default {
+            list_col = list_col.push(open_with_section_label(
+                strings.open_with_default_app,
+                palette,
+            ));
+            list_col = list_col.push(render_open_with_app_row(
+                app, win_id, props, &def_app, palette,
+            ));
+        }
+
+        let mut recommended: Vec<OpenWithApp> = catalog
+            .recommended
+            .iter()
+            .filter(|a| active_default_id.as_deref() != Some(a.id.as_str()))
+            .cloned()
+            .collect();
+
+        if let Some(customs) = app.config.open_with_custom_apps.get(&type_key) {
+            for custom in customs {
+                if active_default_id.as_deref() != Some(custom.app_id.as_str())
+                    && !recommended
+                        .iter()
+                        .any(|a| a.id.as_str() == custom.app_id.as_str())
+                {
+                    recommended.push(custom.to_app(true, false, true));
+                }
+            }
+        }
+
+        if let Some(sys_def) = &catalog.system_default
+            && active_default_id.as_deref() != Some(sys_def.id.as_str())
+            && !recommended
+                .iter()
+                .any(|a| a.id.as_str() == sys_def.id.as_str())
+        {
+            recommended.insert(0, sys_def.clone());
+        }
+
+        if !recommended.is_empty() {
+            list_col = list_col.push(open_with_section_label(
+                strings.open_with_recommended_apps,
+                palette,
+            ));
+            for item in &recommended {
+                list_col =
+                    list_col.push(render_open_with_app_row(app, win_id, props, item, palette));
+            }
+        }
+
+        let others: Vec<&OpenWithApp> = catalog
+            .others
+            .iter()
+            .filter(|a| active_default_id.as_deref() != Some(a.id.as_str()))
+            .collect();
+        if !others.is_empty() {
+            list_col = list_col.push(open_with_section_label(
+                strings.open_with_other_apps,
+                palette,
+            ));
+            for item in others {
+                list_col =
+                    list_col.push(render_open_with_app_row(app, win_id, props, item, palette));
+            }
+        }
+
+        if active_default_id.is_none() && recommended.is_empty() && catalog.others.is_empty() {
+            list_col = list_col.push(
+                container(
+                    text(strings.open_with_empty)
+                        .size(12)
+                        .font(FONT_UI)
+                        .color(palette.text_muted),
+                )
+                .padding(14),
+            );
+        }
+
+        scrollable(list_col.padding([4, 6]))
+            .height(Length::Fixed(185.0))
+            .width(Length::Fill)
+            .into()
+    } else {
+        container(
+            text(strings.open_with_empty)
+                .size(12)
+                .font(FONT_UI)
+                .color(palette.text_muted),
+        )
+        .padding(16)
+        .into()
+    };
+
+    let apps_box = container(list_body)
+        .width(Length::Fill)
+        .padding(4)
+        .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0));
+
+    let has_custom = !props.open_with_custom_command.trim().is_empty();
+    let has_selection = props.open_with_selected_id.is_some() || has_custom;
+    let has_saved_override = app.config.open_with_defaults.contains_key(&type_key)
+        || props.entry.extension.as_deref().is_some_and(|e| {
+            app.config
+                .open_with_defaults
+                .contains_key(&format!(".{}", e.to_ascii_lowercase()))
+        })
+        || props
+            .open_with_catalog
+            .as_ref()
+            .is_some_and(|c| c.system_default.is_some());
+
+    let custom_row = column![
+        text(strings.open_with_custom_hint)
+            .size(11)
+            .font(FONT_UI)
+            .color(palette.text_secondary),
+        row![
+            container(
+                text_input(
+                    strings.open_with_custom_placeholder,
+                    &props.open_with_custom_command,
+                )
+                .on_input(move |val| Message::OpenWithCustomCommandChanged(win_id, val))
+                .size(12)
+                .padding([6, 10])
+                .style(styles::search_input_style(palette)),
+            )
+            .padding([1, 4])
+            .width(Length::Fill)
+            .style(move |_| styles::panel_surface(
+                palette.surface_low,
+                palette.border,
+                8.0
+            )),
+            with_tooltip(
+                button(icon_folder().size(15).color(palette.text_primary))
+                    .padding([7, 10])
+                    .style(styles::pill_secondary_button(palette))
+                    .on_press(Message::OpenWithToggleExecPicker(win_id)),
+                strings.open_with_pick_exec,
+                tooltip::Position::Top,
+                palette,
+            ),
+        ]
+        .spacing(8)
+        .align_y(Center),
+    ]
+    .spacing(6);
+
+    let add_btn = open_with_action_btn(
+        strings.open_with_add_to_list,
+        false,
+        has_custom,
+        palette,
+        Message::OpenWithAddCustom(win_id),
+    );
+    let set_def_btn = open_with_action_btn(
+        strings.open_with_set_default,
+        true,
+        has_selection,
+        palette,
+        Message::OpenWithSetDefault(win_id),
+    );
+    let reset_btn = open_with_action_btn(
+        strings.open_with_reset_default,
+        false,
+        has_saved_override,
+        palette,
+        Message::OpenWithResetDefault(win_id),
+    );
+    let open_now_btn = open_with_action_btn(
+        strings.open_with_open_once,
+        false,
+        has_selection,
+        palette,
+        Message::OpenWithOpenNow(win_id),
+    );
+
+    let actions_row = row![
+        add_btn,
+        set_def_btn,
+        reset_btn,
+        space::horizontal(),
+        open_now_btn
+    ]
+    .spacing(8)
+    .align_y(Center);
+
+    column![intro_card, apps_box, custom_row, actions_row]
+        .spacing(10)
+        .width(Length::Fill)
+        .into()
+}
+
+fn open_with_section_label<'a>(label: &'a str, palette: ThemePalette) -> Element<'a, Message> {
+    container(
+        text(label.to_uppercase())
+            .size(10)
+            .font(FONT_MONO_BOLD)
+            .color(palette.text_muted),
+    )
+    .padding([6, 8])
+    .into()
+}
+
+fn render_open_with_app_row<'a>(
+    app: &'a App,
+    win_id: window::Id,
+    props: &'a PropertiesWindowState,
+    item: &OpenWithApp,
+    palette: ThemePalette,
+) -> Element<'a, Message> {
+    let selected = props.open_with_selected_id.as_deref() == Some(item.id.as_str());
+    let icon_widget: Element<'a, Message> = if let Some(hint) = item.icon_hint.as_deref()
+        && let Some(handle) = app.open_with_icons.get(hint)
+    {
+        image(handle.clone())
+            .width(Length::Fixed(20.0))
+            .height(Length::Fixed(20.0))
+            .into()
+    } else if item.runs_in_terminal || item.is_custom {
+        icon_terminal()
+            .size(16)
+            .color(palette.accent_primary)
+            .into()
+    } else {
+        icon_external_link()
+            .size(16)
+            .color(palette.accent_primary)
+            .into()
+    };
+
+    let mut row_content = row![
+        icon_widget,
+        text(sanitize_single_line(item.display_name.as_str()))
+            .size(12)
+            .font(if selected { FONT_UI_SEMIBOLD } else { FONT_UI })
+            .color(palette.text_primary)
+            .wrapping(text::Wrapping::None),
+        space::horizontal(),
+    ]
+    .spacing(10)
+    .align_y(Center);
+
+    if selected {
+        row_content = row_content.push(icon_check().size(13).color(palette.accent_primary));
+    }
+
+    let app_id = item.id.to_string();
+    button(row_content)
+        .width(Length::Fill)
+        .padding([7, 10])
+        .style(move |_, status| {
+            let bg = if selected {
+                palette.accent_surface
+            } else {
+                match status {
+                    button::Status::Hovered | button::Status::Pressed => palette.surface_high,
+                    _ => Color::TRANSPARENT,
+                }
+            };
+            button::Style {
+                background: Some(Background::Color(bg)),
+                text_color: palette.text_primary,
+                border: Border {
+                    color: if selected {
+                        palette.accent_border
+                    } else {
+                        Color::TRANSPARENT
+                    },
+                    width: if selected { 1.0 } else { 0.0 },
+                    radius: Radius::from(6.0),
+                },
+                ..Default::default()
+            }
+        })
+        .on_press(Message::OpenWithSelectApp(win_id, app_id))
+        .into()
+}
+
+fn open_with_action_btn<'a>(
+    label: &'a str,
+    primary: bool,
+    enabled: bool,
+    palette: ThemePalette,
+    msg: Message,
+) -> Element<'a, Message> {
+    button(text(label).size(12).font(if primary && enabled {
+        FONT_UI_SEMIBOLD
+    } else {
+        FONT_UI
+    }))
+    .padding([6, 12])
+    .style(move |theme, status| {
+        if !enabled {
+            button::Style {
+                background: Some(Background::Color(palette.surface_high)),
+                text_color: palette.text_muted,
+                border: Border {
+                    color: palette.border,
+                    width: 1.0,
+                    radius: Radius::from(9999.0),
+                },
+                ..Default::default()
+            }
+        } else if primary {
+            styles::pill_primary_button(palette)(theme, status)
+        } else {
+            styles::pill_secondary_button(palette)(theme, status)
+        }
+    })
+    .on_press_maybe(enabled.then_some(msg))
+    .into()
+}
+
+fn open_with_exec_picker_view<'a>(
+    win_id: window::Id,
+    picker: &'a crate::app::ExecPickerState,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let parent_btn = picker.current_dir.parent().map(|parent| {
+        let parent_owned = parent.to_path_buf();
+        button(
+            row![
+                icon_arrow_left().size(13),
+                text("..").size(12).font(FONT_MONO)
+            ]
+            .spacing(4)
+            .align_y(Center),
+        )
+        .padding([5, 10])
+        .style(styles::pill_secondary_button(palette))
+        .on_press(Message::OpenWithExecPickerNavigate(win_id, parent_owned))
+    });
+
+    let mut top_bar = row![].spacing(8).align_y(Center);
+    if let Some(p_btn) = parent_btn {
+        top_bar = top_bar.push(p_btn);
+    }
+    top_bar = top_bar
+        .push(
+            container(
+                text(sanitize_single_line(&picker.current_dir.to_string_lossy()))
+                    .size(11)
+                    .font(FONT_MONO)
+                    .color(palette.text_secondary)
+                    .wrapping(text::Wrapping::None),
+            )
+            .padding([5, 8])
+            .width(Length::Fill)
+            .clip(true)
+            .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 6.0)),
+        )
+        .push(
+            button(text(strings.close).size(12))
+                .padding([5, 12])
+                .style(styles::pill_secondary_button(palette))
+                .on_press(Message::OpenWithExecPickerClose(win_id)),
+        );
+
+    let list_el: Element<'a, Message> = if picker.loading {
+        container(
+            text(strings.loading)
+                .size(12)
+                .font(FONT_UI)
+                .color(palette.text_muted),
+        )
+        .padding(18)
+        .into()
+    } else if let Some(err) = &picker.error {
+        container(
+            text(err.as_str())
+                .size(12)
+                .font(FONT_UI)
+                .color(palette.status_error),
+        )
+        .padding(14)
+        .into()
+    } else {
+        let mut col = column![].spacing(2).width(Length::Fill);
+        for entry in &picker.entries {
+            let is_dir = entry.kind.is_dir_like();
+            let path = entry.path.clone();
+            let msg = if is_dir {
+                Message::OpenWithExecPickerNavigate(win_id, path)
+            } else {
+                Message::OpenWithExecPickerPick(win_id, path)
+            };
+            let ico: Element<'a, Message> = if is_dir {
+                icon_folder().size(14).color(palette.accent_primary).into()
+            } else {
+                icon_terminal()
+                    .size(14)
+                    .color(palette.text_secondary)
+                    .into()
+            };
+            col = col.push(
+                button(
+                    row![
+                        ico,
+                        text(sanitize_single_line(entry.name.as_str()))
+                            .size(12)
+                            .font(if is_dir { FONT_UI_SEMIBOLD } else { FONT_MONO })
+                            .color(palette.text_primary)
+                            .wrapping(text::Wrapping::None),
+                    ]
+                    .spacing(8)
+                    .align_y(Center),
+                )
+                .width(Length::Fill)
+                .padding([5, 8])
+                .style(styles::ghost_button(palette, 6.0))
+                .on_press(msg),
+            );
+        }
+        scrollable(col.padding(4))
+            .height(Length::Fixed(275.0))
+            .width(Length::Fill)
+            .into()
+    };
+
+    column![
+        top_bar,
+        container(list_el)
+            .width(Length::Fill)
+            .padding(4)
+            .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 10.0)),
+    ]
+    .spacing(10)
+    .width(Length::Fill)
+    .into()
+}
+
 fn prop_kv_row<'a>(
     label: &'a str,
     val: String,
@@ -2227,6 +2758,20 @@ pub fn context_menu_overlay<'a>(
                     ));
                 }
             } else {
+                if !fm_core::is_virtual_trash_path(path)
+                    && fm_fs::archive::split_archive_path(path).is_none()
+                {
+                    items = items.push(ctx_item(
+                        icon_sliders_horizontal()
+                            .size(14)
+                            .color(palette.accent_primary)
+                            .into(),
+                        strings.open_with,
+                        palette.text_primary,
+                        Message::OpenWithDialog(path.clone()),
+                        palette,
+                    ));
+                }
                 items = items.push(ctx_item(
                     icon_eye().size(14).color(palette.text_secondary).into(),
                     strings.quicklook_title,
@@ -2704,9 +3249,9 @@ pub fn context_menu_overlay<'a>(
             if *is_dir {
                 340.0 + root_extra
             } else if posix_mode.is_some() {
-                396.0
+                428.0
             } else {
-                340.0
+                372.0
             }
         }
         ContextMenuKind::SidebarPlace {

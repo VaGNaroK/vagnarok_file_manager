@@ -75,6 +75,17 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vagnarok_cfg_test_{nanos}"));
         let path = dir.join("config.toml");
 
+        let mut open_with_defaults = std::collections::BTreeMap::new();
+        open_with_defaults.insert(
+            "video/mp4".to_owned(),
+            fm_core::OpenWithAssociation {
+                app_id: "vlc.desktop".to_owned(),
+                display_name: "VLC".to_owned(),
+                exec: "/usr/bin/vlc %U".to_owned(),
+                icon_hint: Some("vlc".to_owned()),
+                runs_in_terminal: false,
+            },
+        );
         let cfg = AppConfig {
             theme: ThemePreset::ObsidianFlow,
             theme_customized: true,
@@ -92,6 +103,8 @@ mod tests {
             dirs_first: false,
             icon_theme_mode: fm_core::IconThemeMode::HostSystem,
             favorites: vec![PathBuf::from("/tmp/work")],
+            open_with_defaults,
+            open_with_custom_apps: std::collections::BTreeMap::new(),
         };
 
         save_config_to(&path, &cfg).expect("save config ok");
@@ -115,6 +128,13 @@ mod tests {
         assert!(!loaded.dirs_first);
         assert_eq!(loaded.icon_theme_mode, fm_core::IconThemeMode::HostSystem);
         assert_eq!(loaded.favorites, vec![PathBuf::from("/tmp/work")]);
+        assert_eq!(
+            loaded
+                .open_with_defaults
+                .get("video/mp4")
+                .map(|a| a.app_id.as_str()),
+            Some("vlc.desktop")
+        );
     }
 
     #[test]

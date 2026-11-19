@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
 use compact_str::CompactString;
@@ -6,8 +6,8 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    DirectoryTelemetry, EntryId, FileEntry, FolderSummary, SelectedFileTelemetry, SortSpec,
-    ViewMode,
+    DirectoryTelemetry, EntryId, FileEntry, FolderSummary, OpenWithAssociation,
+    SelectedFileTelemetry, SortSpec, ViewMode,
 };
 
 /// Identificador único de uma aba aberta.
@@ -425,6 +425,10 @@ pub struct AppConfig {
     pub icon_theme_mode: IconThemeMode,
     #[serde(default)]
     pub favorites: Vec<PathBuf>,
+    #[serde(default)]
+    pub open_with_defaults: BTreeMap<String, OpenWithAssociation>,
+    #[serde(default)]
+    pub open_with_custom_apps: BTreeMap<String, Vec<OpenWithAssociation>>,
 }
 
 impl Default for AppConfig {
@@ -446,6 +450,8 @@ impl Default for AppConfig {
             dirs_first: true,
             icon_theme_mode: IconThemeMode::Bundled,
             favorites: Vec::new(),
+            open_with_defaults: BTreeMap::new(),
+            open_with_custom_apps: BTreeMap::new(),
         }
     }
 }

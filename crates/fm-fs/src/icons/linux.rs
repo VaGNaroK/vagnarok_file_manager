@@ -1,7 +1,7 @@
 //! Descoberta de ícones do tema Freedesktop instalado no Linux (nativo e Flatpak).
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use directories::BaseDirs;
@@ -46,6 +46,59 @@ pub(super) fn resolve_system_icon(
     let target_px = bucket.target_px();
     let names = candidate_icon_names(key, &index.mime);
     lookup_icon_file(index, &names, target_px).map(SystemIconPayload::File)
+}
+
+/// Resolve ícone por nome FreeDesktop ou caminho absoluto para um aplicativo instalado.
+pub(super) fn resolve_icon_by_hint(
+    icon_hint: &str,
+    bucket: SystemIconBucket,
+) -> Option<SystemIconPayload> {
+    let candidate = Path::new(icon_hint);
+    if candidate.is_absolute() {
+        if candidate.is_file() {
+            return Some(SystemIconPayload::File(candidate.to_path_buf()));
+        }
+        if std::env::var_os("FLATPAK_ID").is_some()
+            && let Ok(rel) = candidate.strip_prefix("/")
+        {
+            let host_candidate = Path::new("/run/host").join(rel);
+            if host_candidate.is_file() {
+                return Some(SystemIconPayload::File(host_candidate));
+            }
+        }
+    }
+
+    let index = ICON_INDEX.get_or_init(build_icon_index);
+    let mut names = vec![icon_hint.to_owned()];
+    if let Some(stem) = Path::new(icon_hint)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| *s != icon_hint && !s.is_empty())
+    {
+        names.push(stem.to_owned());
+    }
+    lookup_icon_file(index, &names, bucket.target_px()).map(SystemIconPayload::File)
+}
+
+/// Resolve o MIME type conhecido pela tabela `globs2` do sistema para um arquivo.
+pub(crate) fn lookup_mime_for_path(path: &Path) -> Option<String> {
+    let index = ICON_INDEX.get_or_init(build_icon_index);
+    let file_name = path.file_name()?.to_str()?;
+    let lower = file_name.to_ascii_lowercase();
+    let mut best: Option<(u32, String)> = None;
+    for (idx, _) in lower.match_indices('.') {
+        let ext = &lower[idx + 1..];
+        if ext.is_empty() {
+            continue;
+        }
+        if let Some((weight, mime)) = index.mime.ext_to_mime.get(ext) {
+            match &best {
+                Some((best_w, _)) if *best_w >= *weight => {}
+                _ => best = Some((*weight, mime.clone())),
+            }
+        }
+    }
+    best.map(|(_, mime)| mime)
 }
 
 fn build_icon_index() -> LinuxIconIndex {
