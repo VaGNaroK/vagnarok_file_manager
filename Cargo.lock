@@ -1531,6 +1531,7 @@ dependencies = [
  "fluent-bundle",
  "fluent-syntax",
  "rayon",
+ "regex",
  "serde",
  "sys-locale",
  "thiserror 2.0.21",

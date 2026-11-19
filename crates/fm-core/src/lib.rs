@@ -2,10 +2,19 @@
 //!
 //! Este crate não depende de `iced` nem de APIs específicas de sistema operacional.
 
+pub mod bulk_rename;
 pub mod domain;
 pub mod i18n;
 pub mod state;
 pub mod vfs;
+
+pub use bulk_rename::{
+    BulkRenameEvaluation, BulkRenameExecutionPlan, BulkRenameInput, BulkRenameMediaTags,
+    BulkRenameNameError, BulkRenamePreviewRow, BulkRenameRowStatus, BulkRenameRules,
+    BulkRenameSort, BulkRenameTargetPolicy, ExtensionMode, InsertPosition, MatchScope,
+    MediaComposeMode, MediaTagKind, NumberPosition, RenameStep, TextCaseMode,
+    build_execution_plan, evaluate_bulk_rename,
+};
 
 pub use domain::{
     ClipboardTransfer, ConflictPolicy, CopyMode, DirectorySnapshot, DirectoryTelemetry, DriveInfo,
