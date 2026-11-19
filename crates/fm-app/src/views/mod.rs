@@ -1,3 +1,4 @@
+pub mod archive_modal;
 pub mod bulk_rename;
 pub mod canvas;
 pub mod footer;

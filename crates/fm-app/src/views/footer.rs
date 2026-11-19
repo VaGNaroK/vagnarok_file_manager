@@ -1,10 +1,12 @@
-use fm_core::{CopyMode, Strings, TabState, format_bytes};
-use fm_theme::{FONT_MONO, Spacing, ThemePalette, styles};
+use fm_core::{ArchiveJobKind, CopyMode, Strings, TabState, format_bytes};
+use fm_theme::{FONT_MONO, FONT_UI, Spacing, ThemePalette, styles};
 use iced::Alignment::Center;
-use iced::widget::{Space, container, row, space, text};
+use iced::widget::{Space, button, container, row, space, text};
 use iced::{Color, Element, Length, Padding};
+use lucide_icons::iced::{icon_file_archive, icon_maximize_2, icon_x};
 
 use crate::app::{App, Message};
+use crate::archive_jobs::ArchiveUiMsg;
 use crate::views::modals::format_transfer_summary;
 use crate::views::sanitize_single_line;
 
@@ -100,6 +102,75 @@ pub fn view<'a>(
     .align_y(Center);
 
     let mut right = row![].spacing(12).align_y(Center);
+    for (&job_id, runtime) in &app.archive_jobs {
+        let job = &runtime.progress;
+        let pct = if job.bytes_total > 0 {
+            ((job.bytes_done as f32 / job.bytes_total as f32).clamp(0.0, 1.0) * 100.0).round()
+                as u32
+        } else {
+            0
+        };
+        let label = match job.kind {
+            ArchiveJobKind::Compress { .. } => format!("{}: {} ({pct}%)", strings.arch_compressing, job.title),
+            ArchiveJobKind::Extract { .. } => format!("{}: {} ({pct}%)", strings.arch_extracting, job.title),
+        };
+        let pill = container(
+            row![
+                icon_file_archive().size(12).color(palette.accent_primary),
+                text(label)
+                    .size(11)
+                    .font(FONT_MONO)
+                    .color(palette.accent_primary),
+                button(
+                    row![
+                        icon_maximize_2().size(11).color(palette.text_primary),
+                        text(strings.arch_restore).size(11).font(FONT_UI).color(palette.text_primary),
+                    ]
+                    .spacing(4)
+                    .align_y(Center),
+                )
+                .padding([2, 6])
+                .style(styles::ghost_button(palette, 4.0))
+                .on_press(Message::Archive(ArchiveUiMsg::RestoreJob(job_id))),
+                button(icon_x().size(11).color(palette.status_error))
+                    .padding([2, 4])
+                    .style(styles::ghost_button(palette, 4.0))
+                    .on_press(Message::Archive(ArchiveUiMsg::CancelJob(job_id))),
+            ]
+            .spacing(6)
+            .align_y(Center),
+        )
+        .padding([2, 8])
+        .style(move |_| styles::panel_surface(palette.accent_surface, palette.accent_border, 6.0));
+        right = right.push(pill);
+    }
+    if let Some(modal) = &app.compress_modal
+        && modal.minimized
+        && modal.running_job_id.is_none()
+    {
+        let draft_pill = container(
+            row![
+                icon_file_archive().size(12).color(palette.text_secondary),
+                text(modal.full_output_filename())
+                    .size(11)
+                    .font(FONT_MONO)
+                    .color(palette.text_secondary),
+                button(text(strings.arch_restore).size(11).font(FONT_UI).color(palette.accent_primary))
+                    .padding([2, 6])
+                    .style(styles::ghost_button(palette, 4.0))
+                    .on_press(Message::Archive(ArchiveUiMsg::RestoreModal)),
+                button(icon_x().size(11).color(palette.text_muted))
+                    .padding([2, 4])
+                    .style(styles::ghost_button(palette, 4.0))
+                    .on_press(Message::Archive(ArchiveUiMsg::CloseModal)),
+            ]
+            .spacing(6)
+            .align_y(Center),
+        )
+        .padding([2, 8])
+        .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 6.0));
+        right = right.push(draft_pill);
+    }
     if let Some(job) = &app.active_transfer {
         right = right.push(
             text(format!(

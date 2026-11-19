@@ -16,10 +16,11 @@ use iced::widget::{
 use iced::{Background, Border, Color, Element, Length, Padding, border::Radius, mouse, window};
 use lucide_icons::iced::{
     icon_arrow_left, icon_arrow_up_from_line, icon_check, icon_check_square, icon_clipboard_copy,
-    icon_clipboard_paste, icon_copy, icon_external_link, icon_eye, icon_file_plus, icon_file_text,
-    icon_filter, icon_folder, icon_folder_plus, icon_hard_drive, icon_info, icon_lock, icon_pencil,
-    icon_plug, icon_rotate_ccw, icon_scissors, icon_settings, icon_shield_alert, icon_shield_check,
-    icon_sliders_horizontal, icon_star_off, icon_terminal, icon_trash_2, icon_x,
+    icon_clipboard_paste, icon_copy, icon_external_link, icon_eye, icon_file_archive,
+    icon_file_plus, icon_file_text, icon_filter, icon_folder, icon_folder_plus, icon_hard_drive,
+    icon_info, icon_lock, icon_pencil, icon_plug, icon_rotate_ccw, icon_scissors, icon_settings,
+    icon_shield_alert, icon_shield_check, icon_sliders_horizontal, icon_star_off, icon_terminal,
+    icon_trash_2, icon_x,
 };
 
 use crate::app::{
@@ -27,6 +28,7 @@ use crate::app::{
     PropertiesWindowState, dialog_input_id, effective_properties_modal_rect,
     open_with_props_type_key,
 };
+use crate::archive_jobs::ArchiveUiMsg;
 use crate::views::{
     entry_icon, modal_overlay_backdrop, modal_overlay_backdrop_at, sanitize_single_line,
     with_tooltip,
@@ -2894,6 +2896,80 @@ pub fn context_menu_overlay<'a>(
                     ));
                 }
             }
+            let tab_is_writable_local = !is_in_trash
+                && app.current_tab().is_some_and(|t| {
+                    !fm_core::is_virtual_trash_path(&t.current_path)
+                        && fm_fs::archive::split_archive_path(&t.current_path).is_none()
+                });
+            let sel_count = app
+                .current_tab()
+                .map(|t| t.selection.count())
+                .unwrap_or(0);
+            if tab_is_writable_local {
+                items = items.push(ctx_divider(palette));
+                if sel_count <= 1
+                    && !*is_dir
+                    && fm_fs::archive::detect_archive_kind(path).is_some()
+                {
+                    let folder_hint = path
+                        .file_name()
+                        .map(|n| fm_core::strip_known_archive_suffix(&n.to_string_lossy()))
+                        .unwrap_or_default();
+                    let subdir_label = if folder_hint.is_empty() {
+                        strings.arch_extract_subdir.to_owned()
+                    } else {
+                        format!("{} ({folder_hint}/)", strings.arch_extract_subdir)
+                    };
+                    items = items
+                        .push(ctx_item(
+                            icon_file_archive()
+                                .size(14)
+                                .color(palette.accent_primary)
+                                .into(),
+                            strings.arch_extract_here,
+                            palette.text_primary,
+                            Message::Archive(ArchiveUiMsg::Extract {
+                                archive_path: path.clone(),
+                                mode: fm_core::ExtractTargetMode::Here,
+                            }),
+                            palette,
+                        ))
+                        .push(ctx_item_owned(
+                            icon_folder_plus()
+                                .size(14)
+                                .color(palette.accent_primary)
+                                .into(),
+                            subdir_label,
+                            palette.text_primary,
+                            Message::Archive(ArchiveUiMsg::Extract {
+                                archive_path: path.clone(),
+                                mode: fm_core::ExtractTargetMode::Subfolder,
+                            }),
+                            palette,
+                        ));
+                }
+                items = items
+                    .push(ctx_item(
+                        icon_file_archive()
+                            .size(14)
+                            .color(palette.text_secondary)
+                            .into(),
+                        strings.arch_add_7z,
+                        palette.text_primary,
+                        Message::Archive(ArchiveUiMsg::QuickAddSevenZ),
+                        palette,
+                    ))
+                    .push(ctx_item(
+                        icon_file_archive()
+                            .size(14)
+                            .color(palette.accent_primary)
+                            .into(),
+                        strings.arch_compress_as,
+                        palette.text_primary,
+                        Message::Archive(ArchiveUiMsg::OpenCompressDialog),
+                        palette,
+                    ));
+            }
             if !is_in_trash && let Some(mode) = *posix_mode {
                 let exec_enabled = is_posix_executable(mode);
                 let next_mode = toggle_posix_executable_mode(mode);
@@ -3353,7 +3429,9 @@ pub fn context_menu_overlay<'a>(
 
     let card_body: Element<'a, Message> = if matches!(
         menu.kind,
-        ContextMenuKind::LanguageMenu | ContextMenuKind::FilterMenu
+        ContextMenuKind::LanguageMenu
+            | ContextMenuKind::FilterMenu
+            | ContextMenuKind::Entry { .. }
     ) {
         scrollable(items.width(Length::Fixed(menu_width)))
             .height(Length::Shrink)

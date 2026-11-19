@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
@@ -29,6 +29,7 @@ use iced::{
 };
 use tokio_util::sync::CancellationToken;
 
+use crate::archive_jobs::{ArchiveJobRuntime, ArchiveUiMsg, CompressModalState};
 pub use crate::bulk_rename::{
     BulkRenameExtensionKind, BulkRenameInsertKind, BulkRenameModalState, BulkRenameMsg,
     effective_bulk_rename_modal_rect,
@@ -524,6 +525,7 @@ pub enum Message {
     BulkRename(BulkRenameMsg),
     UndoLastBulkRename,
     UndoBulkRenameFinished(Result<usize, FsError>),
+    Archive(ArchiveUiMsg),
     OpenNewMenu,
     OpenFilterMenu,
     SetExtensionFilter(Option<CompactString>),
@@ -615,6 +617,8 @@ pub struct App {
     pub active_dialog: Option<ActiveDialog>,
     pub bulk_rename_modal: Option<BulkRenameModalState>,
     pub last_bulk_rename_undo: Option<Vec<(PathBuf, PathBuf)>>,
+    pub compress_modal: Option<CompressModalState>,
+    pub archive_jobs: BTreeMap<u64, ArchiveJobRuntime>,
     pub prefs_open: bool,
     pub prefs_tab: PreferencesTab,
     pub clipboard: Option<ClipboardTransfer>,
@@ -752,6 +756,8 @@ impl App {
             active_dialog: None,
             bulk_rename_modal: None,
             last_bulk_rename_undo: None,
+            compress_modal: None,
+            archive_jobs: BTreeMap::new(),
             prefs_open: false,
             prefs_tab: PreferencesTab::General,
             clipboard: None,
@@ -2156,6 +2162,7 @@ impl App {
                     self.update(Message::RefreshActiveTab)
                 }
             },
+            Message::Archive(msg) => crate::archive_jobs::handle_archive_msg(self, msg),
             Message::RequestDelete(permanent) => {
                 self.context_menu = None;
                 let paths = self.selected_paths();
@@ -3223,6 +3230,9 @@ impl App {
                     modal.dragging_modal = None;
                     modal.resizing_modal = None;
                 }
+                if let Some(modal) = &mut self.compress_modal {
+                    modal.dragging_modal = None;
+                }
                 let mut should_persist = self.resizing_grid.take().is_some();
                 if self.resizing_sidebar.take().is_some() {
                     should_persist = true;
@@ -3371,6 +3381,17 @@ impl App {
                         );
                     }
                 }
+                if let Some(modal) = &mut self.compress_modal
+                    && let Some((start, start_x, start_y)) = modal.dragging_modal
+                {
+                    modal.modal_offset = Some(crate::archive_jobs::clamp_compress_drag_pos(
+                        start,
+                        start_x,
+                        start_y,
+                        pos,
+                        self.window_size,
+                    ));
+                }
                 Task::none()
             }
             Message::MetaCacheReady(cache) => {
@@ -3411,6 +3432,9 @@ impl App {
                         && let Some(cancel) = modal.tags_cancel.take()
                     {
                         cancel.cancel();
+                    }
+                    for (_, runtime) in std::mem::take(&mut self.archive_jobs) {
+                        runtime.cancel.cancel();
                     }
                     for (_, mut props) in self.properties_windows.drain() {
                         if let Some(cancel) = props.cancel.take() {
@@ -3652,6 +3676,10 @@ impl App {
             Some(views::bulk_rename::bulk_rename_modal_overlay(
                 self, modal, palette, strings,
             ))
+        } else if let Some(modal) = self.compress_modal.as_ref().filter(|m| !m.minimized) {
+            Some(views::archive_modal::compress_modal_overlay(
+                self, modal, palette, strings,
+            ))
         } else if let Some(dialog) = &self.active_dialog {
             Some(views::modals::dialog_modal(dialog, palette, strings))
         } else if let Some(props) = self.properties_windows.get(&self.main_window_id) {
@@ -3691,6 +3719,38 @@ impl App {
         let id = self.next_request_id;
         self.next_request_id += 1;
         id
+    }
+
+    /// Recarrega todas as abas abertas cujo diretório coincide com `dir` (inclusive abas inativas).
+    pub(crate) fn reload_matching_dir_tabs(&mut self, dir: &std::path::Path) -> Task<Message> {
+        let matching_ids: Vec<TabId> = self
+            .tabs
+            .iter()
+            .filter(|tab| tab.current_path == dir)
+            .map(|tab| tab.id)
+            .collect();
+        if matching_ids.is_empty() {
+            return Task::none();
+        }
+        let mut tasks = Vec::with_capacity(matching_ids.len());
+        for tab_id in matching_ids {
+            let req = self.alloc_request_id();
+            let target_path = self.tabs.iter_mut().find(|t| t.id == tab_id).map(|tab| {
+                prepare_tab_for_load(tab, req);
+                tab.current_path.clone()
+            });
+            if let Some(path) = target_path {
+                let cancel = self.reset_tab_cancel(tab_id);
+                tasks.push(spawn_list_task(
+                    Arc::clone(&self.vfs),
+                    tab_id,
+                    path,
+                    req,
+                    cancel,
+                ));
+            }
+        }
+        Task::batch(tasks)
     }
 
     fn open_properties_request(&mut self, path: PathBuf, tab: PropertiesTab) -> Task<Message> {
@@ -5048,9 +5108,13 @@ impl App {
             key.as_ref(),
             keyboard::Key::Character(c) if c.eq_ignore_ascii_case("q") && modifiers.control()
         );
+        let compress_modal_visible = self.compress_modal.as_ref().is_some_and(|m| !m.minimized);
         if is_ctrl_q {
             if self.bulk_rename_modal.is_some() {
                 return self.update(Message::BulkRename(BulkRenameMsg::Close));
+            }
+            if compress_modal_visible {
+                return self.update(Message::Archive(ArchiveUiMsg::CloseModal));
             }
             if self.properties_windows.contains_key(&window_id) {
                 return self.update(Message::ClosePropertiesWindow(window_id));
@@ -5077,6 +5141,7 @@ impl App {
             return Task::none();
         }
         let text_input_modal_active = self.bulk_rename_modal.is_some()
+            || compress_modal_visible
             || self.active_dialog.is_some()
             || self.deep_search_open
             || self.path_editing
@@ -5088,6 +5153,8 @@ impl App {
             if matches!(key.as_ref(), keyboard::Key::Named(Named::Escape)) {
                 if self.bulk_rename_modal.is_some() {
                     return self.update(Message::BulkRename(BulkRenameMsg::Close));
+                } else if compress_modal_visible {
+                    return self.update(Message::Archive(ArchiveUiMsg::CloseModal));
                 } else if self.active_dialog.is_some() {
                     return self.update(Message::CloseDialog);
                 } else if self.prefs_open {
