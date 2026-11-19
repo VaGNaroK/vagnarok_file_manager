@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mockup GUI — Buscador de Duplicados (Vagnarok File Manager)</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    :root {
+      --background: #0b0d12;
+      --foreground: #e2e2eb;
+      --card: #191b22;
+      --border: #2b303c;
+      --muted-foreground: #8c909f;
+    }
+  </style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased m-0 p-4">
+  <div class="max-w-6xl mx-auto space-y-4">
+    <!-- Barra superior de controles da demonstração -->
+    <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-xl bg-[var(--card)] border border-[var(--border)]">
+      <div>
+        <h1 class="text-base font-semibold text-[var(--foreground)]">
+          Mockup Interativo — Buscador de Arquivos Duplicados (MD5)
+        </h1>
+        <p class="text-xs text-[var(--muted-foreground)]">
+          Teste o dropdown de nível de confirmação, botões de seleção rápida, alerta de proteção ao marcar todas as cópias e o botão Minimizar (_).
+        </p>
+      </div>
+      <div class="flex items-center gap-2 text-xs">
+        <span class="text-[var(--muted-foreground)]">Tema do App:</span>
+        <button id="btn-theme-dark" class="px-3 py-1.5 rounded-lg font-medium border transition cursor-pointer">
+          Obsidian Flow (Dark)
+        </button>
+        <button id="btn-theme-light" class="px-3 py-1.5 rounded-lg font-medium border transition cursor-pointer">
+          Aether Light (Light)
+        </button>
+      </div>
+    </div>
+
+    <!-- Janela simulada do Vagnarok File Manager -->
+    <div id="fm-window" class="rounded-2xl overflow-hidden shadow-2xl border relative transition-colors duration-200" style="min-height: 670px;">
+      <!-- CSD / Barra de Abas e Controles -->
+      <div id="fm-header" class="px-4 py-2.5 flex items-center justify-between border-b">
+        <div class="flex items-center gap-2">
+          <span class="w-3 h-3 rounded-full inline-block bg-blue-500"></span>
+          <span class="text-xs font-semibold tracking-wide">Vagnarok File Manager v0.1.0-alpha.7</span>
+          <div class="flex items-center gap-1 ml-4" id="fm-tabs">
+            <button data-tab="Downloads" class="fm-tab px-3 py-1 rounded-md text-xs font-medium border cursor-pointer">Downloads</button>
+            <button data-tab="Imagens" class="fm-tab px-3 py-1 rounded-md text-xs font-medium border cursor-pointer">Imagens</button>
+            <button id="btn-new-tab" class="px-2 py-1 rounded-md text-xs border opacity-75 hover:opacity-100 cursor-pointer" title="Nova aba (Ctrl+T)">+ Nova Aba</button>
+          </div>
+        </div>
+        <div class="text-xs font-mono opacity-70" id="fm-active-path">/home/vagnarok/Downloads</div>
+      </div>
+
+      <!-- Shell 3 painéis (Sidebar + Canvas ao fundo) -->
+      <div class="flex" style="min-height: 590px;">
+        <!-- Sidebar esquerda simulada -->
+        <aside id="fm-sidebar" class="w-52 p-3 border-r space-y-2 hidden sm:block">
+          <div class="text-xs font-semibold uppercase tracking-wider opacity-60 px-2">Acesso Rápido</div>
+          <div class="space-y-1 text-xs">
+            <div class="px-2.5 py-1.5 rounded-lg opacity-80">Pasta Pessoal</div>
+            <div class="px-2.5 py-1.5 rounded-lg opacity-80">Documentos</div>
+            <div class="px-2.5 py-1.5 rounded-lg font-medium border" id="sb-active">Downloads</div>
+            <div class="px-2.5 py-1.5 rounded-lg opacity-80">Imagens</div>
+            <div class="px-2.5 py-1.5 rounded-lg opacity-80">Lixeira</div>
+          </div>
+          <div class="pt-3 border-t border-current/10 text-xs">
+            <div class="px-2.5 py-1.5 rounded-lg opacity-60">Unidades</div>
+            <div class="px-2.5 py-1 rounded-lg opacity-80 font-mono">NVMe Root • 142 GB</div>
+          </div>
+        </aside>
+
+        <!-- Canvas de fundo (fica clicável quando a janela de Duplicados for minimizada!) -->
+        <main id="fm-canvas" class="flex-1 p-5 space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="text-xs font-mono opacity-75">Visualização em Grade • Clique em itens ou abra abas quando minimizar a janela</div>
+            <button id="btn-open-modal" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 cursor-pointer">
+              Buscar Duplicados Aqui...
+            </button>
+          </div>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3" id="bg-files-grid">
+            <div class="p-3 rounded-xl border text-xs space-y-1 cursor-pointer hover:border-blue-400">
+              <div class="font-semibold truncate">ubuntu-24.04.iso</div>
+              <div class="font-mono opacity-65">4,80 GB</div>
+            </div>
+            <div class="p-3 rounded-xl border text-xs space-y-1 cursor-pointer hover:border-blue-400">
+              <div class="font-semibold truncate">Backup/</div>
+              <div class="font-mono opacity-65">Pasta</div>
+            </div>
+            <div class="p-3 rounded-xl border text-xs space-y-1 cursor-pointer hover:border-blue-400">
+              <div class="font-semibold truncate">Fotos_Viagem/</div>
+              <div class="font-mono opacity-65">Pasta</div>
+            </div>
+            <div class="p-3 rounded-xl border text-xs space-y-1 cursor-pointer hover:border-blue-400">
+              <div class="font-semibold truncate">notas_projeto.md</div>
+              <div class="font-mono opacity-65">18,4 KB</div>
+            </div>
+          </div>
+          <div id="bg-interaction-note" class="text-xs px-3 py-2 rounded-lg border font-mono hidden">
+            Navegação livre ativa na janela principal enquanto a busca roda em segundo plano.
+          </div>
+        </main>
+      </div>
+
+      <!-- Rodapé do Vagnarok File Manager -->
+      <footer id="fm-footer" class="px-4 py-1.5 border-t flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+        <div class="flex items-center gap-2 opacity-80">
+          <span class="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
+          <span>42 itens • Nenhum selecionado</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <!-- Pílula persistente quando minimizada -->
+          <div id="footer-min-pill" class="hidden items-center gap-2 px-2.5 py-0.5 rounded-md border">
+            <span id="footer-pill-text" class="text-xs"></span>
+            <button id="btn-restore-modal" class="px-2 py-0.5 rounded text-xs font-sans font-semibold cursor-pointer hover:underline">
+              Restaurar
+            </button>
+            <button id="btn-cancel-pill" class="px-1.5 py-0.5 rounded text-xs font-bold text-red-400 hover:bg-red-500/15 cursor-pointer" title="Cancelar busca">
+              ✕
+            </button>
+          </div>
+          <span class="opacity-70">Root: 142 GB livres de 500 GB</span>
+        </div>
+      </footer>
+
+      <!-- Backdrop + Janela Flutuante de Busca de Duplicados -->
+      <div id="dup-backdrop" class="absolute inset-0 bg-black/55 flex items-center justify-center p-4 z-20">
+        <div id="dup-modal" class="w-full max-w-4xl rounded-2xl border shadow-2xl overflow-hidden flex flex-col" style="max-height: 610px;">
+          <!-- Barra de Título Arrastável -->
+          <div id="dup-modal-header" class="px-4 py-3 border-b flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2.5">
+              <span class="px-2 py-1 rounded-lg border text-xs font-mono font-bold text-blue-400 border-blue-400/40 bg-blue-500/15">
+                MD5
+              </span>
+              <div>
+                <div class="text-sm font-semibold leading-tight">Buscar Arquivos Duplicados</div>
+                <div class="text-xs font-mono opacity-70">/home/vagnarok/Downloads</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-1">
+              <button id="btn-minimize" class="px-2.5 py-1 rounded-lg text-xs font-bold border border-transparent hover:border-current/20 cursor-pointer" title="Minimizar para continuar navegando">
+                ─
+              </button>
+              <button id="btn-close-modal" class="px-2.5 py-1 rounded-lg text-xs font-bold border border-transparent hover:border-current/20 cursor-pointer" title="Fechar">
+                ✕
+              </button>
+            </div>
+          </div>
+
+          <!-- Painel de Configuração + Níveis de Confirmação -->
+          <div id="dup-controls" class="px-4 py-3 border-b space-y-2.5 text-xs">
+            <div class="flex flex-wrap items-center gap-3">
+              <div class="flex-1 min-w-[240px]">
+                <label class="block text-xs font-semibold opacity-75 mb-1">Nível de confirmação da duplicidade</label>
+                <select id="confirm-level" class="w-full px-2.5 py-1.5 rounded-lg border text-xs cursor-pointer">
+                  <option value="quick">1. Rápido — Tamanho + MD5 Parcial (Triagem)</option>
+                  <option value="standard" selected>2. Padrão — Tamanho + MD5 Parcial + MD5 Completo</option>
+                  <option value="sha256">3. Seguro — MD5 Completo + Confirmação SHA-256</option>
+                  <option value="byte">4. Máximo — MD5 Completo + Comparação Byte a Byte</option>
+                </select>
+              </div>
+              <div class="w-40">
+                <label class="block text-xs font-semibold opacity-75 mb-1">Tamanho mínimo</label>
+                <select id="min-size" class="w-full px-2.5 py-1.5 rounded-lg border text-xs cursor-pointer">
+                  <option value="1">Qualquer (&ge; 1 B)</option>
+                  <option value="1024" selected>&ge; 1 KB</option>
+                  <option value="1048576">&ge; 1 MB</option>
+                </select>
+              </div>
+              <div class="pt-5">
+                <button id="btn-rescan" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 cursor-pointer">
+                  Reescanear
+                </button>
+              </div>
+            </div>
+
+            <!-- Filtros e Aviso do Funil -->
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex flex-wrap items-center gap-3">
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked class="accent-blue-500" />
+                  <span>Incluir subpastas</span>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" class="accent-blue-500" />
+                  <span>Incluir ocultos</span>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked class="accent-blue-500" />
+                  <span>Ignorar vazios (0 B)</span>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer" title="Hardlinks apontam para o mesmo inode/arquivo físico e não liberam espaço ao apagar apenas um caminho">
+                  <input id="chk-hardlinks" type="checkbox" checked class="accent-blue-500" />
+                  <span>Ignorar hardlinks</span>
+                </label>
+              </div>
+              <span id="funnel-badge" class="px-2 py-0.5 rounded-md border text-xs font-mono"></span>
+            </div>
+
+            <!-- Barra de aviso se escolher modo Rápido -->
+            <div id="quick-warning" class="hidden px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs">
+              Modo Rápido compara apenas início, meio e fim dos arquivos. Para exclusão definitiva, recomenda-se Padrão, Seguro ou Máximo.
+            </div>
+          </div>
+
+          <!-- Ações Inteligentes de Marcação -->
+          <div class="px-4 py-2 border-b flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="opacity-70 mr-1 font-semibold">Seleção rápida:</span>
+              <button data-keep="oldest" class="keep-btn px-2.5 py-1 rounded-lg border cursor-pointer">Manter mais antigo</button>
+              <button data-keep="newest" class="keep-btn px-2.5 py-1 rounded-lg border cursor-pointer">Manter mais recente</button>
+              <button data-keep="shortest" class="keep-btn px-2.5 py-1 rounded-lg border cursor-pointer">Caminho mais curto</button>
+              <button data-keep="clear" class="keep-btn px-2.5 py-1 rounded-lg border cursor-pointer">Limpar</button>
+            </div>
+            <div id="summary-counter" class="font-mono font-semibold text-blue-400"></div>
+          </div>
+
+          <!-- Lista Virtualizada de Grupos -->
+          <div id="groups-container" class="flex-1 overflow-y-auto p-3 space-y-2.5 text-xs"></div>
+
+          <!-- Alerta caso usuário marque todas as cópias de algum grupo -->
+          <div id="all-selected-warning" class="hidden px-4 py-2 border-t border-red-500/40 bg-red-500/15 text-red-400 text-xs font-semibold">
+            Atenção: você marcou TODAS as cópias de pelo menos 1 grupo! Desmarque 1 exemplar para não perder o arquivo original.
+          </div>
+
+          <!-- Rodapé da Modal -->
+          <div class="px-4 py-3 border-t flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div id="scan-status-line" class="font-mono opacity-80"></div>
+            <div class="flex items-center gap-2">
+              <button id="btn-perm-delete" class="px-3 py-1.5 rounded-lg border text-xs font-medium text-red-400 border-red-500/40 hover:bg-red-500/10 cursor-pointer">
+                Excluir permanentemente
+              </button>
+              <button id="btn-move-trash" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 cursor-pointer">
+                Mover para Lixeira (0)
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const themes = {
+      dark: {
+        windowBg: '#0F1117',
+        surfaceLowest: '#191B22',
+        surfaceLow: '#1E1F26',
+        surfaceHigh: '#282A30',
+        border: '#2B303C',
+        textPrimary: '#E2E2EB',
+        textMuted: '#8C909F',
+        accentBg: 'rgba(59, 130, 246, 0.16)',
+        accentBorder: 'rgba(96, 165, 250, 0.45)',
+      },
+      light: {
+        windowBg: '#F8FAFC',
+        surfaceLowest: '#FFFFFF',
+        surfaceLow: '#F1F5F9',
+        surfaceHigh: '#E2E8F0',
+        border: '#CBD5E1',
+        textPrimary: '#0F172A',
+        textMuted: '#64748B',
+        accentBg: 'rgba(37, 99, 235, 0.10)',
+        accentBorder: '#93C5FD',
+      }
+    };
+
+    const initialGroups = [
+      {
+        id: 1,
+        sizeBytes: 4800 * 1024 * 1024,
+        sizeLabel: '4,80 GB',
+        md5: '9e107d..b4',
+        sha256: '2cf24d..24',
+        items: [
+          { path: '/Downloads/ubuntu-24.04-desktop.iso', mtime: 1773300000, date: '12/03/2026', selected: false, hardlink: false },
+          { path: '/Downloads/Backup/ubuntu-24.04-desktop.iso', mtime: 1779000000, date: '18/05/2026', selected: true, hardlink: false },
+          { path: '/Downloads/Temp/ubuntu (1).iso', mtime: 1780300000, date: '02/06/2026', selected: true, hardlink: false },
+        ]
+      },
+      {
+        id: 2,
+        sizeBytes: 14200 * 1024,
+        sizeLabel: '14,2 MB',
+        md5: 'a1b2c3..09',
+        sha256: '8f11ab..e1',
+        items: [
+          { path: '/Downloads/Fotos_Viagem/IMG_0042.JPG', mtime: 1775000000, date: '01/04/2026', selected: false, hardlink: false },
+          { path: '/Downloads/WhatsApp/IMG_0042.JPG', mtime: 1775260000, date: '04/04/2026', selected: true, hardlink: false },
+          { path: '/Downloads/Links/IMG_0042_link.JPG', mtime: 1775000000, date: '01/04/2026', selected: false, hardlink: true },
+        ]
+      },
+      {
+        id: 3,
+        sizeBytes: 85 * 1024 * 1024,
+        sizeLabel: '85,0 MB',
+        md5: '4f8e10..77',
+        sha256: 'cc019a..5d',
+        items: [
+          { path: '/Downloads/instalador-app.AppImage', mtime: 1771000000, date: '14/02/2026', selected: false, hardlink: false },
+          { path: '/Downloads/instalador-app (cópia).AppImage', mtime: 1776000000, date: '12/04/2026', selected: true, hardlink: false },
+        ]
+      }
+    ];
+
+    let state = {
+      theme: 'dark',
+      level: 'standard',
+      ignoreHardlinks: true,
+      minimized: false,
+      activeTab: 'Downloads',
+      groups: JSON.parse(JSON.stringify(initialGroups))
+    };
+
+    function formatBytes(bytes) {
+      if (bytes >= 1024 ** 3) return (bytes / (1024 ** 3)).toFixed(2).replace('.', ',') + ' GB';
+      if (bytes >= 1024 ** 2) return (bytes / (1024 ** 2)).toFixed(1).replace('.', ',') + ' MB';
+      return (bytes / 1024).toFixed(0) + ' KB';
+    }
+
+    function applyTheme() {
+      const t = themes[state.theme];
+      const win = document.getElementById('fm-window');
+      win.style.backgroundColor = t.windowBg;
+      win.style.color = t.textPrimary;
+      win.style.borderColor = t.border;
+
+      document.getElementById('fm-header').style.backgroundColor = t.surfaceLowest;
+      document.getElementById('fm-header').style.borderColor = t.border;
+      document.getElementById('fm-sidebar').style.backgroundColor = t.surfaceLow;
+      document.getElementById('fm-sidebar').style.borderColor = t.border;
+      document.getElementById('fm-footer').style.backgroundColor = t.surfaceLowest;
+      document.getElementById('fm-footer').style.borderColor = t.border;
+
+      document.getElementById('sb-active').style.backgroundColor = t.accentBg;
+      document.getElementById('sb-active').style.borderColor = t.accentBorder;
+
+      const modal = document.getElementById('dup-modal');
+      modal.style.backgroundColor = t.surfaceLowest;
+      modal.style.borderColor = t.border;
+      modal.querySelectorAll('select').forEach(el => {
+        el.style.backgroundColor = t.surfaceLow;
+        el.style.borderColor = t.border;
+        el.style.color = t.textPrimary;
+      });
+      modal.querySelectorAll('.keep-btn').forEach(el => {
+        el.style.backgroundColor = t.surfaceLow;
+        el.style.borderColor = t.border;
+        el.style.color = t.textPrimary;
+      });
+      document.getElementById('bg-files-grid').querySelectorAll(':scope > div').forEach(card => {
+        card.style.backgroundColor = t.surfaceLow;
+        card.style.borderColor = t.border;
+      });
+      document.querySelectorAll('.fm-tab').forEach(btn => {
+        const active = btn.dataset.tab === state.activeTab;
+        btn.style.backgroundColor = active ? t.accentBg : t.surfaceLow;
+        btn.style.borderColor = active ? t.accentBorder : t.border;
+      });
+
+      const darkBtn = document.getElementById('btn-theme-dark');
+      const lightBtn = document.getElementById('btn-theme-light');
+      darkBtn.style.backgroundColor = state.theme === 'dark' ? t.accentBg : 'transparent';
+      darkBtn.style.borderColor = state.theme === 'dark' ? t.accentBorder : t.border;
+      lightBtn.style.backgroundColor = state.theme === 'light' ? t.accentBg : 'transparent';
+      lightBtn.style.borderColor = state.theme === 'light' ? t.accentBorder : t.border;
+    }
+
+    function levelMeta(level) {
+      switch (level) {
+        case 'quick':
+          return { badge: 'Estágio 2/2: MD5 Parcial', verifyLabel: 'MD5 Parcial (aprox.)', verifyColor: 'text-amber-400 border-amber-400/40 bg-amber-500/10' };
+        case 'standard':
+          return { badge: 'Estágio 3/3: MD5 Completo', verifyLabel: 'MD5 Completo ✓', verifyColor: 'text-emerald-400 border-emerald-400/40 bg-emerald-500/10' };
+        case 'sha256':
+          return { badge: 'Estágio 4/4: MD5 + SHA-256', verifyLabel: 'MD5 + SHA-256 ✓', verifyColor: 'text-emerald-400 border-emerald-400/40 bg-emerald-500/10' };
+        default:
+          return { badge: 'Estágio 4/4: MD5 + Byte-a-Byte', verifyLabel: 'Byte-a-Byte 100% ✓', verifyColor: 'text-emerald-400 border-emerald-400/40 bg-emerald-500/10' };
+      }
+    }
+
+    function render() {
+      applyTheme();
+      const t = themes[state.theme];
+      const meta = levelMeta(state.level);
+      document.getElementById('funnel-badge').textContent = meta.badge;
+      document.getElementById('quick-warning').classList.toggle('hidden', state.level !== 'quick');
+
+      const backdrop = document.getElementById('dup-backdrop');
+      const footerPill = document.getElementById('footer-min-pill');
+      const bgNote = document.getElementById('bg-interaction-note');
+      backdrop.classList.toggle('hidden', state.minimized);
+      footerPill.classList.toggle('hidden', !state.minimized);
+      footerPill.classList.toggle('flex', state.minimized);
+      bgNote.classList.toggle('hidden', !state.minimized);
+
+      const container = document.getElementById('groups-container');
+      container.innerHTML = '';
+
+      let totalSelected = 0;
+      let totalSelectedBytes = 0;
+      let totalReclaimable = 0;
+      let anyAllSelected = false;
+
+      state.groups.forEach(group => {
+        const visibleItems = state.ignoreHardlinks
+          ? group.items.filter(it => !it.hardlink)
+          : group.items;
+
+        if (visibleItems.length < 2) return;
+
+        const reclaim = group.sizeBytes * (visibleItems.length - 1);
+        totalReclaimable += reclaim;
+
+        const selectedInGroup = visibleItems.filter(it => it.selected).length;
+        if (selectedInGroup === visibleItems.length) anyAllSelected = true;
+
+        visibleItems.forEach(it => {
+          if (it.selected) {
+            totalSelected++;
+            totalSelectedBytes += group.sizeBytes;
+          }
+        });
+
+        const oldestTime = Math.min(...visibleItems.map(i => i.mtime));
+
+        const card = document.createElement('div');
+        card.className = 'rounded-xl border overflow-hidden';
+        card.style.borderColor = t.border;
+        card.style.backgroundColor = t.surfaceLow;
+
+        const hashText = state.level === 'sha256'
+          ? `md5: ${group.md5} • sha256: ${group.sha256}`
+          : `md5: ${group.md5}`;
+
+        const hdr = document.createElement('div');
+        hdr.className = 'px-3 py-2 flex flex-wrap items-center justify-between gap-2 border-b';
+        hdr.style.borderColor = t.border;
+        hdr.style.backgroundColor = t.surfaceHigh;
+        hdr.innerHTML = `
+          <div class="flex items-center gap-2">
+            <span class="font-semibold">Grupo #${group.id}</span>
+            <span class="opacity-70">${visibleItems.length} cópias • ${group.sizeLabel} cada</span>
+            <span class="px-1.5 py-0.5 rounded border text-xs font-mono ${meta.verifyColor}">${meta.verifyLabel}</span>
+          </div>
+          <span class="font-mono opacity-75">${hashText}</span>
+        `;
+        card.appendChild(hdr);
+
+        const list = document.createElement('div');
+        list.className = 'divide-y';
+        list.style.borderColor = t.border;
+
+        visibleItems.forEach(item => {
+          const row = document.createElement('label');
+          row.className = 'px-3 py-2 flex items-center justify-between gap-3 cursor-pointer hover:bg-blue-500/5';
+          const isOldest = item.mtime === oldestTime;
+          const tags = [
+            isOldest ? '<span class="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400">Mais antigo</span>' : '',
+            item.hardlink ? '<span class="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400">Hardlink</span>' : ''
+          ].filter(Boolean).join(' ');
+
+          row.innerHTML = `
+            <div class="flex items-center gap-2.5 min-w-0">
+              <input type="checkbox" ${item.selected ? 'checked' : ''} class="accent-blue-500 shrink-0" />
+              <span class="font-mono truncate">${item.path}</span>
+              ${tags}
+            </div>
+            <div class="font-mono opacity-70 shrink-0">${group.sizeLabel} • ${item.date}</div>
+          `;
+          row.querySelector('input').addEventListener('change', (e) => {
+            item.selected = e.target.checked;
+            render();
+          });
+          list.appendChild(row);
+        });
+
+        card.appendChild(list);
+        container.appendChild(card);
+      });
+
+      document.getElementById('summary-counter').textContent =
+        `${totalSelected} marcados (${formatBytes(totalSelectedBytes)})`;
+      document.getElementById('scan-status-line').textContent =
+        `${state.groups.length} grupos encontrados • ${formatBytes(totalReclaimable)} recuperáveis`;
+      document.getElementById('footer-pill-text').textContent =
+        `Duplicados: ${meta.badge} • ${state.groups.length} grupos`;
+
+      document.getElementById('all-selected-warning').classList.toggle('hidden', !anyAllSelected);
+
+      const trashBtn = document.getElementById('btn-move-trash');
+      trashBtn.textContent = `Mover para Lixeira (${totalSelected})`;
+      trashBtn.disabled = totalSelected === 0 || anyAllSelected;
+      trashBtn.classList.toggle('opacity-50', trashBtn.disabled);
+
+      const permBtn = document.getElementById('btn-perm-delete');
+      permBtn.disabled = totalSelected === 0 || anyAllSelected || state.level === 'quick';
+      permBtn.classList.toggle('opacity-40', permBtn.disabled);
+    }
+
+    function applyKeepStrategy(strategy) {
+      state.groups.forEach(group => {
+        const visible = state.ignoreHardlinks ? group.items.filter(i => !i.hardlink) : group.items;
+        if (strategy === 'clear') {
+          group.items.forEach(i => { i.selected = false; });
+          return;
+        }
+        let keeper = visible[0];
+        visible.forEach(i => {
+          if (strategy === 'oldest' && i.mtime < keeper.mtime) keeper = i;
+          if (strategy === 'newest' && i.mtime > keeper.mtime) keeper = i;
+          if (strategy === 'shortest' && i.path.length < keeper.path.length) keeper = i;
+        });
+        visible.forEach(i => { i.selected = (i !== keeper); });
+      });
+      render();
+    }
+
+    document.getElementById('btn-theme-dark').addEventListener('click', () => { state.theme = 'dark'; render(); });
+    document.getElementById('btn-theme-light').addEventListener('click', () => { state.theme = 'light'; render(); });
+    document.getElementById('confirm-level').addEventListener('change', (e) => { state.level = e.target.value; render(); });
+    document.getElementById('chk-hardlinks').addEventListener('change', (e) => { state.ignoreHardlinks = e.target.checked; render(); });
+    document.getElementById('btn-minimize').addEventListener('click', () => { state.minimized = true; render(); });
+    document.getElementById('btn-close-modal').addEventListener('click', () => { state.minimized = true; render(); });
+    document.getElementById('btn-restore-modal').addEventListener('click', () => { state.minimized = false; render(); });
+    document.getElementById('btn-open-modal').addEventListener('click', () => { state.minimized = false; render(); });
+    document.getElementById('btn-cancel-pill').addEventListener('click', () => {
+      state.minimized = true;
+      document.getElementById('footer-min-pill').classList.add('hidden');
+    });
+    document.getElementById('btn-rescan').addEventListener('click', () => {
+      state.groups = JSON.parse(JSON.stringify(initialGroups));
+      render();
+    });
+    document.getElementById('btn-move-trash').addEventListener('click', () => {
+      state.groups = state.groups
+        .map(g => ({ ...g, items: g.items.filter(i => !i.selected) }))
+        .filter(g => g.items.length >= 2);
+      render();
+    });
+    document.querySelectorAll('.keep-btn').forEach(btn => {
+      btn.addEventListener('click', () => applyKeepStrategy(btn.dataset.keep));
+    });
+    document.querySelectorAll('.fm-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.activeTab = btn.dataset.tab;
+        document.getElementById('fm-active-path').textContent = `/home/vagnarok/${state.activeTab}`;
+        applyTheme();
+      });
+    });
+
+    render();
+  </script>
+</body>
+</html>

@@ -118,6 +118,24 @@ Embora colisões acidentais de MD5 em arquivos cotidianos sejam improváveis, o 
 - **Lixeira como ação principal**: botão primário sempre usa `VfsProvider::move_to_trash` (reversível); exclusão permanente fica em botão secundário discreto exigindo confirmação extra.
 - **Minimização em segundo plano**: durante uma busca pesada em TB de arquivos, o botão **`[_]`** recolhe o overlay (`opaque`), liberando a janela e abas do gerenciador enquanto uma pílula no rodapé exibe `"Duplicados: Fase 3/3 (68%) [Restaurar] [Cancelar]"`.
 
+### 4.5 Modelo de Design Aprovado (Referência de Implementação GUI)
+- **Protótipo interativo de referência**: [specs/mockups/duplicate_finder_mockup.html](specs/mockups/duplicate_finder_mockup.html) (aderente às paletas `ObsidianFlow` Dark e `AetherLight` Light de `fm-theme`).
+- **Diretrizes visuais obrigatórias para a implementação em `fm-app`**:
+  1. **Cabeçalho da janela modal**: badge destacado **`MD5`** (`accent_primary`), título **"Buscar Arquivos Duplicados"**, caminho raiz em fonte monoespaçada e botões de janela **`─` (Minimizar)** e **`✕` (Fechar)**.
+  2. **Painel de configuração e filtros**:
+     - Dropdown **"Nível de confirmação da duplicidade"** com os 4 níveis numerados (`1. Rápido`, `2. Padrão`, `3. Seguro`, `4. Máximo`), dropdown **"Tamanho mínimo"** (`Qualquer (≥ 1 B)`, `≥ 1 KB`, `≥ 1 MB`) e botão primário **`Reescanear`** / **`Iniciar Busca`**;
+     - Checkboxes **`Incluir subpastas`**, **`Incluir ocultos`**, **`Ignorar vazios (0 B)`** e **`Ignorar hardlinks`** com badge de estágio do funil à direita (ex.: `Estágio 3/3: MD5 Completo`);
+     - **Banner âmbar condicional** no modo **`1. Rápido`** alertando que apenas trechos iniciais/médios/finais são comparados e mantendo o botão **Excluir permanentemente** desabilitado.
+  3. **Barra de seleção rápida**: botões **`Manter mais antigo`**, **`Manter mais recente`**, **`Caminho mais curto`** e **`Limpar`** à esquerda; contador dinâmico `N marcados (X,XX GB)` em destaque à direita.
+  4. **Cards de grupo na lista virtualizada**:
+     - Cabeçalho em `surface_high`: `Grupo #N`, contagem e tamanho (`3 cópias • 4,80 GB cada`), badge semântico de verificação (`MD5 Parcial (aprox.)` em âmbar no nível Rápido; `MD5 Completo ✓`, `MD5 + SHA-256 ✓` ou `Byte-a-Byte 100% ✓` em verde nos níveis 2–4) e hash resumido à direita (`md5: ...`, incluindo `sha256: ...` no nível Seguro);
+     - Linhas de arquivo em `surface_low`: checkbox de seleção, caminho truncável em fonte monoespaçada, tags inline **`Mais antigo`** e **`Hardlink`**, além de tamanho + data alinhados à direita.
+  5. **Rodapé da modal e proteção contra perda de dados**:
+     - Banner vermelho condicional caso todas as cópias visíveis de pelo menos 1 grupo sejam marcadas (`"Atenção: você marcou TODAS as cópias de pelo menos 1 grupo! Desmarque 1 exemplar para não perder o arquivo original."`), bloqueando ambos os botões de remoção;
+     - Resumo à esquerda (`N grupos encontrados • X,XX GB recuperáveis`), ação secundária **`Excluir permanentemente`** e ação primária **`Mover para Lixeira (N)`**.
+  6. **Estado minimizado no rodapé principal (`footer.rs`)**:
+     - O botão **`─`** oculta o overlay liberando abas, sidebar e grid principal, exibindo a pílula persistente **`Duplicados: <Estágio> • <N> grupos`** com botões **`Restaurar`** e **`✕`**.
+
 ---
 
 ## 5. Arquitetura por Crate
@@ -210,7 +228,7 @@ Novos módulos em `crates/fm-telemetry/src/`:
 
 ### Fase 3 — UI Virtualizada, Minimização e Integração no Menu (`fm-app`)
 - Adicionar **"Buscar arquivos duplicados..."** no menu de contexto de fundo e pastas (`crates/fm-app/src/views/modals.rs`).
-- Criar `crates/fm-app/src/duplicate_finder.rs` e `crates/fm-app/src/views/duplicate_finder.rs` com janela arrastável, redimensionável, minimizável e lista virtualizada de grupos/cópias.
+- Criar `crates/fm-app/src/duplicate_finder.rs` e `crates/fm-app/src/views/duplicate_finder.rs` seguindo fielmente o modelo de design da **Seção 4.5** ([specs/mockups/duplicate_finder_mockup.html](specs/mockups/duplicate_finder_mockup.html)), com janela arrastável, redimensionável, minimizável e lista virtualizada de grupos/cópias.
 - Conectar remoção segura (`move_to_trash` / `delete_permanent`) com atualização instantânea dos grupos e das abas abertas no `fm-app`, além de pílula de progresso no `footer.rs`.
 
 ---
