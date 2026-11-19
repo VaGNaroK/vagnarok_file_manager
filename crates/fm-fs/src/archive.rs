@@ -1,4 +1,4 @@
-//! Provedor somente leitura para navegação virtual dentro de arquivos `.zip`, `.tar`, `.tar.gz` e `.tgz`.
+//! Provedor somente leitura para navegação virtual dentro de `.zip`, `.tar`, `.tar.gz`, `.tgz`, `.7z` e `.rar`.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
@@ -11,6 +11,7 @@ use flate2::read::GzDecoder;
 use fm_core::{
     DirectorySnapshot, EntryKind, FileEntry, FsError, PermissionsMeta, compute_entry_id,
 };
+use sevenz_rust2::{ArchiveReader as SevenZReader, Password as SevenZPassword};
 use tar::Archive;
 use tokio_util::sync::CancellationToken;
 use zip::ZipArchive;
@@ -20,6 +21,9 @@ pub enum ArchiveKind {
     Zip,
     Tar,
     TarGz,
+    SevenZ,
+    #[cfg(feature = "rar-extract")]
+    Rar,
 }
 
 impl ArchiveKind {
@@ -28,11 +32,14 @@ impl ArchiveKind {
             Self::Zip => "zip",
             Self::Tar => "tar",
             Self::TarGz => "tar.gz",
+            Self::SevenZ => "7z",
+            #[cfg(feature = "rar-extract")]
+            Self::Rar => "rar",
         }
     }
 }
 
-/// Detecta pelo nome se o arquivo é um contêiner navegável (`zip`, `tar`, `tar.gz`, `tgz`).
+/// Detecta pelo nome se o arquivo é um contêiner suportado (`zip`, `tar`, `tar.gz`, `tgz`, `7z`, `rar`).
 pub fn detect_archive_kind(path: &Path) -> Option<ArchiveKind> {
     let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
     if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
@@ -41,7 +48,13 @@ pub fn detect_archive_kind(path: &Path) -> Option<ArchiveKind> {
         Some(ArchiveKind::Zip)
     } else if name.ends_with(".tar") {
         Some(ArchiveKind::Tar)
+    } else if name.ends_with(".7z") {
+        Some(ArchiveKind::SevenZ)
     } else {
+        #[cfg(feature = "rar-extract")]
+        if name.ends_with(".rar") {
+            return Some(ArchiveKind::Rar);
+        }
         None
     }
 }
@@ -197,6 +210,43 @@ pub fn list_archive_dir(
             let mut archive = Archive::new(gz);
             scan_tar_entries(&mut archive, archive_path, cancel, &mut feed_entry)?;
         }
+        ArchiveKind::SevenZ => {
+            let file = open_shared_archive(archive_path)?;
+            let archive =
+                SevenZReader::new(BufReader::new(file), SevenZPassword::empty()).map_err(|e| {
+                    FsError::Io {
+                        path: archive_path.to_path_buf(),
+                        message: format!("arquivo 7z inválido ou protegido: {e}"),
+                    }
+                })?;
+            for (idx, entry) in archive.archive().files.iter().enumerate() {
+                if idx.is_multiple_of(256) && cancel.is_cancelled() {
+                    return Err(FsError::Cancelled);
+                }
+                feed_entry(entry.name(), entry.is_directory, entry.size, None, None);
+            }
+        }
+        #[cfg(feature = "rar-extract")]
+        ArchiveKind::Rar => {
+            let file = open_shared_archive(archive_path)?;
+            let archive = unrar_rs::RarArchive::open(file).map_err(|e| FsError::Io {
+                path: archive_path.to_path_buf(),
+                message: format!("arquivo RAR inválido ou protegido: {e}"),
+            })?;
+            for (idx, member) in archive.entries().enumerate() {
+                if idx.is_multiple_of(256) && cancel.is_cancelled() {
+                    return Err(FsError::Cancelled);
+                }
+                let size = member.unpacked_size.unwrap_or(0);
+                feed_entry(
+                    &member.raw_name,
+                    member.is_directory,
+                    size,
+                    member.mtime,
+                    None,
+                );
+            }
+        }
     }
 
     let virtual_dir_path = if inner_prefix.is_empty() {
@@ -317,6 +367,121 @@ pub fn read_archive_bytes(
             let mut archive = Archive::new(gz);
             read_tar_entry_bytes(&mut archive, archive_path, inner_path, max_bytes, cancel)
         }
+        ArchiveKind::SevenZ => {
+            let file = open_shared_archive(archive_path)?;
+            let mut reader =
+                SevenZReader::new(BufReader::new(file), SevenZPassword::empty()).map_err(|e| {
+                    FsError::Io {
+                        path: archive_path.to_path_buf(),
+                        message: format!("arquivo 7z inválido ou protegido: {e}"),
+                    }
+                })?;
+            let mut found: Option<Vec<u8>> = None;
+            reader
+                .for_each_entries(|entry, r| {
+                    if cancel.is_cancelled() {
+                        return Ok(false);
+                    }
+                    if !entry.is_directory {
+                        let (norm, _) = normalize_archive_entry_name(entry.name());
+                        if norm == inner_path {
+                            let mut out = Vec::with_capacity(max_bytes.min(64 * 1024));
+                            r.take(max_bytes as u64).read_to_end(&mut out)?;
+                            found = Some(out);
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
+                })
+                .map_err(|e| FsError::Io {
+                    path: archive_path.to_path_buf(),
+                    message: e.to_string(),
+                })?;
+            if cancel.is_cancelled() {
+                return Err(FsError::Cancelled);
+            }
+            found.ok_or_else(|| FsError::NotFound(archive_path.join(inner_path)))
+        }
+        #[cfg(feature = "rar-extract")]
+        ArchiveKind::Rar => {
+            let file = open_shared_archive(archive_path)?;
+            let mut archive = unrar_rs::RarArchive::open(file).map_err(|e| FsError::Io {
+                path: archive_path.to_path_buf(),
+                message: format!("arquivo RAR inválido ou protegido: {e}"),
+            })?;
+            let target_idx = archive.entries().enumerate().find_map(|(idx, m)| {
+                if m.is_directory {
+                    return None;
+                }
+                let (norm, _) = normalize_archive_entry_name(&m.raw_name);
+                (norm == inner_path).then_some(idx)
+            });
+            let Some(idx) = target_idx else {
+                return Err(FsError::NotFound(archive_path.join(inner_path)));
+            };
+            let mut sink = BoundedPreviewWriter {
+                buf: Vec::with_capacity(max_bytes.min(64 * 1024)),
+                max_bytes,
+                cancel,
+            };
+            let res = archive
+                .by_index(idx)
+                .map_err(|e| FsError::Io {
+                    path: archive_path.to_path_buf(),
+                    message: e.to_string(),
+                })?
+                .copy_to(&mut sink);
+            if cancel.is_cancelled() {
+                return Err(FsError::Cancelled);
+            }
+            match res {
+                Ok(_) => Ok(sink.buf),
+                Err(_) if sink.buf.len() >= max_bytes => Ok(sink.buf),
+                Err(e) => Err(FsError::Io {
+                    path: archive_path.to_path_buf(),
+                    message: e.to_string(),
+                }),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "rar-extract")]
+struct BoundedPreviewWriter<'a> {
+    buf: Vec<u8>,
+    max_bytes: usize,
+    cancel: &'a CancellationToken,
+}
+
+#[cfg(feature = "rar-extract")]
+impl std::io::Write for BoundedPreviewWriter<'_> {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        if self.cancel.is_cancelled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "cancelled",
+            ));
+        }
+        let remaining = self.max_bytes.saturating_sub(self.buf.len());
+        if remaining == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "limit_reached",
+            ));
+        }
+        let take = remaining.min(data.len());
+        self.buf.extend_from_slice(&data[..take]);
+        if self.buf.len() >= self.max_bytes {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "limit_reached",
+            ));
+        }
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
@@ -396,7 +561,7 @@ fn read_tar_entry_bytes<R: Read>(
     Err(FsError::NotFound(archive_path.join(target_inner)))
 }
 
-fn open_shared_archive(path: &Path) -> Result<File, FsError> {
+pub(crate) fn open_shared_archive(path: &Path) -> Result<File, FsError> {
     let mut opts = std::fs::OpenOptions::new();
     opts.read(true);
     #[cfg(target_os = "windows")]
