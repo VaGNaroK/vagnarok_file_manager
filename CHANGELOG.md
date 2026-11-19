@@ -28,8 +28,27 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-16 | **Alpha 4 (`v0.1.0-alpha.4`), Paridade de Atalhos & Janela no Windows** | Zoom `Ctrl + Scroll` no Windows, rastreamento de modificadores via `KeyPressed`/`KeyReleased`, alternância ao vivo de decorações da janela e `rustfmt` | 45 unitários |
 | 2026-11-16 | **Alpha 5 (`v0.1.0-alpha.5`), Barra Lateral Estilo Nemo, Discos & Propriedades** | Cards compactos no Grid, `Propriedades` no fundo do diretório (conteúdo + espaço livre), `PageUp`/`PageDown`, `Ctrl+Q`, tooltips localizados, barra lateral estilo Nemo redimensionável, montar/desmontar discos e `Abrir como root` no Linux | 51 unitários |
 | 2026-11-17 | **Alpha 6 (`v0.1.0-alpha.6`), Seleção em Caixa, Alinhamento Grid, Correções Flatpak & Ícones do Sistema** | Seleção em caixa (marquee), alinhamento do Grid esquerda→direita por padrão + alternância, preservação de scroll no menu de contexto, filtro de bind-mounts no Flatpak, divisor/scrollbar da barra lateral e ícones híbridos do sistema hospedeiro | 58 unitários |
+| 2026-11-19 | **Alpha 7 (`v0.1.0-alpha.7`), Abrir Com, Renomeação em Lote, 7z/RAR & Compactação Minimizável** | Recurso **Abrir com...** + persistência por tipo, modal de **Propriedades** arrastável/redimensionável com bloqueio de cliques ao fundo, **Renomeação em Lote** visual (EXIF/ID3/Regex/Desfazer), extração (`.zip`, `.tar`, `.tar.gz`, `.7z`, `.rar`), janela **Compactar como...** minimizável em segundo plano, lixeira virtual unificada e permissão executável rápida | 92 unitários |
 
 ---
+
+## [0.1.0-alpha.7] — 2026-11-19
+
+### Adicionado
+- **Abrir com... (`Open With`) e associação por tipo de arquivo**:
+  - Descoberta nativa de aplicativos no Linux (`.desktop` / `mimeapps.list`) e Windows, execução personalizada com seletor de executável integrado, definição de aplicativo padrão por MIME/extensão e restauração para os padrões do sistema na aba **Abrir com** de Propriedades e no menu de contexto.
+- **Renomeação em Lote (`Bulk Rename`) nativa e amigável**:
+  - Acionada via `F2` / toolbar (`sel_count > 1`) ou menu de contexto (**Renomear em Lote...**), com cartões visuais marcáveis (**Procurar e Substituir** com escopo por início/fim de nome ou palavra, **Remover**, **Inserir**, **Maiúsculas/Minúsculas**, **Numeração Sequencial**, **Mudar Extensão** e **Regex opcional** recolhido em opções avançadas).
+  - Preview em tempo real **virtualizado**, leitura assíncrona *lazy* de metadados **EXIF** e **ID3**, detecção de colisões (inclusive case-insensitive), planejador topológico em 2 fases para ciclos de troca e ação **Desfazer última renomeação**.
+- **Extração de arquivos (`.zip`, `.tar`, `.tar.gz`/`.tgz`, `.7z`, `.rar`) e Compactação ("Compactar como...")**:
+  - Opções no menu de contexto para **Extrair aqui**, **Extrair em subpasta (`<nome>/`)** — incluindo descompactação de `.rar` (RAR4/RAR5 e volumes `.partN.rar`) em 100% Rust puro com proteção anti-*Zip-Slip* — e atalho **Adicionar ao arquivo `.7z`**.
+  - Janela flutuante **Compactar como...** com dropdown de formato (`.7z`, `.zip`, `.tar`, `.tar.gz`) e dropdown de nível de compressão (`Armazenar`, `Mínimo`, `Normal`, `Máximo`), **botão Minimizar** para liberar toda a janela principal e continuar navegando ou abrindo novas abas enquanto o trabalho executa em segundo plano, com pílula persistente de progresso no rodapé (`Restaurar` / `Cancelar`) e atualização automática das abas afetadas.
+- **Permissão rápida de execução (POSIX)**:
+  - Opção **Autorizar execução como programa** diretamente no menu de contexto e na aba Permissões de Propriedades.
+
+### Melhorado e Corrigido
+- **Modais de Propriedades / Renomeação / Compactação**: overlays com `opaque(...)` bloqueando cliques na janela principal atrás, barra de título arrastável dentro da viewport, redimensionamento pelo canto em Propriedades e Renomeação em Lote, e otimização de consumo de memória com cache unificado de ícones em lote.
+- **Lixeira virtual unificada e Recycle Bin (Windows)**: unificado comportamento da `trash://` no Linux/Flatpak e corrigidas ações de restauração e exclusão na Lixeira do Windows.
 
 ## [0.1.0-alpha.6] — 2026-11-17
 
