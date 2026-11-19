@@ -1601,6 +1601,7 @@ dependencies = [
  "fm-core",
  "gix",
  "infer",
+ "kamadak-exif",
  "redb",
  "sha2",
  "tokio",

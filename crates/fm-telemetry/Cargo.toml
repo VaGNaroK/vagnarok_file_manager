@@ -11,6 +11,7 @@ directories.workspace = true
 fm-core.workspace = true
 gix.workspace = true
 infer.workspace = true
+kamadak-exif.workspace = true
 redb.workspace = true
 sha2.workspace = true
 tokio.workspace = true

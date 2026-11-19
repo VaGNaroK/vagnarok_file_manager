@@ -2,6 +2,7 @@
 
 pub mod git;
 pub mod hash;
+pub mod media_tags;
 pub mod meta_cache;
 pub mod mime;
 mod open_shared;

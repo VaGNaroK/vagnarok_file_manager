@@ -3,6 +3,7 @@
 //! Implementações específicas de SO ficam confinadas em submódulos `#[cfg(target_os = ...)]`.
 
 pub mod archive;
+pub mod bulk_rename;
 pub mod config;
 pub mod copy_engine;
 pub mod icons;
@@ -10,6 +11,9 @@ pub mod open_with;
 mod trash_bin;
 
 pub use archive::is_archive_file;
+pub use bulk_rename::{
+    BulkRenameBatchOutcome, execute_bulk_rename_plan, undo_bulk_rename_pairs,
+};
 pub use config::{config_file_path, load_config, save_config};
 pub use copy_engine::run_transfer_job;
 pub use icons::{resolve_app_icon, resolve_system_icon};
