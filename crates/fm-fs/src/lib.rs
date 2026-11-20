@@ -61,13 +61,15 @@ pub fn user_places() -> UserPlaces {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
 
     let trash = trash_bin::resolve_trash_dir();
+    let desktop = user
+        .as_ref()
+        .and_then(|u| u.desktop_dir().map(Path::to_path_buf))
+        .filter(|p| p.is_dir())
+        .or_else(|| resolve_desktop_fallback(&home));
 
     UserPlaces {
         home,
-        desktop: user
-            .as_ref()
-            .and_then(|u| u.desktop_dir().map(Path::to_path_buf))
-            .filter(|p| p.exists()),
+        desktop,
         documents: user
             .as_ref()
             .and_then(|u| u.document_dir().map(Path::to_path_buf))
@@ -98,6 +100,47 @@ pub fn user_places() -> UserPlaces {
             .filter(|p| p.exists()),
         trash,
     }
+}
+
+/// Fallback resiliente para localizar a pasta da Área de Trabalho (especialmente em sandbox Flatpak).
+fn resolve_desktop_fallback(home: &Path) -> Option<PathBuf> {
+    if let Ok(raw) = std::fs::read_to_string(home.join(".config/user-dirs.dirs"))
+        && let Some(parsed) = parse_xdg_desktop_dir(&raw, home)
+        && parsed.is_dir()
+    {
+        return Some(parsed);
+    }
+    for name in ["Desktop", "Área de Trabalho"] {
+        let candidate = home.join(name);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn parse_xdg_desktop_dir(content: &str, home: &Path) -> Option<PathBuf> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some(rest) = trimmed.strip_prefix("XDG_DESKTOP_DIR=") else {
+            continue;
+        };
+        let value = rest.trim().trim_matches('"');
+        if value.is_empty() {
+            continue;
+        }
+        if let Some(rel) = value.strip_prefix("$HOME/") {
+            return Some(home.join(rel));
+        }
+        if value == "$HOME" {
+            return Some(home.to_path_buf());
+        }
+        return Some(PathBuf::from(value));
+    }
+    None
 }
 
 /// Lista subpastas não ocultas diretamente dentro do diretório pessoal (`home`) para a barra lateral.
@@ -295,6 +338,51 @@ impl VfsProvider for LocalFs {
         .await
         .map_err(|err| FsError::Io {
             path: path.to_path_buf(),
+            message: err.to_string(),
+        })?
+    }
+
+    async fn create_shortcuts(
+        &self,
+        targets: &[PathBuf],
+        dest_dir: &Path,
+    ) -> Result<Vec<PathBuf>, FsError> {
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
+        if is_virtual_trash_path(dest_dir) || archive::is_inside_archive_path(dest_dir) {
+            return Err(FsError::Io {
+                path: dest_dir.to_path_buf(),
+                message: "destino somente leitura ou virtual não suporta atalhos".to_owned(),
+            });
+        }
+        if let Some(invalid) = targets
+            .iter()
+            .find(|p| is_virtual_trash_path(p) || archive::is_inside_archive_path(p))
+        {
+            return Err(FsError::Io {
+                path: invalid.clone(),
+                message:
+                    "não é possível criar atalho para item virtual ou dentro de arquivo compactado"
+                        .to_owned(),
+            });
+        }
+        let targets_owned = targets.to_vec();
+        let dest_owned = dest_dir.to_path_buf();
+        let err_dest = dest_dir.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            if !dest_owned.is_dir() {
+                return Err(FsError::NotFound(dest_owned));
+            }
+            let mut created = Vec::with_capacity(targets_owned.len());
+            for target in &targets_owned {
+                created.push(platform::create_shortcut(target, &dest_owned)?);
+            }
+            Ok(created)
+        })
+        .await
+        .map_err(|err| FsError::Io {
+            path: err_dest,
             message: err.to_string(),
         })?
     }
@@ -966,5 +1054,117 @@ mod tests {
         });
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn parses_xdg_desktop_dir_entries() {
+        let home = Path::new("/home/vagnarok");
+        let sample = "# comment\nXDG_DOWNLOAD_DIR=\"$HOME/Downloads\"\nXDG_DESKTOP_DIR=\"$HOME/Área de Trabalho\"\n";
+        assert_eq!(
+            parse_xdg_desktop_dir(sample, home),
+            Some(PathBuf::from("/home/vagnarok/Área de Trabalho"))
+        );
+        assert_eq!(
+            parse_xdg_desktop_dir("XDG_DESKTOP_DIR=\"/custom/desktop\"\n", home),
+            Some(PathBuf::from("/custom/desktop"))
+        );
+    }
+
+    #[test]
+    fn creates_shortcuts_for_files_folders_and_handles_collisions() {
+        block_on(async {
+            let src_dir = TestDir::new();
+            let dst_dir = TestDir::new();
+
+            let file_path = src_dir.0.join("report.pdf");
+            let folder_path = src_dir.0.join("Project.v2");
+            let archive_path = src_dir.0.join("backup.zip");
+            std::fs::write(&file_path, b"pdf-bytes").expect("write file");
+            std::fs::create_dir(&folder_path).expect("mkdir folder");
+            std::fs::write(&archive_path, b"zip-bytes").expect("write archive");
+
+            let fs = LocalFs::new();
+
+            // Rejeita entradas virtuais e dentro de arquivos compactados.
+            let inner = archive_path.join("nested.txt");
+            assert!(fs.create_shortcuts(&[inner], &dst_dir.0).await.is_err());
+            assert!(
+                fs.create_shortcuts(&[PathBuf::from(fm_core::VIRTUAL_TRASH_PATH)], &dst_dir.0)
+                    .await
+                    .is_err()
+            );
+
+            // Cria atalhos para arquivo, pasta e arquivo compactado real em outro diretório.
+            let created = fs
+                .create_shortcuts(
+                    &[file_path.clone(), folder_path.clone(), archive_path.clone()],
+                    &dst_dir.0,
+                )
+                .await
+                .expect("create shortcuts in dest_dir");
+            assert_eq!(created.len(), 3);
+            for link_path in &created {
+                assert!(
+                    std::fs::symlink_metadata(link_path).is_ok(),
+                    "atalho deveria existir em {}",
+                    link_path.display()
+                );
+            }
+
+            // Colisão: criar novamente no mesmo destino gera nome único sem sobrescrever.
+            let second = fs
+                .create_shortcuts(std::slice::from_ref(&file_path), &dst_dir.0)
+                .await
+                .expect("create colliding shortcut");
+            assert_eq!(second.len(), 1);
+            assert_ne!(second[0], created[0]);
+            assert!(std::fs::symlink_metadata(&second[0]).is_ok());
+
+            // Criar atalho na mesma pasta do alvo gera nome único distinto.
+            let here = fs
+                .create_shortcuts(std::slice::from_ref(&file_path), &src_dir.0)
+                .await
+                .expect("create shortcut here");
+            assert_eq!(here.len(), 1);
+            assert_ne!(here[0], file_path);
+
+            #[cfg(target_os = "linux")]
+            {
+                assert!(
+                    std::fs::symlink_metadata(&created[0])
+                        .expect("lstat file link")
+                        .file_type()
+                        .is_symlink()
+                );
+                assert!(
+                    std::fs::symlink_metadata(&created[1])
+                        .expect("lstat dir link")
+                        .file_type()
+                        .is_symlink()
+                );
+                // Também evita sobrescrever symlink quebrado existente no destino.
+                let broken_target = src_dir.0.join("deleted_target.txt");
+                let broken_slot = dst_dir.0.join("notes.txt");
+                std::os::unix::fs::symlink(&broken_target, &broken_slot)
+                    .expect("create broken symlink");
+                let real_notes = src_dir.0.join("notes.txt");
+                std::fs::write(&real_notes, b"real").expect("write real notes");
+                let notes_link = fs
+                    .create_shortcuts(&[real_notes], &dst_dir.0)
+                    .await
+                    .expect("avoid overwriting broken symlink");
+                assert_ne!(notes_link[0], broken_slot);
+                assert_eq!(
+                    std::fs::read_link(&broken_slot).expect("broken link untouched"),
+                    broken_target
+                );
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                assert_eq!(created[0].extension().and_then(|e| e.to_str()), Some("lnk"));
+                assert_eq!(created[1].extension().and_then(|e| e.to_str()), Some("lnk"));
+            }
+        });
     }
 }

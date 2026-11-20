@@ -457,3 +457,13 @@ dup-cancelled = Analyse des doublons annulée
 dup-stale-skipped = Certains fichiers ont changé ou disparu sur le disque et ont été ignorés par sécurité.
 dup-last-copy-protected = Suppression bloquée dans le(s) groupe(s) dont la dernière copie non cochée n'existe plus.
 dup-delete-done = Doublons supprimés en toute sécurité
+ctx-send-to = Envoyer vers...
+ctx-shortcut-desktop = Créer un raccourci sur le Bureau
+ctx-shortcut-here-unix = Créer un lien symbolique ici
+ctx-shortcut-here-win = Créer un raccourci ici
+shortcut-desktop-missing = Dossier Bureau introuvable.
+shortcuts-created =
+    { $count ->
+        [one] Raccourci créé avec succès.
+       *[other] { $count } raccourcis créés avec succès.
+    }

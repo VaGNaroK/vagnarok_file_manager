@@ -88,3 +88,10 @@ pub fn open_as_root(path: &Path) -> Result<(), FsError> {
         message: "elevação de privilégios não suportada nesta plataforma".to_owned(),
     })
 }
+
+pub fn create_shortcut(target: &Path, _dest_dir: &Path) -> Result<std::path::PathBuf, FsError> {
+    Err(FsError::Io {
+        path: target.to_path_buf(),
+        message: "criação de atalhos não suportada nesta plataforma".to_owned(),
+    })
+}

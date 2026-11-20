@@ -457,3 +457,13 @@ dup-cancelled = Duplikatsuche abgebrochen
 dup-stale-skipped = Einige Dateien wurden geändert oder gelöscht und aus Sicherheitsgründen übersprungen.
 dup-last-copy-protected = Löschen blockiert in Gruppe(n), deren letzte unmarkierte Kopie nicht mehr existiert.
 dup-delete-done = Duplikate sicher entfernt
+ctx-send-to = Senden an...
+ctx-shortcut-desktop = Verknüpfung auf dem Desktop erstellen
+ctx-shortcut-here-unix = Symbolischen Link hier erstellen
+ctx-shortcut-here-win = Verknüpfung hier erstellen
+shortcut-desktop-missing = Desktop-Ordner nicht gefunden.
+shortcuts-created =
+    { $count ->
+        [one] Verknüpfung erstellt.
+       *[other] { $count } Verknüpfungen erstellt.
+    }

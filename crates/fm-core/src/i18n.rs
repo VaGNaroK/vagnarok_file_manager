@@ -429,6 +429,11 @@ pub struct Strings {
     pub dup_stale_skipped: &'static str,
     pub dup_last_copy_protected: &'static str,
     pub dup_delete_done: &'static str,
+    pub ctx_send_to: &'static str,
+    pub ctx_shortcut_desktop: &'static str,
+    pub ctx_shortcut_here_unix: &'static str,
+    pub ctx_shortcut_here_win: &'static str,
+    pub shortcut_desktop_missing: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -510,6 +515,13 @@ impl Strings {
         let mut args = FluentArgs::new();
         args.set("count", count as i64);
         self.format_msg("files-count", Some(&args))
+    }
+
+    /// Formata mensagem de sucesso na criação de 1 ou mais atalhos usando regras plurais CLDR.
+    pub fn format_shortcuts_created(self, count: usize) -> String {
+        let mut args = FluentArgs::new();
+        args.set("count", count as i64);
+        self.format_msg("shortcuts-created", Some(&args))
     }
 
     /// Formata resumo de seleção múltipla no rodapé (`"3 itens (12.4 KB)"`).
@@ -1020,6 +1032,11 @@ impl Strings {
         let dup_stale_skipped = resolve("dup-stale-skipped");
         let dup_last_copy_protected = resolve("dup-last-copy-protected");
         let dup_delete_done = resolve("dup-delete-done");
+        let ctx_send_to = resolve("ctx-send-to");
+        let ctx_shortcut_desktop = resolve("ctx-shortcut-desktop");
+        let ctx_shortcut_here_unix = resolve("ctx-shortcut-here-unix");
+        let ctx_shortcut_here_win = resolve("ctx-shortcut-here-win");
+        let shortcut_desktop_missing = resolve("shortcut-desktop-missing");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -1418,6 +1435,11 @@ impl Strings {
             dup_stale_skipped,
             dup_last_copy_protected,
             dup_delete_done,
+            ctx_send_to,
+            ctx_shortcut_desktop,
+            ctx_shortcut_here_unix,
+            ctx_shortcut_here_win,
+            shortcut_desktop_missing,
         }
     }
 }
@@ -1590,6 +1612,8 @@ mod tests {
             assert_ne!(strings.format_items_count(5), "");
             assert_ne!(strings.format_folders_count(2), "");
             assert_ne!(strings.format_files_count(3), "");
+            assert_ne!(strings.format_shortcuts_created(1), "");
+            assert_ne!(strings.format_shortcuts_created(3), "");
             assert_ne!(strings.format_selected_multi(2, "4.0 KB"), "");
             assert_ne!(strings.format_exact_bytes(1024), "");
             assert_ne!(strings.format_age(SystemTime::now()), "");

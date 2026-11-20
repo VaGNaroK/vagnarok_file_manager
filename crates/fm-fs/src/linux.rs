@@ -351,6 +351,71 @@ pub fn apply_entry_properties(path: &Path, patch: &PropertyPatch) -> Result<(), 
     Ok(())
 }
 
+/// Cria um link simbólico POSIX apontando para `target` dentro de `dest_dir` sem sobrescrever entradas existentes.
+pub fn create_shortcut(target: &Path, dest_dir: &Path) -> Result<PathBuf, FsError> {
+    let link_meta = std::fs::symlink_metadata(target).map_err(|e| map_io_err(target, e))?;
+    let is_dir = if link_meta.file_type().is_symlink() {
+        std::fs::metadata(target)
+            .map(|m| m.is_dir())
+            .unwrap_or(false)
+    } else {
+        link_meta.is_dir()
+    };
+
+    let abs_target = resolve_absolute_target(target);
+    let same_dir = target
+        .parent()
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .zip(std::fs::canonicalize(dest_dir).ok())
+        .is_some_and(|(a, b)| a == b);
+
+    for attempt in 0..10_000u32 {
+        let candidate_name =
+            fm_core::suggest_shortcut_name(&abs_target, is_dir, false, attempt, same_dir);
+        let candidate = dest_dir.join(&candidate_name);
+        if std::fs::symlink_metadata(&candidate).is_ok() {
+            continue;
+        }
+        match std::os::unix::fs::symlink(&abs_target, &candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(map_io_err(&candidate, err)),
+        }
+    }
+
+    Err(FsError::Io {
+        path: dest_dir.to_path_buf(),
+        message: "não foi possível encontrar um nome livre para o link simbólico".to_owned(),
+    })
+}
+
+/// Resolve caminho absoluto preservando o componente final (não segue symlink do próprio alvo).
+fn resolve_absolute_target(target: &Path) -> PathBuf {
+    if let (Some(parent), Some(file_name)) = (target.parent(), target.file_name()) {
+        let abs_parent = if parent.as_os_str().is_empty() {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        } else {
+            std::fs::canonicalize(parent).unwrap_or_else(|_| {
+                if parent.is_absolute() {
+                    parent.to_path_buf()
+                } else {
+                    std::env::current_dir()
+                        .map(|cwd| cwd.join(parent))
+                        .unwrap_or_else(|_| parent.to_path_buf())
+                }
+            })
+        };
+        return abs_parent.join(file_name);
+    }
+    if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(target))
+            .unwrap_or_else(|_| target.to_path_buf())
+    }
+}
+
 /// Tenta transferência kernel-to-kernel via `copy_file_range(2)` no Linux.
 /// Retorna `None` quando o par de descritores/filesystem exige fallback para read/write em userspace.
 pub fn try_copy_file_range_chunk(

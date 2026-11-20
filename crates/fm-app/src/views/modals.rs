@@ -11,16 +11,16 @@ use fm_theme::{
 use iced::Alignment::Center;
 use iced::widget::{
     Space, button, column, container, image, mouse_area, opaque, pick_list, row, scrollable, space,
-    text, text_input, tooltip,
+    stack, text, text_input, tooltip,
 };
 use iced::{Background, Border, Color, Element, Length, Padding, border::Radius, mouse, window};
 use lucide_icons::iced::{
-    icon_arrow_left, icon_arrow_up_from_line, icon_check, icon_check_square, icon_clipboard_copy,
-    icon_clipboard_paste, icon_copy, icon_external_link, icon_eye, icon_file_archive,
-    icon_file_plus, icon_file_text, icon_filter, icon_folder, icon_folder_plus, icon_hard_drive,
-    icon_info, icon_lock, icon_pencil, icon_plug, icon_rotate_ccw, icon_scissors, icon_search,
-    icon_settings, icon_shield_alert, icon_shield_check, icon_sliders_horizontal, icon_star_off,
-    icon_terminal, icon_trash_2, icon_x,
+    icon_arrow_left, icon_arrow_up_from_line, icon_check, icon_check_square, icon_chevron_right,
+    icon_clipboard_copy, icon_clipboard_paste, icon_copy, icon_external_link, icon_eye,
+    icon_file_archive, icon_file_plus, icon_file_text, icon_filter, icon_folder, icon_folder_plus,
+    icon_hard_drive, icon_info, icon_link_2, icon_lock, icon_monitor, icon_pencil, icon_plug,
+    icon_rotate_ccw, icon_scissors, icon_search, icon_send, icon_settings, icon_shield_alert,
+    icon_shield_check, icon_sliders_horizontal, icon_star_off, icon_terminal, icon_trash_2, icon_x,
 };
 
 use crate::app::{
@@ -2735,6 +2735,7 @@ pub fn context_menu_overlay<'a>(
     let show_open_as_root = fm_fs::supports_open_as_root();
 
     let mut items = column![].spacing(2).width(Length::Fill);
+    let mut send_to_submenu: Option<(f32, std::path::PathBuf, std::path::PathBuf)> = None;
 
     match &menu.kind {
         ContextMenuKind::NewMenu => {
@@ -2766,7 +2767,12 @@ pub fn context_menu_overlay<'a>(
             is_dir,
             posix_mode,
         } => {
-            items = items.push(ctx_item(
+            let close_sub_on_hover = menu.send_to_open;
+            let mut offset_y = 8.0_f32;
+            const ROW_STEP: f32 = 30.0;
+            const DIVIDER_STEP: f32 = 9.0;
+
+            items = items.push(ctx_entry_item(
                 icon_external_link()
                     .size(14)
                     .color(palette.accent_primary)
@@ -2775,20 +2781,25 @@ pub fn context_menu_overlay<'a>(
                 palette.text_primary,
                 Message::ActivateEntry(*index),
                 palette,
+                close_sub_on_hover,
             ));
+            offset_y += ROW_STEP;
+
             if *is_dir {
-                items = items.push(ctx_item(
+                items = items.push(ctx_entry_item(
                     icon_folder().size(14).color(palette.accent_primary).into(),
                     strings.open_in_new_tab,
                     palette.text_primary,
                     Message::OpenInNewTab(path.clone()),
                     palette,
+                    close_sub_on_hover,
                 ));
+                offset_y += ROW_STEP;
                 if show_open_as_root
                     && !fm_core::is_virtual_trash_path(path)
                     && !fm_fs::archive::is_inside_archive_path(path)
                 {
-                    items = items.push(ctx_item(
+                    items = items.push(ctx_entry_item(
                         icon_shield_alert()
                             .size(14)
                             .color(palette.status_warning)
@@ -2797,13 +2808,15 @@ pub fn context_menu_overlay<'a>(
                         palette.text_primary,
                         Message::OpenAsRoot(path.clone()),
                         palette,
+                        close_sub_on_hover,
                     ));
+                    offset_y += ROW_STEP;
                 }
             } else {
                 if !fm_core::is_virtual_trash_path(path)
                     && !fm_fs::archive::is_inside_archive_path(path)
                 {
-                    items = items.push(ctx_item(
+                    items = items.push(ctx_entry_item(
                         icon_sliders_horizontal()
                             .size(14)
                             .color(palette.accent_primary)
@@ -2812,15 +2825,19 @@ pub fn context_menu_overlay<'a>(
                         palette.text_primary,
                         Message::OpenWithDialog(path.clone()),
                         palette,
+                        close_sub_on_hover,
                     ));
+                    offset_y += ROW_STEP;
                 }
-                items = items.push(ctx_item(
+                items = items.push(ctx_entry_item(
                     icon_eye().size(14).color(palette.text_secondary).into(),
                     strings.quicklook_title,
                     palette.text_primary,
                     Message::ToggleQuickLook,
                     palette,
+                    close_sub_on_hover,
                 ));
+                offset_y += ROW_STEP;
             }
             let is_in_trash = app.is_current_tab_trash()
                 || app
@@ -2829,7 +2846,7 @@ pub fn context_menu_overlay<'a>(
                     .as_ref()
                     .is_some_and(|tr| path.starts_with(tr));
             if is_in_trash {
-                items = items.push(ctx_item(
+                items = items.push(ctx_entry_item(
                     icon_rotate_ccw()
                         .size(14)
                         .color(palette.accent_primary)
@@ -2838,17 +2855,21 @@ pub fn context_menu_overlay<'a>(
                     palette.accent_primary,
                     Message::RestoreFromTrash,
                     palette,
+                    close_sub_on_hover,
                 ));
+                offset_y += ROW_STEP;
             }
-            items = items.push(ctx_divider(palette)).push(ctx_item(
+            items = items.push(ctx_divider(palette)).push(ctx_entry_item(
                 icon_copy().size(14).color(palette.text_secondary).into(),
                 strings.copy,
                 palette.text_primary,
                 Message::CopySelected,
                 palette,
+                close_sub_on_hover,
             ));
+            offset_y += DIVIDER_STEP + ROW_STEP;
             if !is_in_trash {
-                items = items.push(ctx_item(
+                items = items.push(ctx_entry_item(
                     icon_scissors()
                         .size(14)
                         .color(palette.text_secondary)
@@ -2857,9 +2878,11 @@ pub fn context_menu_overlay<'a>(
                     palette.text_primary,
                     Message::CutSelected,
                     palette,
+                    close_sub_on_hover,
                 ));
+                offset_y += ROW_STEP;
                 if has_clipboard {
-                    items = items.push(ctx_item(
+                    items = items.push(ctx_entry_item(
                         icon_clipboard_paste()
                             .size(14)
                             .color(palette.accent_primary)
@@ -2868,10 +2891,12 @@ pub fn context_menu_overlay<'a>(
                         palette.text_primary,
                         Message::PasteClipboard,
                         palette,
+                        close_sub_on_hover,
                     ));
+                    offset_y += ROW_STEP;
                 }
             }
-            items = items.push(ctx_item(
+            items = items.push(ctx_entry_item(
                 icon_clipboard_copy()
                     .size(14)
                     .color(palette.text_secondary)
@@ -2880,23 +2905,49 @@ pub fn context_menu_overlay<'a>(
                 palette.text_primary,
                 Message::CopyPath(path.clone()),
                 palette,
+                close_sub_on_hover,
             ));
+            offset_y += ROW_STEP;
             if !is_in_trash {
-                items = items.push(ctx_item(
+                items = items.push(ctx_entry_item(
                     icon_pencil().size(14).color(palette.text_secondary).into(),
                     strings.rename,
                     palette.text_primary,
                     Message::OpenRenameDialog,
                     palette,
+                    close_sub_on_hover,
                 ));
+                offset_y += ROW_STEP;
                 if !fm_fs::archive::is_inside_archive_path(path) {
-                    items = items.push(ctx_item(
+                    items = items.push(ctx_entry_item(
                         icon_pencil().size(14).color(palette.accent_primary).into(),
                         strings.br_menu_item,
                         palette.text_primary,
                         Message::OpenBulkRenameDialog,
                         palette,
+                        close_sub_on_hover,
                     ));
+                    offset_y += ROW_STEP;
+                }
+            }
+            let can_send_to_shortcut = !is_in_trash
+                && !fm_core::is_virtual_trash_path(path)
+                && !fm_fs::archive::is_inside_archive_path(path);
+            if can_send_to_shortcut {
+                let trigger_y = offset_y;
+                items = items.push(ctx_submenu_trigger(
+                    icon_send().size(14).color(palette.accent_primary).into(),
+                    strings.ctx_send_to,
+                    menu.send_to_open,
+                    palette,
+                ));
+                if menu.send_to_open {
+                    let here_dir = path
+                        .parent()
+                        .map(Path::to_path_buf)
+                        .or_else(|| app.current_tab().map(|t| t.current_path.clone()))
+                        .unwrap_or_default();
+                    send_to_submenu = Some((trigger_y, path.clone(), here_dir));
                 }
             }
             let tab_is_writable_local = !is_in_trash
@@ -2919,7 +2970,7 @@ pub fn context_menu_overlay<'a>(
                         format!("{} ({folder_hint}/)", strings.arch_extract_subdir)
                     };
                     items = items
-                        .push(ctx_item(
+                        .push(ctx_entry_item(
                             icon_file_archive()
                                 .size(14)
                                 .color(palette.accent_primary)
@@ -2931,8 +2982,9 @@ pub fn context_menu_overlay<'a>(
                                 mode: fm_core::ExtractTargetMode::Here,
                             }),
                             palette,
+                            close_sub_on_hover,
                         ))
-                        .push(ctx_item_owned(
+                        .push(ctx_entry_item_owned(
                             icon_folder_plus()
                                 .size(14)
                                 .color(palette.accent_primary)
@@ -2944,10 +2996,11 @@ pub fn context_menu_overlay<'a>(
                                 mode: fm_core::ExtractTargetMode::Subfolder,
                             }),
                             palette,
+                            close_sub_on_hover,
                         ));
                 }
                 items = items
-                    .push(ctx_item(
+                    .push(ctx_entry_item(
                         icon_file_archive()
                             .size(14)
                             .color(palette.text_secondary)
@@ -2956,8 +3009,9 @@ pub fn context_menu_overlay<'a>(
                         palette.text_primary,
                         Message::Archive(ArchiveUiMsg::QuickAddSevenZ),
                         palette,
+                        close_sub_on_hover,
                     ))
-                    .push(ctx_item(
+                    .push(ctx_entry_item(
                         icon_file_archive()
                             .size(14)
                             .color(palette.accent_primary)
@@ -2966,14 +3020,16 @@ pub fn context_menu_overlay<'a>(
                         palette.text_primary,
                         Message::Archive(ArchiveUiMsg::OpenCompressDialog),
                         palette,
+                        close_sub_on_hover,
                     ));
                 if *is_dir {
-                    items = items.push(ctx_item(
+                    items = items.push(ctx_entry_item(
                         icon_search().size(14).color(palette.accent_primary).into(),
                         strings.dup_menu_action,
                         palette.text_primary,
                         Message::DuplicateFinder(DuplicateFinderMsg::OpenForPath(path.clone())),
                         palette,
+                        close_sub_on_hover,
                     ));
                 }
             }
@@ -2991,7 +3047,7 @@ pub fn context_menu_overlay<'a>(
                         )
                         .padding([2, 10]),
                     )
-                    .push(ctx_item(
+                    .push(ctx_entry_item(
                         perm_checkbox_box(exec_enabled, palette),
                         strings.perm_allow_exec,
                         palette.text_primary,
@@ -3000,18 +3056,20 @@ pub fn context_menu_overlay<'a>(
                             next_mode,
                         },
                         palette,
+                        close_sub_on_hover,
                     ));
             }
             items = items
-                .push(ctx_item(
+                .push(ctx_entry_item(
                     icon_info().size(14).color(palette.text_secondary).into(),
                     strings.properties,
                     palette.text_primary,
                     Message::OpenProperties(path.clone()),
                     palette,
+                    close_sub_on_hover,
                 ))
                 .push(ctx_divider(palette))
-                .push(ctx_item(
+                .push(ctx_entry_item(
                     icon_trash_2().size(14).color(palette.status_error).into(),
                     if is_in_trash {
                         strings.delete_permanent
@@ -3021,6 +3079,7 @@ pub fn context_menu_overlay<'a>(
                     palette.status_error,
                     Message::RequestDelete(is_in_trash),
                     palette,
+                    close_sub_on_hover,
                 ));
         }
         ContextMenuKind::SidebarPlace { path, is_favorite } => {
@@ -3407,7 +3466,7 @@ pub fn context_menu_overlay<'a>(
             if app.is_current_tab_trash() {
                 192.0
             } else if *is_dir {
-                416.0 + root_extra
+                446.0 + root_extra
             } else {
                 let archive_extra = if fm_fs::archive::detect_archive_kind(path).is_some() {
                     60.0
@@ -3415,7 +3474,7 @@ pub fn context_menu_overlay<'a>(
                     0.0
                 };
                 let perm_extra = if posix_mode.is_some() { 59.0 } else { 0.0 };
-                416.0 + archive_extra + perm_extra
+                446.0 + archive_extra + perm_extra
             }
         }
         ContextMenuKind::SidebarPlace {
@@ -3454,11 +3513,12 @@ pub fn context_menu_overlay<'a>(
         ContextMenuKind::PreferencesMenu => 84.0,
     };
 
+    let main_card_w = menu_width + 16.0;
     let max_card_h = (app.window_size.height - 16.0).max(200.0);
     let rendered_h = est_height.min(max_card_h);
     let (x, y) = compute_context_menu_origin(
         menu.position,
-        menu_width + 18.0,
+        main_card_w + 2.0,
         rendered_h,
         app.window_size,
     );
@@ -3480,21 +3540,121 @@ pub fn context_menu_overlay<'a>(
             .style(styles::modal_card(palette)),
     );
 
-    let backdrop = mouse_area(
-        container(card)
+    let backdrop_catcher = mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+        .on_press(Message::CloseContextMenu)
+        .on_right_press(Message::CloseContextMenu);
+
+    let main_layer = container(card)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(Padding {
+            top: y,
+            right: 0.0,
+            bottom: 0.0,
+            left: x,
+        });
+
+    if let Some((trigger_offset_y, fallback_target, here_dir)) = send_to_submenu {
+        let sub_inner_w = 276.0_f32;
+        let sub_card_w = sub_inner_w + 16.0;
+        let sub_card_h = 84.0_f32;
+        let (sub_x, sub_y) = compute_submenu_origin(
+            x,
+            y,
+            main_card_w,
+            trigger_offset_y,
+            sub_card_w,
+            sub_card_h,
+            app.window_size,
+        );
+
+        let here_label = if cfg!(target_os = "windows") {
+            strings.ctx_shortcut_here_win
+        } else {
+            strings.ctx_shortcut_here_unix
+        };
+
+        let sub_items = column![
+            ctx_item(
+                icon_monitor().size(14).color(palette.accent_primary).into(),
+                strings.ctx_shortcut_desktop,
+                palette.text_primary,
+                Message::CreateShortcutInDir {
+                    dest_dir: None,
+                    fallback_target: fallback_target.clone(),
+                },
+                palette,
+            ),
+            ctx_item(
+                icon_link_2().size(14).color(palette.text_secondary).into(),
+                here_label,
+                palette.text_primary,
+                Message::CreateShortcutInDir {
+                    dest_dir: Some(here_dir),
+                    fallback_target,
+                },
+                palette,
+            ),
+        ]
+        .spacing(2)
+        .width(Length::Fixed(sub_inner_w));
+
+        let sub_card = opaque(
+            mouse_area(
+                container(sub_items)
+                    .padding(8)
+                    .style(styles::modal_card(palette)),
+            )
+            .on_enter(Message::ContextMenuSetSendToOpen(true)),
+        );
+
+        let sub_layer = container(sub_card)
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(Padding {
-                top: y,
+                top: sub_y,
                 right: 0.0,
                 bottom: 0.0,
-                left: x,
-            }),
-    )
-    .on_press(Message::CloseContextMenu)
-    .on_right_press(Message::CloseContextMenu);
+                left: sub_x,
+            });
 
-    backdrop.into()
+        stack![backdrop_catcher, main_layer, sub_layer].into()
+    } else {
+        stack![backdrop_catcher, main_layer].into()
+    }
+}
+
+/// Posiciona o submenu lateral em cascata ("Enviar para... ▸") alinhado à linha de gatilho:
+/// - Abre à direita do menu principal (com sobreposição de 2px para evitar vão morto ao mover o mouse);
+/// - Inverte automaticamente para a esquerda se não houver espaço até a borda direita da janela;
+/// - Limita a coordenada vertical dentro da área útil da janela.
+fn compute_submenu_origin(
+    main_x: f32,
+    main_y: f32,
+    main_w: f32,
+    trigger_offset_y: f32,
+    sub_w: f32,
+    sub_h: f32,
+    window_size: iced::Size,
+) -> (f32, f32) {
+    const MARGIN: f32 = 8.0;
+    const OVERLAP: f32 = 2.0;
+
+    let right_x = main_x + main_w - OVERLAP;
+    let left_x = main_x - sub_w + OVERLAP;
+    let sub_x = if right_x + sub_w + MARGIN <= window_size.width {
+        right_x
+    } else if left_x >= MARGIN {
+        left_x
+    } else {
+        (window_size.width - sub_w - MARGIN).max(MARGIN)
+    };
+
+    let desired_y = (main_y + trigger_offset_y - 8.0).max(MARGIN);
+    let max_y = (window_size.height - sub_h - MARGIN).max(MARGIN);
+    let sub_y = desired_y.min(max_y);
+
+    (sub_x, sub_y)
 }
 
 /// Posiciona o menu de contexto no estilo Windows/nativo:
@@ -3529,6 +3689,86 @@ fn compute_context_menu_origin(
     };
 
     (x, y)
+}
+
+fn ctx_entry_item<'a>(
+    icon: Element<'a, Message>,
+    label: &'a str,
+    label_color: iced::Color,
+    msg: Message,
+    palette: ThemePalette,
+    close_sub_on_hover: bool,
+) -> Element<'a, Message> {
+    let item = ctx_item(icon, label, label_color, msg, palette);
+    if close_sub_on_hover {
+        mouse_area(item)
+            .on_enter(Message::ContextMenuSetSendToOpen(false))
+            .into()
+    } else {
+        item
+    }
+}
+
+fn ctx_entry_item_owned<'a>(
+    icon: Element<'a, Message>,
+    label: String,
+    label_color: iced::Color,
+    msg: Message,
+    palette: ThemePalette,
+    close_sub_on_hover: bool,
+) -> Element<'a, Message> {
+    let item = ctx_item_owned(icon, label, label_color, msg, palette);
+    if close_sub_on_hover {
+        mouse_area(item)
+            .on_enter(Message::ContextMenuSetSendToOpen(false))
+            .into()
+    } else {
+        item
+    }
+}
+
+fn ctx_submenu_trigger<'a>(
+    icon: Element<'a, Message>,
+    label: &'a str,
+    is_open: bool,
+    palette: ThemePalette,
+) -> Element<'a, Message> {
+    let btn = button(
+        row![
+            icon,
+            text(label)
+                .size(12)
+                .font(FONT_UI)
+                .color(if is_open {
+                    palette.accent_primary
+                } else {
+                    palette.text_primary
+                })
+                .wrapping(text::Wrapping::None),
+            Space::new().width(Length::Fill),
+            icon_chevron_right().size(13).color(if is_open {
+                palette.accent_primary
+            } else {
+                palette.text_muted
+            }),
+        ]
+        .spacing(8)
+        .align_y(Center),
+    )
+    .width(Length::Fill)
+    .padding([5, 10])
+    .style(move |theme, status| {
+        if is_open {
+            styles::tab_button(palette, true)(theme, status)
+        } else {
+            styles::ghost_button(palette, 6.0)(theme, status)
+        }
+    })
+    .on_press(Message::ContextMenuSetSendToOpen(!is_open));
+
+    mouse_area(btn)
+        .on_enter(Message::ContextMenuSetSendToOpen(true))
+        .into()
 }
 
 fn ctx_item<'a>(
@@ -3623,7 +3863,7 @@ fn ctx_divider<'a>(palette: ThemePalette) -> Element<'a, Message> {
 
 #[cfg(test)]
 mod tests {
-    use super::compute_context_menu_origin;
+    use super::{compute_context_menu_origin, compute_submenu_origin};
     use iced::{Point, Size};
 
     #[test]
@@ -3650,5 +3890,22 @@ mod tests {
         let (_, y_mid) =
             compute_context_menu_origin(Point::new(200.0, 300.0), 280.0, 480.0, short_win);
         assert_eq!(y_mid, 560.0 - 480.0 - 8.0);
+    }
+
+    #[test]
+    fn submenu_flips_left_near_right_edge_and_clamps_vertically() {
+        let win = Size::new(1280.0, 800.0);
+        // Espaço livre à direita: abre à direita do menu principal com overlap de 2px.
+        let (sx, sy) = compute_submenu_origin(200.0, 100.0, 260.0, 180.0, 292.0, 84.0, win);
+        assert_eq!(sx, 200.0 + 260.0 - 2.0);
+        assert_eq!(sy, 100.0 + 180.0 - 8.0);
+
+        // Menu principal encostado à borda direita: submenu inverte para a esquerda.
+        let (sx_left, _) = compute_submenu_origin(990.0, 100.0, 260.0, 180.0, 292.0, 84.0, win);
+        assert_eq!(sx_left, 990.0 - 292.0 + 2.0);
+
+        // Gatilho muito próximo ao rodapé: submenu permanece dentro da margem inferior.
+        let (_, sy_bot) = compute_submenu_origin(200.0, 620.0, 260.0, 160.0, 292.0, 84.0, win);
+        assert_eq!(sy_bot, 800.0 - 84.0 - 8.0);
     }
 }

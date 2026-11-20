@@ -457,3 +457,13 @@ dup-cancelled = Busca de duplicados cancelada
 dup-stale-skipped = Alguns arquivos mudaram ou sumiram no disco e foram ignorados por segurança.
 dup-last-copy-protected = Exclusão bloqueada em grupo(s) cuja última cópia não marcada não existe mais em disco.
 dup-delete-done = Duplicatas removidas com segurança
+ctx-send-to = Enviar para...
+ctx-shortcut-desktop = Criar atalho na Área de Trabalho
+ctx-shortcut-here-unix = Criar link simbólico aqui
+ctx-shortcut-here-win = Criar atalho aqui
+shortcut-desktop-missing = Pasta da Área de Trabalho não encontrada.
+shortcuts-created =
+    { $count ->
+        [one] Atalho criado com sucesso.
+       *[other] { $count } atalhos criados com sucesso.
+    }

@@ -32,6 +32,11 @@ pub trait VfsProvider: Send + Sync {
     async fn volume_space(&self, path: &Path) -> Result<Option<VolumeSpace>, FsError>;
     async fn create_dir(&self, path: &Path) -> Result<(), FsError>;
     async fn create_file(&self, path: &Path) -> Result<(), FsError>;
+    async fn create_shortcuts(
+        &self,
+        targets: &[PathBuf],
+        dest_dir: &Path,
+    ) -> Result<Vec<PathBuf>, FsError>;
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), FsError>;
     async fn move_to_trash(&self, paths: &[PathBuf]) -> Result<(), FsError>;
     async fn restore_from_trash(&self, paths: &[PathBuf]) -> Result<usize, FsError>;

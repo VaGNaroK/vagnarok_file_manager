@@ -457,3 +457,13 @@ dup-cancelled = Duplicate scan cancelled
 dup-stale-skipped = Some files changed or disappeared on disk and were skipped for safety.
 dup-last-copy-protected = Deletion blocked in group(s) whose last unselected copy no longer exists on disk.
 dup-delete-done = Duplicate files removed safely
+ctx-send-to = Send to...
+ctx-shortcut-desktop = Create Desktop shortcut
+ctx-shortcut-here-unix = Create symbolic link here
+ctx-shortcut-here-win = Create shortcut here
+shortcut-desktop-missing = Desktop folder not found.
+shortcuts-created =
+    { $count ->
+        [one] Shortcut created.
+       *[other] { $count } shortcuts created.
+    }

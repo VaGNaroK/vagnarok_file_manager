@@ -457,3 +457,13 @@ dup-cancelled = Búsqueda de duplicados cancelada
 dup-stale-skipped = Algunos archivos cambiaron o desaparecieron del disco y se omitieron por seguridad.
 dup-last-copy-protected = Eliminación bloqueada en grupo(s) cuya última copia sin marcar ya no existe en disco.
 dup-delete-done = Duplicados eliminados con seguridad
+ctx-send-to = Enviar a...
+ctx-shortcut-desktop = Crear acceso directo en el Escritorio
+ctx-shortcut-here-unix = Crear enlace simbólico aquí
+ctx-shortcut-here-win = Crear acceso directo aquí
+shortcut-desktop-missing = No se encontró la carpeta Escritorio.
+shortcuts-created =
+    { $count ->
+        [one] Acceso directo creado correctamente.
+       *[other] { $count } accesos directos creados correctamente.
+    }

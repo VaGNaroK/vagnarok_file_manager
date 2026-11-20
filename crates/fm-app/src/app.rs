@@ -90,6 +90,7 @@ pub enum PreferencesTab {
 pub struct ContextMenuState {
     pub kind: ContextMenuKind,
     pub position: Point,
+    pub send_to_open: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -534,6 +535,15 @@ pub enum Message {
     OpenEntryContextMenu(usize),
     OpenCanvasContextMenu,
     CloseContextMenu,
+    ContextMenuSetSendToOpen(bool),
+    CreateShortcutInDir {
+        dest_dir: Option<PathBuf>,
+        fallback_target: PathBuf,
+    },
+    ShortcutsCreated {
+        dest_dir: PathBuf,
+        result: Result<Vec<PathBuf>, FsError>,
+    },
     CopyPath(PathBuf),
     CopyText(String, String),
     StartColumnResize(usize),
@@ -1184,6 +1194,7 @@ impl App {
                         can_unmount,
                     },
                     position: self.cursor_position,
+                    send_to_open: false,
                 });
                 Task::none()
             }
@@ -1459,6 +1470,7 @@ impl App {
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::LanguageMenu,
                         position: self.cursor_position,
+                        send_to_open: false,
                     });
                 }
                 Task::none()
@@ -2316,6 +2328,7 @@ impl App {
                 self.context_menu = Some(ContextMenuState {
                     kind: ContextMenuKind::SidebarPlace { path, is_favorite },
                     position: self.cursor_position,
+                    send_to_open: false,
                 });
                 Task::none()
             }
@@ -2340,6 +2353,7 @@ impl App {
                 self.context_menu = Some(ContextMenuState {
                     kind: ContextMenuKind::PreferencesMenu,
                     position: self.cursor_position,
+                    send_to_open: false,
                 });
                 Task::none()
             }
@@ -2449,6 +2463,7 @@ impl App {
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::NewMenu,
                         position: self.cursor_position,
+                        send_to_open: false,
                     });
                 }
                 Task::none()
@@ -2490,6 +2505,7 @@ impl App {
                             posix_mode,
                         },
                         position: self.cursor_position,
+                        send_to_open: false,
                     });
                 }
                 side_task
@@ -2499,6 +2515,7 @@ impl App {
                 self.context_menu = Some(ContextMenuState {
                     kind: ContextMenuKind::Background,
                     position: self.cursor_position,
+                    send_to_open: false,
                 });
                 Task::none()
             }
@@ -2506,6 +2523,54 @@ impl App {
                 self.context_menu = None;
                 Task::none()
             }
+            Message::ContextMenuSetSendToOpen(open) => {
+                if let Some(menu) = self.context_menu.as_mut() {
+                    menu.send_to_open = open;
+                }
+                Task::none()
+            }
+            Message::CreateShortcutInDir {
+                dest_dir,
+                fallback_target,
+            } => {
+                self.context_menu = None;
+                let Some(resolved_dest) = dest_dir.or_else(|| self.places.desktop.clone()) else {
+                    self.status_notice = Some(self.strings().shortcut_desktop_missing.to_owned());
+                    return Task::none();
+                };
+                let mut targets = self.selected_paths();
+                if targets.is_empty() {
+                    targets.push(fallback_target);
+                }
+                targets.retain(|p| {
+                    !fm_core::is_virtual_trash_path(p) && !fm_fs::archive::is_inside_archive_path(p)
+                });
+                if targets.is_empty() {
+                    return Task::none();
+                }
+                let vfs = Arc::clone(&self.vfs);
+                let dest_for_task = resolved_dest.clone();
+                Task::perform(
+                    async move { vfs.create_shortcuts(&targets, &dest_for_task).await },
+                    move |result| Message::ShortcutsCreated {
+                        dest_dir: resolved_dest.clone(),
+                        result,
+                    },
+                )
+            }
+            Message::ShortcutsCreated { dest_dir, result } => match result {
+                Ok(created) => {
+                    if !created.is_empty() {
+                        self.status_notice =
+                            Some(self.strings().format_shortcuts_created(created.len()));
+                    }
+                    self.reload_matching_dir_tabs(&dest_dir)
+                }
+                Err(err) => {
+                    self.status_notice = Some(err.to_string());
+                    Task::none()
+                }
+            },
             Message::CopyPath(path) => {
                 self.context_menu = None;
                 let text = path.to_string_lossy().into_owned();
@@ -3171,6 +3236,7 @@ impl App {
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::FilterMenu,
                         position: self.cursor_position,
+                        send_to_open: false,
                     });
                 }
                 Task::none()

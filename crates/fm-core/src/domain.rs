@@ -653,6 +653,74 @@ pub fn open_with_type_key(path: &Path, mime: Option<&str>) -> String {
     "application/octet-stream".to_owned()
 }
 
+/// Gera o nome de arquivo candidato (sem perda de `OsString`) para um atalho ou link simbólico.
+///
+/// - Quando `is_windows_lnk` é `true`, produz um arquivo `.lnk` (ex.: `relatorio.lnk`, `relatorio (2).lnk`).
+/// - Quando `is_windows_lnk` é `false` (Linux/Unix), preserva o nome original na primeira tentativa
+///   fora da mesma pasta (`attempt == 0 && !force_suffix`) e adiciona ` (link)` / ` (link N)` antes
+///   da extensão em colisões ou ao criar na mesma pasta (`force_suffix == true`).
+#[must_use]
+pub fn suggest_shortcut_name(
+    target: &Path,
+    is_dir: bool,
+    is_windows_lnk: bool,
+    attempt: u32,
+    force_suffix: bool,
+) -> std::ffi::OsString {
+    use std::ffi::{OsStr, OsString};
+
+    let raw_name: &OsStr = target
+        .file_name()
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| OsStr::new("shortcut"));
+
+    let (stem, ext): (&OsStr, Option<&OsStr>) = if is_dir {
+        (raw_name, None)
+    } else {
+        let p = Path::new(raw_name);
+        match (p.file_stem(), p.extension()) {
+            (Some(s), Some(e)) if !s.is_empty() && !e.is_empty() => (s, Some(e)),
+            _ => (raw_name, None),
+        }
+    };
+
+    if is_windows_lnk {
+        let mut out = OsString::from(stem);
+        let suffix_num = if force_suffix {
+            attempt.saturating_add(2)
+        } else {
+            attempt.saturating_add(1)
+        };
+        if suffix_num >= 2 {
+            out.push(format!(" ({suffix_num})"));
+        }
+        out.push(".lnk");
+        return out;
+    }
+
+    if attempt == 0 && !force_suffix {
+        return raw_name.to_os_string();
+    }
+
+    let link_index = if force_suffix {
+        attempt.saturating_add(1)
+    } else {
+        attempt
+    };
+
+    let mut out = OsString::from(stem);
+    if link_index <= 1 {
+        out.push(" (link)");
+    } else {
+        out.push(format!(" (link {link_index})"));
+    }
+    if let Some(e) = ext {
+        out.push(".");
+        out.push(e);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -737,5 +805,58 @@ mod tests {
         assert_eq!(toggle_posix_executable_mode(0o755), 0o644);
         assert_eq!(toggle_posix_executable_mode(0o750), 0o640);
         assert_eq!(toggle_posix_executable_mode(0o700), 0o600);
+    }
+
+    #[test]
+    fn suggests_shortcut_names_for_unix_and_windows() {
+        // Unix: pasta diferente preserva nome exato na 1ª tentativa e usa (link) em colisões.
+        assert_eq!(
+            suggest_shortcut_name(Path::new("/home/u/relatorio.pdf"), false, false, 0, false),
+            "relatorio.pdf"
+        );
+        assert_eq!(
+            suggest_shortcut_name(Path::new("/home/u/relatorio.pdf"), false, false, 1, false),
+            "relatorio (link).pdf"
+        );
+        assert_eq!(
+            suggest_shortcut_name(Path::new("/home/u/relatorio.pdf"), false, false, 2, false),
+            "relatorio (link 2).pdf"
+        );
+        // Unix: mesma pasta força sufixo já na tentativa 0.
+        assert_eq!(
+            suggest_shortcut_name(Path::new("/home/u/relatorio.pdf"), false, false, 0, true),
+            "relatorio (link).pdf"
+        );
+        assert_eq!(
+            suggest_shortcut_name(Path::new("/home/u/relatorio.pdf"), false, false, 1, true),
+            "relatorio (link 2).pdf"
+        );
+        // Pasta com ponto no nome não deve ser tratada como extensão.
+        assert_eq!(
+            suggest_shortcut_name(Path::new("/home/u/v1.2.3"), true, false, 0, true),
+            "v1.2.3 (link)"
+        );
+        // Dotfile sem extensão.
+        assert_eq!(
+            suggest_shortcut_name(Path::new("/home/u/.bashrc"), false, false, 0, true),
+            ".bashrc (link)"
+        );
+        // Windows: sempre produz .lnk baseado no stem (arquivo) ou nome inteiro (pasta).
+        assert_eq!(
+            suggest_shortcut_name(Path::new("/docs/relatorio.pdf"), false, true, 0, false),
+            "relatorio.lnk"
+        );
+        assert_eq!(
+            suggest_shortcut_name(Path::new("/docs/relatorio.pdf"), false, true, 1, false),
+            "relatorio (2).lnk"
+        );
+        assert_eq!(
+            suggest_shortcut_name(Path::new("/docs/v1.2.3"), true, true, 0, false),
+            "v1.2.3.lnk"
+        );
+        assert_eq!(
+            suggest_shortcut_name(Path::new("/docs/v1.2.3"), true, true, 1, false),
+            "v1.2.3 (2).lnk"
+        );
     }
 }

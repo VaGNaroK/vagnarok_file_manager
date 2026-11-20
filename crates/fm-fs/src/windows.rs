@@ -11,7 +11,9 @@ use fm_core::{
     DirectorySnapshot, DriveInfo, DriveKind, EntryKind, FsError, PermissionsMeta, VolumeSpace,
 };
 use tokio_util::sync::CancellationToken;
-use windows::Win32::Foundation::{ERROR_NO_MORE_FILES, HANDLE, HWND};
+use windows::Win32::Foundation::{
+    ERROR_NO_MORE_FILES, HANDLE, HWND, RPC_E_CHANGED_MODE, S_FALSE, S_OK,
+};
 use windows::Win32::Storage::FileSystem::{
     COPYFILE_FLAGS, COPYPROGRESSROUTINE_PROGRESS, CopyFileExW, FILE_FLAGS_AND_ATTRIBUTES,
     FIND_FIRST_EX_LARGE_FETCH, FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW,
@@ -19,11 +21,16 @@ use windows::Win32::Storage::FileSystem::{
     GetVolumeInformationW, INVALID_FILE_ATTRIBUTES, LPPROGRESS_ROUTINE_CALLBACK_REASON,
     PROGRESS_CANCEL, PROGRESS_CONTINUE, SetFileAttributesW, WIN32_FIND_DATAW,
 };
+use windows::Win32::System::Com::{
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+    CoUninitialize, IPersistFile,
+};
 use windows::Win32::UI::Shell::{
-    SEE_MASK_FLAG_NO_UI, SEE_MASK_INVOKEIDLIST, SHELLEXECUTEINFOW, ShellExecuteExW,
+    IShellLinkW, SEE_MASK_FLAG_NO_UI, SEE_MASK_INVOKEIDLIST, SHELLEXECUTEINFOW, ShellExecuteExW,
+    ShellLink,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-use windows::core::{BOOL, PCWSTR};
+use windows::core::{BOOL, Interface, PCWSTR};
 
 use crate::{PropertyPatch, make_file_entry, map_io_err};
 
@@ -475,6 +482,139 @@ pub fn open_as_root(path: &Path) -> Result<(), FsError> {
         path: path.to_path_buf(),
         message: "abrir como root está disponível apenas no Linux".to_owned(),
     })
+}
+
+struct ComGuard {
+    should_uninit: bool,
+}
+
+impl ComGuard {
+    fn init(err_path: &Path) -> Result<Self, FsError> {
+        // SAFETY: inicializa COM em STA na thread de worker atual.
+        let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+        if hr == S_OK || hr == S_FALSE {
+            Ok(Self {
+                should_uninit: true,
+            })
+        } else if hr == RPC_E_CHANGED_MODE {
+            Ok(Self {
+                should_uninit: false,
+            })
+        } else {
+            Err(map_io_err(
+                err_path,
+                win_err_to_io(windows::core::Error::from(hr)),
+            ))
+        }
+    }
+}
+
+impl Drop for ComGuard {
+    fn drop(&mut self) {
+        if self.should_uninit {
+            // SAFETY: corresponde exatamente à chamada bem-sucedida de `CoInitializeEx` nesta thread.
+            unsafe { CoUninitialize() };
+        }
+    }
+}
+
+/// Cria um atalho nativo `.lnk` do Windows via COM (`IShellLinkW` + `IPersistFile`), sem precisar de privilégios de administrador.
+pub fn create_shortcut(target: &Path, dest_dir: &Path) -> Result<PathBuf, FsError> {
+    let link_meta = std::fs::symlink_metadata(target).map_err(|e| map_io_err(target, e))?;
+    let is_dir = if link_meta.file_type().is_symlink() {
+        std::fs::metadata(target)
+            .map(|m| m.is_dir())
+            .unwrap_or(false)
+    } else {
+        link_meta.is_dir()
+    };
+
+    let abs_target = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(target))
+            .unwrap_or_else(|_| target.to_path_buf())
+    };
+    let clean_target = strip_verbatim_prefix(&abs_target);
+    let work_dir = if is_dir {
+        clean_target.as_path()
+    } else {
+        clean_target.parent().unwrap_or(clean_target.as_path())
+    };
+
+    let mut chosen: Option<PathBuf> = None;
+    for attempt in 0..10_000u32 {
+        let candidate_name =
+            fm_core::suggest_shortcut_name(&clean_target, is_dir, true, attempt, false);
+        let candidate = dest_dir.join(&candidate_name);
+        if std::fs::symlink_metadata(&candidate).is_err() {
+            chosen = Some(candidate);
+            break;
+        }
+    }
+    let candidate = chosen.ok_or_else(|| FsError::Io {
+        path: dest_dir.to_path_buf(),
+        message: "não foi possível encontrar um nome livre para o atalho".to_owned(),
+    })?;
+
+    // `_com` deve ser declarado antes dos objetos COM para garantir que `link` e `persist`
+    // sejam liberados antes de `CoUninitialize()`.
+    let _com = ComGuard::init(&candidate)?;
+
+    // SAFETY: COM está inicializado nesta thread; `ShellLink` é um CLSID nativo do sistema.
+    let link: IShellLinkW = unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }
+        .map_err(|e| map_io_err(&candidate, win_err_to_io(e)))?;
+
+    let target_w = to_wide(&clean_target);
+    // SAFETY: `target_w` é UTF-16 terminado em NUL.
+    unsafe { link.SetPath(PCWSTR(target_w.as_ptr())) }
+        .map_err(|e| map_io_err(&candidate, win_err_to_io(e)))?;
+
+    let work_dir_w = to_wide(work_dir);
+    // SAFETY: `work_dir_w` é UTF-16 terminado em NUL.
+    let _ = unsafe { link.SetWorkingDirectory(PCWSTR(work_dir_w.as_ptr())) };
+
+    if let Some(desc) = clean_target.file_name() {
+        let desc_w: Vec<u16> = desc.encode_wide().chain(std::iter::once(0)).collect();
+        // SAFETY: `desc_w` é UTF-16 terminado em NUL.
+        let _ = unsafe { link.SetDescription(PCWSTR(desc_w.as_ptr())) };
+    }
+
+    let persist: IPersistFile = link
+        .cast()
+        .map_err(|e| map_io_err(&candidate, win_err_to_io(e)))?;
+    let dest_w = to_long_wide(&candidate);
+    // SAFETY: `dest_w` é UTF-16 terminado em NUL e `persist` é uma interface válida.
+    unsafe { persist.Save(PCWSTR(dest_w.as_ptr()), true) }
+        .map_err(|e| map_io_err(&candidate, win_err_to_io(e)))?;
+
+    Ok(candidate)
+}
+
+/// Remove prefixo verbatim `\\?\` para compatibilidade com `IShellLinkW::SetPath`.
+fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    let units: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let unc_prefix = [
+        b'\\' as u16,
+        b'\\' as u16,
+        b'?' as u16,
+        b'\\' as u16,
+        b'U' as u16,
+        b'N' as u16,
+        b'C' as u16,
+        b'\\' as u16,
+    ];
+    let verbatim_prefix = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+    if units.starts_with(&unc_prefix) {
+        let mut out = vec![b'\\' as u16, b'\\' as u16];
+        out.extend_from_slice(&units[unc_prefix.len()..]);
+        PathBuf::from(OsString::from_wide(&out))
+    } else if units.starts_with(&verbatim_prefix) {
+        PathBuf::from(OsString::from_wide(&units[verbatim_prefix.len()..]))
+    } else {
+        path.to_path_buf()
+    }
 }
 
 fn query_volume_info(root: &Path) -> (Option<CompactString>, Option<CompactString>) {
