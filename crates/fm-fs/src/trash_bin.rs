@@ -238,21 +238,17 @@ fn select_trash_items_for_restore(
         .collect()
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(target_os = "windows")]
 fn paths_match_original(item_original: &Path, target: &Path) -> bool {
-    if item_original == target {
-        return true;
-    }
-    #[cfg(target_os = "windows")]
-    {
-        item_original
+    item_original == target
+        || item_original
             .to_string_lossy()
             .eq_ignore_ascii_case(&target.to_string_lossy())
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        false
-    }
+}
+
+#[cfg(target_os = "linux")]
+fn paths_match_original(item_original: &Path, target: &Path) -> bool {
+    item_original == target
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
