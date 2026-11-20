@@ -270,10 +270,9 @@ fn action_bar<'a>(
     let is_in_trash = app.is_current_tab_trash();
     let is_inside_archive = fm_fs::archive::split_archive_path(&tab.current_path).is_some();
     let sel_count = tab.selection.count();
-    let has_sel = sel_count > 0;
     let mut ops_row = row![].spacing(4).align_y(Center);
     if is_in_trash {
-        if has_sel {
+        if sel_count > 0 {
             ops_row = ops_row.push(
                 button(
                     row![
@@ -305,49 +304,30 @@ fn action_bar<'a>(
             .style(styles::pill_secondary_button(palette))
             .on_press(Message::RequestEmptyTrash),
         );
-        if has_sel {
-            ops_row = ops_row.push(with_tooltip(
-                button(icon_trash_2().size(14).color(palette.status_error))
+    }
+    if sel_count > 0 {
+        ops_row = ops_row
+            .push(with_tooltip(
+                button(icon_copy().size(14).color(palette.text_primary))
                     .padding([6, 8])
                     .style(styles::pill_secondary_button(palette))
-                    .on_press(Message::RequestDelete(true)),
-                strings.delete_permanent,
+                    .on_press(Message::CopySelected),
+                strings.copy,
+                tooltip::Position::Bottom,
+                palette,
+            ))
+            .push(with_tooltip(
+                button(icon_scissors().size(14).color(palette.text_primary))
+                    .padding([6, 8])
+                    .style(styles::pill_secondary_button(palette))
+                    .on_press(Message::CutSelected),
+                strings.cut,
                 tooltip::Position::Bottom,
                 palette,
             ));
-        }
-    } else if is_inside_archive {
-        let icon_color = if has_sel {
-            palette.text_primary
-        } else {
-            palette.text_muted
-        };
-        ops_row = ops_row.push(with_tooltip(
-            button(icon_copy().size(14).color(icon_color))
-                .padding([6, 8])
-                .style(styles::pill_secondary_button(palette))
-                .on_press_maybe(has_sel.then_some(Message::CopySelected)),
-            strings.copy,
-            tooltip::Position::Bottom,
-            palette,
-        ));
-    } else {
-        let action_color = if has_sel {
-            palette.text_primary
-        } else {
-            palette.text_muted
-        };
-        let delete_color = if has_sel {
-            palette.status_error
-        } else {
-            palette.text_muted
-        };
-        let rename_tip = if sel_count > 1 {
-            strings.br_title
-        } else {
-            strings.rename
-        };
+    }
 
+    if !is_in_trash && !is_inside_archive {
         let paste_btn: Element<'a, Message> = if let Some(clip) = &app.clipboard {
             let tip = format!("{} ({})", strings.paste, clip.paths.len());
             let paste_color = match clip.mode {
@@ -388,42 +368,35 @@ fn action_bar<'a>(
                 palette,
             )
         };
+        ops_row = ops_row.push(paste_btn);
+    }
 
+    if sel_count > 0 {
+        let rename_tip = if sel_count > 1 {
+            strings.br_title
+        } else {
+            strings.rename
+        };
         ops_row = ops_row
             .push(with_tooltip(
-                button(icon_copy().size(14).color(action_color))
+                button(icon_pencil().size(14).color(palette.text_primary))
                     .padding([6, 8])
                     .style(styles::pill_secondary_button(palette))
-                    .on_press_maybe(has_sel.then_some(Message::CopySelected)),
-                strings.copy,
-                tooltip::Position::Bottom,
-                palette,
-            ))
-            .push(with_tooltip(
-                button(icon_scissors().size(14).color(action_color))
-                    .padding([6, 8])
-                    .style(styles::pill_secondary_button(palette))
-                    .on_press_maybe(has_sel.then_some(Message::CutSelected)),
-                strings.cut,
-                tooltip::Position::Bottom,
-                palette,
-            ))
-            .push(paste_btn)
-            .push(with_tooltip(
-                button(icon_pencil().size(14).color(action_color))
-                    .padding([6, 8])
-                    .style(styles::pill_secondary_button(palette))
-                    .on_press_maybe(has_sel.then_some(Message::OpenRenameDialog)),
+                    .on_press(Message::OpenRenameDialog),
                 rename_tip,
                 tooltip::Position::Bottom,
                 palette,
             ))
             .push(with_tooltip(
-                button(icon_trash_2().size(14).color(delete_color))
+                button(icon_trash_2().size(14).color(palette.status_error))
                     .padding([6, 8])
                     .style(styles::pill_secondary_button(palette))
-                    .on_press_maybe(has_sel.then_some(Message::RequestDelete(false))),
-                strings.move_to_trash,
+                    .on_press(Message::RequestDelete(is_in_trash)),
+                if is_in_trash {
+                    strings.delete_permanent
+                } else {
+                    strings.move_to_trash
+                },
                 tooltip::Position::Bottom,
                 palette,
             ));
@@ -573,7 +546,7 @@ fn action_bar<'a>(
         palette,
     );
 
-    let mut toolbar_right = row![new_btn, ops_row].spacing(6).align_y(Center);
+    let mut toolbar_right = row![new_btn, ops_row].spacing(8).align_y(Center);
 
     if tab.view_mode == ViewMode::Grid {
         let card_px = clamp_grid_card_width(app.config.grid_card_width).round() as u32;
@@ -665,20 +638,9 @@ fn action_bar<'a>(
         .push(fav_btn)
         .push(info_btn);
 
-    row![
-        left_info,
-        container(
-            toolbar_right
-                .wrap()
-                .vertical_spacing(6)
-                .align_x(iced::alignment::Horizontal::Right),
-        )
-        .width(Length::Fill)
-        .align_x(Alignment::End),
-    ]
-    .spacing(12)
-    .align_y(Center)
-    .into()
+    row![left_info, space::horizontal(), toolbar_right]
+        .align_y(Center)
+        .into()
 }
 
 fn transfer_banner<'a>(
