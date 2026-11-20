@@ -462,6 +462,7 @@ ctx-shortcut-desktop = Crea collegamento sul Desktop
 ctx-shortcut-here-unix = Crea collegamento simbolico qui
 ctx-shortcut-here-win = Crea collegamento qui
 shortcut-desktop-missing = Cartella Desktop non trovata.
+filter-ext-placeholder = es.: .exe, .zip...
 shortcuts-created =
     { $count ->
         [one] Collegamento creato con successo.

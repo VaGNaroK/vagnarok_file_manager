@@ -462,6 +462,7 @@ ctx-shortcut-desktop = Crear acceso directo en el Escritorio
 ctx-shortcut-here-unix = Crear enlace simbólico aquí
 ctx-shortcut-here-win = Crear acceso directo aquí
 shortcut-desktop-missing = No se encontró la carpeta Escritorio.
+filter-ext-placeholder = ej.: .exe, .zip...
 shortcuts-created =
     { $count ->
         [one] Acceso directo creado correctamente.

@@ -462,6 +462,7 @@ ctx-shortcut-desktop = Criar atalho na Área de Trabalho
 ctx-shortcut-here-unix = Criar link simbólico aqui
 ctx-shortcut-here-win = Criar atalho aqui
 shortcut-desktop-missing = Pasta da Área de Trabalho não encontrada.
+filter-ext-placeholder = ex: .exe, .zip...
 shortcuts-created =
     { $count ->
         [one] Atalho criado com sucesso.

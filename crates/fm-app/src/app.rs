@@ -53,6 +53,10 @@ pub fn path_input_id() -> Id {
     Id::new("fm_path_input")
 }
 
+pub fn filter_ext_input_id() -> Id {
+    Id::new("fm_filter_ext_input")
+}
+
 #[derive(Debug, Clone)]
 pub enum ContextMenuKind {
     Entry {
@@ -532,6 +536,8 @@ pub enum Message {
     OpenNewMenu,
     OpenFilterMenu,
     SetExtensionFilter(Option<CompactString>),
+    FilterExtDraftChanged(String),
+    SubmitFilterExtDraft,
     OpenEntryContextMenu(usize),
     OpenCanvasContextMenu,
     CloseContextMenu,
@@ -668,6 +674,7 @@ pub struct App {
     pub cursor_position: Point,
     pub window_size: Size,
     pub context_menu: Option<ContextMenuState>,
+    pub filter_ext_draft: String,
     pub pending_dropped_paths: Vec<PathBuf>,
     pub drop_batch_id: u64,
     pub canvas_scroll_y: f32,
@@ -808,6 +815,7 @@ impl App {
             cursor_position: Point::new(240.0, 140.0),
             window_size: initial_size,
             context_menu: None,
+            filter_ext_draft: String::new(),
             pending_dropped_paths: Vec::new(),
             drop_batch_id: 0,
             canvas_scroll_y: 0.0,
@@ -3232,23 +3240,45 @@ impl App {
                 );
                 if is_already_filter {
                     self.context_menu = None;
+                    Task::none()
                 } else {
+                    self.filter_ext_draft = self
+                        .current_tab()
+                        .and_then(|t| t.extension_filter.as_deref())
+                        .filter(|ext| *ext != DIR_FILTER_SENTINEL)
+                        .map(fm_core::format_extension_filter_badge)
+                        .unwrap_or_default();
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::FilterMenu,
                         position: self.cursor_position,
                         send_to_open: false,
                     });
+                    operation::focus(filter_ext_input_id())
                 }
-                Task::none()
             }
             Message::SetExtensionFilter(ext) => {
                 self.context_menu = None;
+                self.filter_ext_draft.clear();
                 if let Some(tab) = self.current_tab_mut() {
                     tab.extension_filter = ext;
                     apply_tab_filter(tab);
                 }
                 self.canvas_scroll_y = 0.0;
                 self.queue_visible_thumbnails()
+            }
+            Message::FilterExtDraftChanged(val) => {
+                self.filter_ext_draft = val;
+                let normalized = fm_core::normalize_extension_filter_input(&self.filter_ext_draft);
+                if let Some(tab) = self.current_tab_mut() {
+                    tab.extension_filter = normalized;
+                    apply_tab_filter(tab);
+                }
+                self.canvas_scroll_y = 0.0;
+                self.queue_visible_thumbnails()
+            }
+            Message::SubmitFilterExtDraft => {
+                self.context_menu = None;
+                Task::none()
             }
             Message::StartColumnResize(idx) => {
                 if idx < 4 {
@@ -5265,13 +5295,18 @@ impl App {
             }
             return Task::none();
         }
+        let filter_menu_open = matches!(
+            self.context_menu.as_ref().map(|m| &m.kind),
+            Some(ContextMenuKind::FilterMenu)
+        );
         let text_input_modal_active = self.bulk_rename_modal.is_some()
             || compress_modal_visible
             || dup_modal_visible
             || self.active_dialog.is_some()
             || self.deep_search_open
             || self.path_editing
-            || self.prefs_open;
+            || self.prefs_open
+            || filter_menu_open;
         if text_input_modal_active {
             if matches!(key.as_ref(), keyboard::Key::Named(Named::Tab)) && self.path_editing {
                 return self.autocomplete_path_draft();
@@ -5297,6 +5332,8 @@ impl App {
                     return self.update(Message::ClosePreferences);
                 } else if self.deep_search_open {
                     return self.update(Message::CloseDeepSearch);
+                } else if filter_menu_open {
+                    return self.update(Message::CloseContextMenu);
                 } else if self.path_editing {
                     self.path_editing = false;
                     return Task::none();
@@ -5708,11 +5745,7 @@ fn apply_tab_filter(tab: &mut TabState) {
             let hidden_ok = tab.show_hidden || !entry.is_hidden;
             let ext_ok = match tab.extension_filter.as_deref() {
                 None => true,
-                Some(DIR_FILTER_SENTINEL) => entry.kind.is_dir_like(),
-                Some(ext) => entry
-                    .extension
-                    .as_deref()
-                    .is_some_and(|e| e.eq_ignore_ascii_case(ext)),
+                Some(filter) => fm_core::matches_extension_filter(entry, filter),
             };
             hidden_ok && ext_ok
         })

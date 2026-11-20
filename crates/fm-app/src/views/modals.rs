@@ -25,7 +25,7 @@ use lucide_icons::iced::{
 
 use crate::app::{
     ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, PreferencesTab, PropertiesTab,
-    PropertiesWindowState, dialog_input_id, effective_properties_modal_rect,
+    PropertiesWindowState, dialog_input_id, effective_properties_modal_rect, filter_ext_input_id,
     open_with_props_type_key,
 };
 use crate::archive_jobs::ArchiveUiMsg;
@@ -3256,25 +3256,26 @@ pub fn context_menu_overlay<'a>(
                     Message::SetExtensionFilter(Some(DIR_FILTER_SENTINEL.into())),
                     palette,
                 ));
-                let exts = tab.available_extensions();
-                if !exts.is_empty() {
-                    items = items.push(ctx_divider(palette));
-                    for ext in exts.into_iter().take(16) {
-                        let is_selected = active_ext == Some(ext.as_str());
-                        let label = format!(".{ext}");
-                        items = items.push(ctx_item_owned(
-                            Space::new().width(14).height(14).into(),
-                            label,
-                            if is_selected {
-                                palette.accent_primary
-                            } else {
-                                palette.text_primary
-                            },
-                            Message::SetExtensionFilter(Some(ext)),
-                            palette,
-                        ));
-                    }
-                }
+                items = items.push(ctx_divider(palette)).push(
+                    container(
+                        container(
+                            text_input(strings.filter_ext_placeholder, &app.filter_ext_draft)
+                                .id(filter_ext_input_id())
+                                .size(12)
+                                .font(FONT_UI)
+                                .padding([5, 8])
+                                .width(Length::Fill)
+                                .style(styles::search_input_style(palette))
+                                .on_input(Message::FilterExtDraftChanged)
+                                .on_submit(Message::SubmitFilterExtDraft),
+                        )
+                        .padding([2, 4])
+                        .style(move |_| {
+                            styles::panel_surface(palette.surface_low, palette.accent_border, 8.0)
+                        }),
+                    )
+                    .padding([4, 4]),
+                );
             }
         }
         ContextMenuKind::LanguageMenu => {
@@ -3455,7 +3456,7 @@ pub fn context_menu_overlay<'a>(
         0.0
     };
     let clipboard_extra = if has_clipboard { 30.0 } else { 0.0 };
-    let est_height = match &menu.kind {
+    let est_height: f32 = match &menu.kind {
         ContextMenuKind::NewMenu => 84.0,
         ContextMenuKind::Entry {
             path,
@@ -3502,13 +3503,7 @@ pub fn context_menu_overlay<'a>(
             }
         }
         ContextMenuKind::Background => 296.0 + clipboard_extra + root_extra + undo_extra,
-        ContextMenuKind::FilterMenu => {
-            let ext_count = app
-                .current_tab()
-                .map(|t| t.available_extensions().len().min(16))
-                .unwrap_or(0);
-            ((ext_count + 2) as f32) * 30.0 + 44.0
-        }
+        ContextMenuKind::FilterMenu => 128.0,
         ContextMenuKind::LanguageMenu => 246.0,
         ContextMenuKind::PreferencesMenu => 84.0,
     };

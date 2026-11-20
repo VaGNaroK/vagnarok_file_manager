@@ -424,7 +424,11 @@ fn action_bar<'a>(
         Some(DIR_FILTER_SENTINEL) => {
             format!("{}: {}", strings.filter_ext, strings.directories_only)
         }
-        Some(ext) => format!("{}: .{ext}", strings.filter_ext),
+        Some(ext) => format!(
+            "{}: {}",
+            strings.filter_ext,
+            fm_core::format_extension_filter_badge(ext)
+        ),
     };
     let filter_active = tab.extension_filter.is_some();
     let filter_btn = with_tooltip(

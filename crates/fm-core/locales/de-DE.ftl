@@ -462,6 +462,7 @@ ctx-shortcut-desktop = Verknüpfung auf dem Desktop erstellen
 ctx-shortcut-here-unix = Symbolischen Link hier erstellen
 ctx-shortcut-here-win = Verknüpfung hier erstellen
 shortcut-desktop-missing = Desktop-Ordner nicht gefunden.
+filter-ext-placeholder = z. B. .exe, .zip...
 shortcuts-created =
     { $count ->
         [one] Verknüpfung erstellt.

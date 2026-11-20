@@ -183,11 +183,7 @@ impl TabState {
             .filter(|entry| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
             .filter(|entry| match ext_filter {
                 None => true,
-                Some(DIR_FILTER_SENTINEL) => entry.kind.is_dir_like(),
-                Some(ext) => entry
-                    .extension
-                    .as_deref()
-                    .is_some_and(|e| e.eq_ignore_ascii_case(ext)),
+                Some(filter) => matches_extension_filter(entry, filter),
             })
             .cloned()
             .collect();
@@ -380,6 +376,80 @@ pub enum WindowDecorationsMode {
 
 pub const DIR_FILTER_SENTINEL: &str = "__DIR__";
 
+/// Normaliza a entrada digitada pelo usuário no filtro de extensões (ex.: `".exe, .zip"` -> `Some("exe, zip")`).
+/// Aceita separadores por vírgula, ponto-e-vírgula ou espaço, com ou sem `.` / `*` inicial.
+#[must_use]
+pub fn normalize_extension_filter_input(raw: &str) -> Option<CompactString> {
+    let mut tokens: Vec<String> = Vec::new();
+    for part in raw.split(|c: char| c == ',' || c == ';' || c.is_whitespace()) {
+        let cleaned = part.trim().trim_start_matches('*').trim_start_matches('.');
+        if cleaned.is_empty() {
+            continue;
+        }
+        let lower = cleaned.to_ascii_lowercase();
+        if !tokens.contains(&lower) {
+            tokens.push(lower);
+        }
+    }
+    if tokens.is_empty() {
+        None
+    } else {
+        Some(CompactString::from(tokens.join(", ")))
+    }
+}
+
+/// Formata o filtro normalizado de extensões para exibição na UI (`"exe, zip"` -> `".exe, .zip"`).
+#[must_use]
+pub fn format_extension_filter_badge(filter: &str) -> String {
+    let parts: Vec<String> = filter
+        .split(|c: char| c == ',' || c == ';' || c.is_whitespace())
+        .map(|p| p.trim().trim_start_matches('*').trim_start_matches('.'))
+        .filter(|p| !p.is_empty())
+        .map(|p| format!(".{}", p.to_ascii_lowercase()))
+        .collect();
+    parts.join(", ")
+}
+
+/// Avalia se `entry` satisfaz o filtro de extensão ativo (sentinela de pastas ou uma ou mais extensões).
+#[must_use]
+pub fn matches_extension_filter(entry: &FileEntry, filter: &str) -> bool {
+    if filter == DIR_FILTER_SENTINEL {
+        return entry.kind.is_dir_like();
+    }
+    let mut has_token = false;
+    let name_lower = if entry.kind.is_dir_like() {
+        None
+    } else {
+        Some(entry.name.to_ascii_lowercase())
+    };
+    for part in filter.split(|c: char| c == ',' || c == ';' || c.is_whitespace()) {
+        let cleaned = part.trim().trim_start_matches('*').trim_start_matches('.');
+        if cleaned.is_empty() {
+            continue;
+        }
+        has_token = true;
+        if entry.kind.is_dir_like() {
+            continue;
+        }
+        if cleaned.contains('.') {
+            let suffix = format!(".{}", cleaned.to_ascii_lowercase());
+            if let Some(ref nl) = name_lower
+                && nl.len() > suffix.len()
+                && nl.ends_with(&suffix)
+            {
+                return true;
+            }
+        } else if entry
+            .extension
+            .as_deref()
+            .is_some_and(|e| e.eq_ignore_ascii_case(cleaned))
+        {
+            return true;
+        }
+    }
+    !has_token
+}
+
 fn default_true() -> bool {
     true
 }
@@ -543,5 +613,36 @@ mod tests {
         assert_eq!(sel.count(), 0);
         assert!(sel.anchor.is_none());
         assert!(sel.focused.is_none());
+    }
+
+    #[test]
+    fn extension_filter_matches_single_multiple_and_compound_extensions() {
+        let mut entries = make_entries(4);
+        entries[0].name = CompactString::new("setup.EXE");
+        entries[0].extension = Some(CompactString::new("EXE"));
+        entries[1].name = CompactString::new("backup.tar.gz");
+        entries[1].extension = Some(CompactString::new("gz"));
+        entries[2].name = CompactString::new("archive.zip");
+        entries[2].extension = Some(CompactString::new("zip"));
+        entries[3].name = CompactString::new("Folder");
+        entries[3].extension = None;
+        entries[3].kind = EntryKind::Directory;
+
+        let norm = normalize_extension_filter_input(" .EXE, *.zip ; .exe ");
+        assert_eq!(norm.as_deref(), Some("exe, zip"));
+        assert_eq!(format_extension_filter_badge("exe, zip"), ".exe, .zip");
+
+        assert!(matches_extension_filter(&entries[0], "exe, zip"));
+        assert!(!matches_extension_filter(&entries[1], "exe, zip"));
+        assert!(matches_extension_filter(&entries[2], "exe, zip"));
+        assert!(!matches_extension_filter(&entries[3], "exe, zip"));
+
+        assert!(matches_extension_filter(&entries[1], ".tar.gz"));
+        assert!(!matches_extension_filter(&entries[2], ".tar.gz"));
+
+        assert!(matches_extension_filter(&entries[3], DIR_FILTER_SENTINEL));
+        assert!(!matches_extension_filter(&entries[0], DIR_FILTER_SENTINEL));
+
+        assert_eq!(normalize_extension_filter_input("   ... , "), None);
     }
 }

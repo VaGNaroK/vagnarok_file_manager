@@ -434,6 +434,7 @@ pub struct Strings {
     pub ctx_shortcut_here_unix: &'static str,
     pub ctx_shortcut_here_win: &'static str,
     pub shortcut_desktop_missing: &'static str,
+    pub filter_ext_placeholder: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -1037,6 +1038,7 @@ impl Strings {
         let ctx_shortcut_here_unix = resolve("ctx-shortcut-here-unix");
         let ctx_shortcut_here_win = resolve("ctx-shortcut-here-win");
         let shortcut_desktop_missing = resolve("shortcut-desktop-missing");
+        let filter_ext_placeholder = resolve("filter-ext-placeholder");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -1440,6 +1442,7 @@ impl Strings {
             ctx_shortcut_here_unix,
             ctx_shortcut_here_win,
             shortcut_desktop_missing,
+            filter_ext_placeholder,
         }
     }
 }

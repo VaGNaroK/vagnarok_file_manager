@@ -462,6 +462,7 @@ ctx-shortcut-desktop = Créer un raccourci sur le Bureau
 ctx-shortcut-here-unix = Créer un lien symbolique ici
 ctx-shortcut-here-win = Créer un raccourci ici
 shortcut-desktop-missing = Dossier Bureau introuvable.
+filter-ext-placeholder = ex. : .exe, .zip...
 shortcuts-created =
     { $count ->
         [one] Raccourci créé avec succès.

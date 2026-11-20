@@ -462,6 +462,7 @@ ctx-shortcut-desktop = Create Desktop shortcut
 ctx-shortcut-here-unix = Create symbolic link here
 ctx-shortcut-here-win = Create shortcut here
 shortcut-desktop-missing = Desktop folder not found.
+filter-ext-placeholder = e.g. .exe, .zip...
 shortcuts-created =
     { $count ->
         [one] Shortcut created.
