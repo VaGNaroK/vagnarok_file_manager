@@ -399,6 +399,12 @@ arch-extracting = Entpacke
 arch-done-compress = Archiv erstellt
 arch-done-extract = Entpacken abgeschlossen
 arch-cancelled = Vorgang abgebrochen
+arch-password-title = Passwortgeschütztes Archiv
+arch-password-hint = Geben Sie das Passwort ein, um dieses Archiv zu entpacken.
+arch-password-placeholder = Passwort...
+arch-password-wrong = Falsches Passwort. Bitte versuchen Sie es erneut.
+arch-password-submit = Entpacken
+arch-password-toggle = Passwort anzeigen oder verbergen
 
 # Duplikatsuche
 dup-menu-action = Doppelte Dateien suchen...

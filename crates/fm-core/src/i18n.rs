@@ -373,6 +373,12 @@ pub struct Strings {
     pub arch_done_compress: &'static str,
     pub arch_done_extract: &'static str,
     pub arch_cancelled: &'static str,
+    pub arch_password_title: &'static str,
+    pub arch_password_hint: &'static str,
+    pub arch_password_placeholder: &'static str,
+    pub arch_password_wrong: &'static str,
+    pub arch_password_submit: &'static str,
+    pub arch_password_toggle: &'static str,
     pub dup_menu_action: &'static str,
     pub dup_modal_title: &'static str,
     pub dup_readonly_error: &'static str,
@@ -994,6 +1000,12 @@ impl Strings {
         let arch_done_compress = resolve("arch-done-compress");
         let arch_done_extract = resolve("arch-done-extract");
         let arch_cancelled = resolve("arch-cancelled");
+        let arch_password_title = resolve("arch-password-title");
+        let arch_password_hint = resolve("arch-password-hint");
+        let arch_password_placeholder = resolve("arch-password-placeholder");
+        let arch_password_wrong = resolve("arch-password-wrong");
+        let arch_password_submit = resolve("arch-password-submit");
+        let arch_password_toggle = resolve("arch-password-toggle");
         let dup_menu_action = resolve("dup-menu-action");
         let dup_modal_title = resolve("dup-modal-title");
         let dup_readonly_error = resolve("dup-readonly-error");
@@ -1408,6 +1420,12 @@ impl Strings {
             arch_done_compress,
             arch_done_extract,
             arch_cancelled,
+            arch_password_title,
+            arch_password_hint,
+            arch_password_placeholder,
+            arch_password_wrong,
+            arch_password_submit,
+            arch_password_toggle,
             dup_menu_action,
             dup_modal_title,
             dup_readonly_error,

@@ -29,7 +29,9 @@ use iced::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::archive_jobs::{ArchiveJobRuntime, ArchiveUiMsg, CompressModalState};
+use crate::archive_jobs::{
+    ArchiveJobRuntime, ArchivePasswordModalState, ArchiveUiMsg, CompressModalState,
+};
 pub use crate::bulk_rename::{
     BulkRenameExtensionKind, BulkRenameInsertKind, BulkRenameModalState, BulkRenameMsg,
     effective_bulk_rename_modal_rect,
@@ -55,6 +57,10 @@ pub fn path_input_id() -> Id {
 
 pub fn filter_ext_input_id() -> Id {
     Id::new("fm_filter_ext_input")
+}
+
+pub fn archive_password_input_id() -> Id {
+    Id::new("fm_archive_password_input")
 }
 
 #[derive(Debug, Clone)]
@@ -682,6 +688,7 @@ pub struct App {
     pub last_bulk_rename_undo: Option<Vec<(PathBuf, PathBuf)>>,
     pub undo_stack: Vec<UndoAction>,
     pub compress_modal: Option<CompressModalState>,
+    pub archive_password_modal: Option<ArchivePasswordModalState>,
     pub archive_jobs: BTreeMap<u64, ArchiveJobRuntime>,
     pub duplicate_finder: Option<DuplicateFinderState>,
     pub prefs_open: bool,
@@ -817,6 +824,7 @@ impl App {
             last_bulk_rename_undo: None,
             undo_stack: Vec::new(),
             compress_modal: None,
+            archive_password_modal: None,
             archive_jobs: BTreeMap::new(),
             duplicate_finder: None,
             prefs_open: false,
@@ -4059,6 +4067,10 @@ impl App {
             Some(views::bulk_rename::bulk_rename_modal_overlay(
                 self, modal, palette, strings,
             ))
+        } else if let Some(modal) = &self.archive_password_modal {
+            Some(views::archive_modal::archive_password_modal_overlay(
+                modal, palette, strings,
+            ))
         } else if let Some(modal) = self.compress_modal.as_ref().filter(|m| !m.minimized) {
             Some(views::archive_modal::compress_modal_overlay(
                 self, modal, palette, strings,
@@ -5558,6 +5570,9 @@ impl App {
             if self.bulk_rename_modal.is_some() {
                 return self.update(Message::BulkRename(BulkRenameMsg::Close));
             }
+            if self.archive_password_modal.is_some() {
+                return self.update(Message::Archive(ArchiveUiMsg::ClosePasswordModal));
+            }
             if compress_modal_visible {
                 return self.update(Message::Archive(ArchiveUiMsg::CloseModal));
             }
@@ -5593,6 +5608,7 @@ impl App {
             Some(ContextMenuKind::FilterMenu)
         );
         let text_input_modal_active = self.bulk_rename_modal.is_some()
+            || self.archive_password_modal.is_some()
             || compress_modal_visible
             || dup_modal_visible
             || self.active_dialog.is_some()
@@ -5615,6 +5631,8 @@ impl App {
             if matches!(key.as_ref(), keyboard::Key::Named(Named::Escape)) {
                 if self.bulk_rename_modal.is_some() {
                     return self.update(Message::BulkRename(BulkRenameMsg::Close));
+                } else if self.archive_password_modal.is_some() {
+                    return self.update(Message::Archive(ArchiveUiMsg::ClosePasswordModal));
                 } else if compress_modal_visible {
                     return self.update(Message::Archive(ArchiveUiMsg::CloseModal));
                 } else if dup_modal_visible {

@@ -184,7 +184,7 @@ pub fn list_archive_dir(
     match kind {
         ArchiveKind::Zip => {
             let file = open_shared_archive(archive_path)?;
-            let mut archive = ZipArchive::new(BufReader::new(file)).map_err(|e| FsError::Io {
+            let archive = ZipArchive::new(BufReader::new(file)).map_err(|e| FsError::Io {
                 path: archive_path.to_path_buf(),
                 message: format!("arquivo ZIP inválido: {e}"),
             })?;
@@ -192,7 +192,7 @@ pub fn list_archive_dir(
                 if idx.is_multiple_of(256) && cancel.is_cancelled() {
                     return Err(FsError::Cancelled);
                 }
-                let Ok(entry) = archive.by_index(idx) else {
+                let Ok(entry) = archive.by_index_data(idx) else {
                     continue;
                 };
                 let is_dir = entry.is_dir();

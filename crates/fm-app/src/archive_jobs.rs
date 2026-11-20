@@ -2,15 +2,16 @@ use std::path::PathBuf;
 
 use fm_core::{
     ArchiveFormat, ArchiveJobKind, ArchiveJobProgress, CompressionLevel, ConflictPolicy,
-    ExtractTargetMode, JobState, is_virtual_trash_path, suggest_archive_base_name,
+    ExtractTargetMode, FsError, JobState, is_virtual_trash_path, suggest_archive_base_name,
 };
 use fm_fs::{run_compress_job, run_extract_job};
 use iced::futures::SinkExt;
+use iced::widget::operation;
 use iced::{Point, Size, Task, stream};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::app::{App, Message};
+use crate::app::{App, Message, archive_password_input_id};
 use crate::bulk_rename::clamp_modal_pos;
 
 pub const COMPRESS_MODAL_W: f32 = 540.0;
@@ -24,6 +25,16 @@ pub enum ArchiveUiMsg {
         archive_path: PathBuf,
         mode: ExtractTargetMode,
     },
+    ExtractNeedsPassword {
+        job_id: u64,
+        archive_path: PathBuf,
+        mode: ExtractTargetMode,
+        wrong_password: bool,
+    },
+    PasswordChanged(String),
+    TogglePasswordVisibility,
+    SubmitPassword,
+    ClosePasswordModal,
     CloseModal,
     MinimizeModal,
     RestoreModal,
@@ -36,6 +47,15 @@ pub enum ArchiveUiMsg {
     StartCompress,
     Progress(ArchiveJobProgress),
     CancelJob(u64),
+}
+
+#[derive(Debug, Clone)]
+pub struct ArchivePasswordModalState {
+    pub archive_path: PathBuf,
+    pub mode: ExtractTargetMode,
+    pub password: String,
+    pub show_password: bool,
+    pub wrong_password: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -169,70 +189,57 @@ pub fn handle_archive_msg(app: &mut App, msg: ArchiveUiMsg) -> Task<Message> {
         }
         ArchiveUiMsg::Extract { archive_path, mode } => {
             app.context_menu = None;
-            let strings = app.strings();
-            let Some(tab) = app.current_tab() else {
-                return Task::none();
-            };
-            if is_virtual_trash_path(&tab.current_path)
-                || fm_fs::archive::split_archive_path(&tab.current_path).is_some()
+            dispatch_extract_job(app, archive_path, mode, None)
+        }
+        ArchiveUiMsg::ExtractNeedsPassword {
+            job_id,
+            archive_path,
+            mode,
+            wrong_password,
+        } => {
+            app.archive_jobs.remove(&job_id);
+            if app
+                .compress_modal
+                .as_ref()
+                .is_some_and(|m| m.running_job_id == Some(job_id))
             {
-                app.status_notice = Some(strings.br_readonly_error.to_owned());
-                return Task::none();
+                app.compress_modal = None;
             }
-            let dest_dir = archive_path
-                .parent()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| tab.current_path.clone());
-            let title = archive_path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-
-            let job_id = app.next_job_id;
-            app.next_job_id = app.next_job_id.wrapping_add(1).max(1);
-            let cancel = CancellationToken::new();
-
-            let initial = ArchiveJobProgress {
-                job_id,
-                kind: ArchiveJobKind::Extract { mode },
-                title: title.into(),
-                bytes_done: 0,
-                bytes_total: 0,
-                items_done: 0,
-                items_total: 0,
-                current_item: "...".into(),
-                dest_dir: dest_dir.clone(),
-                output_path: dest_dir,
-                state: JobState::Running,
-            };
-            app.archive_jobs.insert(
-                job_id,
-                ArchiveJobRuntime {
-                    progress: initial,
-                    cancel: cancel.clone(),
-                },
-            );
-
-            let worker_stream = stream::channel(32, async move |mut output| {
-                let (tx, mut rx) = mpsc::unbounded_channel();
-                tokio::spawn(async move {
-                    let _ = run_extract_job(
-                        job_id,
-                        archive_path,
-                        mode,
-                        ConflictPolicy::RenameAuto,
-                        cancel,
-                        tx,
-                    )
-                    .await;
-                });
-                while let Some(progress) = rx.recv().await {
-                    let _ = output
-                        .send(Message::Archive(ArchiveUiMsg::Progress(progress)))
-                        .await;
-                }
+            app.archive_password_modal = Some(ArchivePasswordModalState {
+                archive_path,
+                mode,
+                password: String::new(),
+                show_password: false,
+                wrong_password,
             });
-            Task::run(worker_stream, std::convert::identity)
+            operation::focus(archive_password_input_id())
+        }
+        ArchiveUiMsg::PasswordChanged(val) => {
+            if let Some(modal) = &mut app.archive_password_modal {
+                modal.password = val;
+                modal.wrong_password = false;
+            }
+            Task::none()
+        }
+        ArchiveUiMsg::TogglePasswordVisibility => {
+            if let Some(modal) = &mut app.archive_password_modal {
+                modal.show_password = !modal.show_password;
+            }
+            Task::none()
+        }
+        ArchiveUiMsg::SubmitPassword => {
+            let Some(modal) = app.archive_password_modal.take() else {
+                return Task::none();
+            };
+            if modal.password.is_empty() {
+                app.archive_password_modal = Some(modal);
+                return operation::focus(archive_password_input_id());
+            }
+            dispatch_extract_job(app, modal.archive_path, modal.mode, Some(modal.password))
+        }
+        ArchiveUiMsg::ClosePasswordModal => {
+            app.archive_password_modal = None;
+            Task::none()
         }
         ArchiveUiMsg::CloseModal => {
             if let Some(modal) = &mut app.compress_modal {
@@ -430,6 +437,103 @@ pub fn handle_archive_msg(app: &mut App, msg: ArchiveUiMsg) -> Task<Message> {
             Task::none()
         }
     }
+}
+
+fn dispatch_extract_job(
+    app: &mut App,
+    archive_path: PathBuf,
+    mode: ExtractTargetMode,
+    password: Option<String>,
+) -> Task<Message> {
+    let strings = app.strings();
+    let Some(tab) = app.current_tab() else {
+        return Task::none();
+    };
+    if is_virtual_trash_path(&tab.current_path)
+        || fm_fs::archive::split_archive_path(&tab.current_path).is_some()
+    {
+        app.status_notice = Some(strings.br_readonly_error.to_owned());
+        return Task::none();
+    }
+    let dest_dir = archive_path
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| tab.current_path.clone());
+    let title = archive_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let job_id = app.next_job_id;
+    app.next_job_id = app.next_job_id.wrapping_add(1).max(1);
+    let cancel = CancellationToken::new();
+
+    let initial = ArchiveJobProgress {
+        job_id,
+        kind: ArchiveJobKind::Extract { mode },
+        title: title.into(),
+        bytes_done: 0,
+        bytes_total: 0,
+        items_done: 0,
+        items_total: 0,
+        current_item: "...".into(),
+        dest_dir: dest_dir.clone(),
+        output_path: dest_dir,
+        state: JobState::Running,
+    };
+    app.archive_jobs.insert(
+        job_id,
+        ArchiveJobRuntime {
+            progress: initial,
+            cancel: cancel.clone(),
+        },
+    );
+
+    let archive_for_prompt = archive_path.clone();
+    let worker_stream = stream::channel(32, async move |mut output| {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = tokio::spawn(async move {
+            run_extract_job(
+                job_id,
+                archive_path,
+                mode,
+                ConflictPolicy::RenameAuto,
+                password,
+                cancel,
+                tx,
+            )
+            .await
+        });
+        while let Some(progress) = rx.recv().await {
+            let _ = output
+                .send(Message::Archive(ArchiveUiMsg::Progress(progress)))
+                .await;
+        }
+        match handle.await {
+            Ok(Err(FsError::PasswordRequired(_))) => {
+                let _ = output
+                    .send(Message::Archive(ArchiveUiMsg::ExtractNeedsPassword {
+                        job_id,
+                        archive_path: archive_for_prompt,
+                        mode,
+                        wrong_password: false,
+                    }))
+                    .await;
+            }
+            Ok(Err(FsError::InvalidPassword(_))) => {
+                let _ = output
+                    .send(Message::Archive(ArchiveUiMsg::ExtractNeedsPassword {
+                        job_id,
+                        archive_path: archive_for_prompt,
+                        mode,
+                        wrong_password: true,
+                    }))
+                    .await;
+            }
+            _ => {}
+        }
+    });
+    Task::run(worker_stream, std::convert::identity)
 }
 
 fn collect_writable_selection(app: &mut App) -> Option<(Vec<PathBuf>, u64, PathBuf)> {

@@ -399,6 +399,12 @@ arch-extracting = Extraction
 arch-done-compress = Archive créée
 arch-done-extract = Extraction terminée
 arch-cancelled = Opération annulée
+arch-password-title = Archive protégée par mot de passe
+arch-password-hint = Saisissez le mot de passe pour extraire cette archive.
+arch-password-placeholder = Mot de passe...
+arch-password-wrong = Mot de passe incorrect. Veuillez réessayer.
+arch-password-submit = Extraire
+arch-password-toggle = Afficher ou masquer le mot de passe
 
 # Recherche de fichiers en double
 dup-menu-action = Rechercher les fichiers en double...

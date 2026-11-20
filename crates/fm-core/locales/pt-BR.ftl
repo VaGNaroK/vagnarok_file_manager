@@ -399,6 +399,12 @@ arch-extracting = Extraindo
 arch-done-compress = Compactação concluída
 arch-done-extract = Extração concluída
 arch-cancelled = Operação cancelada
+arch-password-title = Arquivo protegido por senha
+arch-password-hint = Digite a senha para extrair este arquivo.
+arch-password-placeholder = Senha...
+arch-password-wrong = Senha incorreta. Tente novamente.
+arch-password-submit = Extrair
+arch-password-toggle = Mostrar ou ocultar senha
 
 # Buscador de arquivos duplicados
 dup-menu-action = Buscar arquivos duplicados...

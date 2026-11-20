@@ -23,7 +23,7 @@ use sevenz_rust2::{
 use tar::{Archive as TarArchive, Builder as TarBuilder, Header as TarHeader};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
-use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
+use zip::{CompressionMethod, ZipArchive, ZipWriter, result::ZipError, write::SimpleFileOptions};
 
 use crate::archive::{ArchiveKind, detect_archive_kind, open_shared_archive};
 use crate::map_io_err;
@@ -72,11 +72,20 @@ pub async fn run_extract_job(
     archive_path: PathBuf,
     mode: ExtractTargetMode,
     conflict: ConflictPolicy,
+    password: Option<String>,
     cancel: CancellationToken,
     progress_tx: UnboundedSender<ArchiveJobProgress>,
 ) -> Result<PathBuf, FsError> {
     tokio::task::spawn_blocking(move || {
-        extract_blocking(job_id, &archive_path, mode, conflict, &cancel, &progress_tx)
+        extract_blocking(
+            job_id,
+            &archive_path,
+            mode,
+            conflict,
+            password.as_deref(),
+            &cancel,
+            &progress_tx,
+        )
     })
     .await
     .map_err(|err| FsError::Io {
@@ -681,6 +690,7 @@ fn extract_blocking(
     archive_path: &Path,
     mode: ExtractTargetMode,
     conflict: ConflictPolicy,
+    password: Option<&str>,
     cancel: &CancellationToken,
     tx: &UnboundedSender<ArchiveJobProgress>,
 ) -> Result<PathBuf, FsError> {
@@ -702,14 +712,16 @@ fn extract_blocking(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
 
-    let dest_root = match mode {
-        ExtractTargetMode::Here => parent_dir.clone(),
+    let (dest_root, created_subfolder) = match mode {
+        ExtractTargetMode::Here => (parent_dir.clone(), None),
         ExtractTargetMode::Subfolder => {
             let base = strip_known_archive_suffix(&archive_name);
             let candidate = parent_dir.join(base);
             let resolved = unique_dir_path(&candidate, conflict);
+            let existed_before = resolved.exists();
             fs::create_dir_all(&resolved).map_err(|e| map_io_err(&resolved, e))?;
-            resolved
+            let created = (!existed_before).then(|| resolved.clone());
+            (resolved, created)
         }
     };
 
@@ -725,12 +737,14 @@ fn extract_blocking(
     tracker.emit_force(JobState::Running);
 
     let res = match kind {
-        ArchiveKind::Zip => extract_zip(archive_path, &dest_root, conflict, &mut tracker),
+        ArchiveKind::Zip => extract_zip(archive_path, &dest_root, conflict, password, &mut tracker),
         ArchiveKind::Tar => extract_tar(archive_path, &dest_root, false, conflict, &mut tracker),
         ArchiveKind::TarGz => extract_tar(archive_path, &dest_root, true, conflict, &mut tracker),
-        ArchiveKind::SevenZ => extract_sevenz(archive_path, &dest_root, conflict, &mut tracker),
+        ArchiveKind::SevenZ => {
+            extract_sevenz(archive_path, &dest_root, conflict, password, &mut tracker)
+        }
         #[cfg(feature = "rar-extract")]
-        ArchiveKind::Rar => extract_rar(archive_path, &dest_root, conflict, &mut tracker),
+        ArchiveKind::Rar => extract_rar(archive_path, &dest_root, conflict, password, &mut tracker),
     };
 
     match res {
@@ -739,8 +753,17 @@ fn extract_blocking(
             Ok(dest_root)
         }
         Err(FsError::Cancelled) => {
+            if let Some(dir) = created_subfolder {
+                let _ = fs::remove_dir(&dir);
+            }
             tracker.emit_force(JobState::Cancelled);
             Err(FsError::Cancelled)
+        }
+        Err(err @ (FsError::PasswordRequired(_) | FsError::InvalidPassword(_))) => {
+            if let Some(dir) = created_subfolder {
+                let _ = fs::remove_dir(&dir);
+            }
+            Err(err)
         }
         Err(err) => {
             tracker.emit_force(JobState::Failed(err.to_string()));
@@ -749,10 +772,25 @@ fn extract_blocking(
     }
 }
 
+fn is_zip_decrypt_io_error(err: &FsError) -> bool {
+    let FsError::Io { message, .. } = err else {
+        return false;
+    };
+    let lower = message.to_ascii_lowercase();
+    lower.contains("authentication code")
+        || lower.contains("invalid password")
+        || lower.contains("corrupt deflate")
+        || lower.contains("invalid deflate")
+        || lower.contains("invalid data")
+        || lower.contains("crc")
+        || lower.contains("unexpected end of file")
+}
+
 fn extract_zip(
     archive_path: &Path,
     dest_root: &Path,
     conflict: ConflictPolicy,
+    password: Option<&str>,
     tracker: &mut ProgressTracker<'_>,
 ) -> Result<(), FsError> {
     let file = open_shared_archive(archive_path)?;
@@ -764,12 +802,19 @@ fn extract_zip(
 
     tracker.items_total = archive.len();
     let mut total_bytes = 0u64;
+    let mut has_encrypted = false;
     for i in 0..archive.len() {
-        if let Ok(entry) = archive.by_index(i)
+        if let Ok(entry) = archive.by_index_data(i)
             && !entry.is_dir()
         {
             total_bytes = total_bytes.saturating_add(entry.size());
+            if entry.encrypted() {
+                has_encrypted = true;
+            }
         }
+    }
+    if has_encrypted && password.is_none() {
+        return Err(FsError::PasswordRequired(archive_path.to_path_buf()));
     }
     tracker.bytes_total = total_bytes;
     tracker.emit_force(JobState::Running);
@@ -778,9 +823,19 @@ fn extract_zip(
         if tracker.cancel.is_cancelled() {
             return Err(FsError::Cancelled);
         }
-        let mut entry = archive.by_index(i).map_err(|e| FsError::Io {
-            path: archive_path.to_path_buf(),
-            message: e.to_string(),
+        let open_res = match password {
+            Some(pw) => archive.by_index_decrypt(i, pw.as_bytes()),
+            None => archive.by_index(i),
+        };
+        let mut entry = open_res.map_err(|e| match e {
+            ZipError::UnsupportedArchive(msg) if msg == ZipError::PASSWORD_REQUIRED => {
+                FsError::PasswordRequired(archive_path.to_path_buf())
+            }
+            ZipError::InvalidPassword => FsError::InvalidPassword(archive_path.to_path_buf()),
+            other => FsError::Io {
+                path: archive_path.to_path_buf(),
+                message: other.to_string(),
+            },
         })?;
 
         if entry.is_symlink() {
@@ -788,6 +843,7 @@ fn extract_zip(
             continue;
         }
 
+        let entry_encrypted = entry.encrypted();
         let raw_name = entry.name().unwrap_or_default().into_owned();
         let Some(rel_path) = sanitize_archive_rel_path(&raw_name) else {
             tracker.items_done += 1;
@@ -799,8 +855,11 @@ fn extract_zip(
 
         if entry.is_dir() {
             fs::create_dir_all(&out_path).map_err(|e| map_io_err(&out_path, e))?;
-        } else {
-            write_extracted_stream(&out_path, conflict, &mut entry, tracker)?;
+        } else if let Err(err) = write_extracted_stream(&out_path, conflict, &mut entry, tracker) {
+            if entry_encrypted && password.is_some() && is_zip_decrypt_io_error(&err) {
+                return Err(FsError::InvalidPassword(archive_path.to_path_buf()));
+            }
+            return Err(err);
         }
         tracker.items_done += 1;
     }
@@ -869,21 +928,66 @@ fn extract_tar_stream<R: Read>(
     Ok(())
 }
 
+fn map_sevenz_error(
+    err: sevenz_rust2::Error,
+    archive_path: &Path,
+    had_password: bool,
+    known_encrypted: bool,
+) -> FsError {
+    match err {
+        sevenz_rust2::Error::PasswordRequired => {
+            if had_password {
+                FsError::InvalidPassword(archive_path.to_path_buf())
+            } else {
+                FsError::PasswordRequired(archive_path.to_path_buf())
+            }
+        }
+        sevenz_rust2::Error::MaybeBadPassword(_) => {
+            if had_password {
+                FsError::InvalidPassword(archive_path.to_path_buf())
+            } else {
+                FsError::PasswordRequired(archive_path.to_path_buf())
+            }
+        }
+        sevenz_rust2::Error::ChecksumVerificationFailed
+        | sevenz_rust2::Error::NextHeaderCrcMismatch
+            if had_password || known_encrypted =>
+        {
+            if had_password {
+                FsError::InvalidPassword(archive_path.to_path_buf())
+            } else {
+                FsError::PasswordRequired(archive_path.to_path_buf())
+            }
+        }
+        other => FsError::Io {
+            path: archive_path.to_path_buf(),
+            message: format!("arquivo 7z inválido ou protegido por senha: {other}"),
+        },
+    }
+}
+
 fn extract_sevenz(
     archive_path: &Path,
     dest_root: &Path,
     conflict: ConflictPolicy,
+    password: Option<&str>,
     tracker: &mut ProgressTracker<'_>,
 ) -> Result<(), FsError> {
     let file = open_shared_archive(archive_path)?;
-    let mut reader = SevenZReader::new(
-        BufReader::with_capacity(IO_BUF_BYTES, file),
-        SevenZPassword::empty(),
-    )
-    .map_err(|e| FsError::Io {
-        path: archive_path.to_path_buf(),
-        message: format!("arquivo 7z inválido ou protegido por senha: {e}"),
-    })?;
+    let sz_password = password
+        .map(SevenZPassword::from)
+        .unwrap_or_else(SevenZPassword::empty);
+    let mut reader = SevenZReader::new(BufReader::with_capacity(IO_BUF_BYTES, file), sz_password)
+        .map_err(|e| map_sevenz_error(e, archive_path, password.is_some(), false))?;
+
+    let has_encrypted_blocks = reader.archive().blocks.iter().any(|b| {
+        b.coders
+            .iter()
+            .any(|c| c.encoder_method_id() == EncoderMethod::AES256_SHA256.id())
+    });
+    if has_encrypted_blocks && password.is_none() {
+        return Err(FsError::PasswordRequired(archive_path.to_path_buf()));
+    }
 
     tracker.items_total = reader.archive().files.len();
     tracker.bytes_total = reader
@@ -924,10 +1028,7 @@ fn extract_sevenz(
             if tracker.cancel.is_cancelled() {
                 FsError::Cancelled
             } else {
-                FsError::Io {
-                    path: archive_path.to_path_buf(),
-                    message: e.to_string(),
-                }
+                map_sevenz_error(e, archive_path, password.is_some(), has_encrypted_blocks)
             }
         })?;
 
@@ -939,14 +1040,39 @@ fn extract_sevenz(
 }
 
 #[cfg(feature = "rar-extract")]
+fn map_rar_error(err: unrar_rs::RarError, archive_path: &Path, had_password: bool) -> FsError {
+    match err {
+        unrar_rs::RarError::EncryptedArchive | unrar_rs::RarError::EncryptedMember { .. } => {
+            if had_password {
+                FsError::InvalidPassword(archive_path.to_path_buf())
+            } else {
+                FsError::PasswordRequired(archive_path.to_path_buf())
+            }
+        }
+        unrar_rs::RarError::InvalidPassword | unrar_rs::RarError::WrongPassword { .. } => {
+            FsError::InvalidPassword(archive_path.to_path_buf())
+        }
+        other => FsError::Io {
+            path: archive_path.to_path_buf(),
+            message: other.to_string(),
+        },
+    }
+}
+
+#[cfg(feature = "rar-extract")]
 fn extract_rar(
     archive_path: &Path,
     dest_root: &Path,
     conflict: ConflictPolicy,
+    password: Option<&str>,
     tracker: &mut ProgressTracker<'_>,
 ) -> Result<(), FsError> {
-    let mut archive = open_rar_archive_with_volumes(archive_path)?;
+    let mut archive = open_rar_archive_with_volumes(archive_path, password)?;
     let members: Vec<_> = archive.entries().collect();
+
+    if password.is_none() && members.iter().any(|m| m.is_encrypted) {
+        return Err(FsError::PasswordRequired(archive_path.to_path_buf()));
+    }
 
     tracker.items_total = members.len();
     tracker.bytes_total = members
@@ -994,23 +1120,20 @@ fn extract_rar(
                 inner: BufWriter::with_capacity(IO_BUF_BYTES, out_file),
                 tracker,
             };
-            let copy_res = archive
+            let mut entry = archive
                 .by_index(idx)
-                .map_err(|e| FsError::Io {
-                    path: archive_path.to_path_buf(),
-                    message: e.to_string(),
-                })?
-                .copy_to(&mut writer);
+                .map_err(|e| map_rar_error(e, archive_path, password.is_some()))?;
+            if let Some(pw) = password {
+                entry = entry.with_password(pw);
+            }
+            let copy_res = entry.copy_to(&mut writer);
             let flush_res = writer.inner.flush();
             drop(writer);
 
             if tracker.cancel.is_cancelled() {
                 return Err(FsError::Cancelled);
             }
-            copy_res.map_err(|e| FsError::Io {
-                path: archive_path.to_path_buf(),
-                message: e.to_string(),
-            })?;
+            copy_res.map_err(|e| map_rar_error(e, archive_path, password.is_some()))?;
             flush_res.map_err(|e| map_io_err(&tmp_part, e))?;
             if final_path.exists() {
                 let _ = fs::remove_file(&final_path);
@@ -1025,25 +1148,31 @@ fn extract_rar(
 }
 
 #[cfg(feature = "rar-extract")]
-fn open_rar_archive_with_volumes(archive_path: &Path) -> Result<unrar_rs::RarArchive, FsError> {
+fn open_rar_archive_with_volumes(
+    archive_path: &Path,
+    password: Option<&str>,
+) -> Result<unrar_rs::RarArchive, FsError> {
     let volumes = discover_rar_volume_paths(archive_path);
-    if volumes.len() <= 1 {
-        let file = open_shared_archive(archive_path)?;
-        return unrar_rs::RarArchive::open(file).map_err(|e| FsError::Io {
-            path: archive_path.to_path_buf(),
-            message: format!("arquivo RAR inválido ou protegido por senha: {e}"),
-        });
+    let first_file = open_shared_archive(
+        volumes
+            .first()
+            .map(PathBuf::as_path)
+            .unwrap_or(archive_path),
+    )?;
+    let mut archive = match password {
+        Some(pw) => unrar_rs::RarArchive::open_with_password(first_file, pw),
+        None => unrar_rs::RarArchive::open(first_file),
+    }
+    .map_err(|e| map_rar_error(e, archive_path, password.is_some()))?;
+
+    for (idx, vol_path) in volumes.iter().enumerate().skip(1) {
+        let file = open_shared_archive(vol_path)?;
+        archive
+            .add_volume(idx, Box::new(file))
+            .map_err(|e| map_rar_error(e, archive_path, password.is_some()))?;
     }
 
-    let mut readers: Vec<Box<dyn unrar_rs::ReadSeek>> = Vec::with_capacity(volumes.len());
-    for vol_path in &volumes {
-        let file = open_shared_archive(vol_path)?;
-        readers.push(Box::new(file));
-    }
-    unrar_rs::RarArchive::open_volumes(readers).map_err(|e| FsError::Io {
-        path: archive_path.to_path_buf(),
-        message: format!("arquivo RAR multi-volume inválido ou protegido: {e}"),
-    })
+    Ok(archive)
 }
 
 /// Descobre volumes sequenciais `.part1.rar`, `.part2.rar`, ... na mesma pasta caso o alvo seja multi-volume.
@@ -1288,6 +1417,7 @@ mod tests {
                 archive_path.clone(),
                 ExtractTargetMode::Subfolder,
                 ConflictPolicy::Overwrite,
+                None,
                 cancel,
                 tx2,
             ))
@@ -1336,6 +1466,7 @@ mod tests {
             moved_zip,
             ExtractTargetMode::Here,
             ConflictPolicy::Overwrite,
+            None,
             CancellationToken::new(),
             tx,
         ))
@@ -1389,6 +1520,135 @@ mod tests {
 
         let found = discover_rar_volume_paths(&p1);
         assert_eq!(found, vec![p1, p2]);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_encrypted_zip_aes_requires_valid_password() {
+        let root = temp_workspace("zip_aes");
+        let zip_path = root.join("secret.zip");
+        {
+            let f = File::create(&zip_path).expect("create zip");
+            let mut w = ZipWriter::new(f);
+            let opts = SimpleFileOptions::default()
+                .compression_method(CompressionMethod::Deflated)
+                .with_aes_encryption(zip::AesMode::Aes256, "vagnarok123");
+            w.start_file("segredo.txt", opts).expect("start encrypted");
+            w.write_all(b"conteudo ultra secreto")
+                .expect("write secret");
+            w.finish().expect("finish zip");
+        }
+
+        let (tx1, _rx1) = mpsc::unbounded_channel();
+        let err_missing = run_async(run_extract_job(
+            10,
+            zip_path.clone(),
+            ExtractTargetMode::Subfolder,
+            ConflictPolicy::Overwrite,
+            None,
+            CancellationToken::new(),
+            tx1,
+        ));
+        assert!(matches!(err_missing, Err(FsError::PasswordRequired(_))));
+        assert!(!root.join("secret").exists());
+
+        let (tx2, _rx2) = mpsc::unbounded_channel();
+        let err_wrong = run_async(run_extract_job(
+            11,
+            zip_path.clone(),
+            ExtractTargetMode::Subfolder,
+            ConflictPolicy::Overwrite,
+            Some("senha_errada".to_owned()),
+            CancellationToken::new(),
+            tx2,
+        ));
+        assert!(matches!(err_wrong, Err(FsError::InvalidPassword(_))));
+        assert!(!root.join("secret").exists());
+
+        let (tx3, _rx3) = mpsc::unbounded_channel();
+        let extracted = run_async(run_extract_job(
+            12,
+            zip_path,
+            ExtractTargetMode::Subfolder,
+            ConflictPolicy::Overwrite,
+            Some("vagnarok123".to_owned()),
+            CancellationToken::new(),
+            tx3,
+        ))
+        .expect("extract with valid password ok");
+        assert_eq!(
+            fs::read(extracted.join("segredo.txt")).expect("read secret"),
+            b"conteudo ultra secreto"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_encrypted_sevenz_requires_valid_password() {
+        let root = temp_workspace("7z_aes");
+        let sz_path = root.join("cofre.7z");
+        {
+            let f = File::create(&sz_path).expect("create 7z");
+            let mut writer = SevenZWriter::new(f).expect("7z writer");
+            writer.set_content_methods(vec![
+                sevenz_rust2::encoder_options::AesEncoderOptions::new(SevenZPassword::from(
+                    "chave7z!",
+                ))
+                .into(),
+                EncoderConfiguration::new(EncoderMethod::LZMA2),
+            ]);
+            let mut entry = SevenZEntry::new();
+            entry.name = "dados.txt".to_owned();
+            entry.has_stream = true;
+            writer
+                .push_archive_entry(entry, Some(&b"payload cifrado 7z"[..]))
+                .expect("push entry");
+            writer.finish().expect("finish 7z");
+        }
+
+        let (tx1, _rx1) = mpsc::unbounded_channel();
+        let err_missing = run_async(run_extract_job(
+            20,
+            sz_path.clone(),
+            ExtractTargetMode::Subfolder,
+            ConflictPolicy::Overwrite,
+            None,
+            CancellationToken::new(),
+            tx1,
+        ));
+        assert!(matches!(err_missing, Err(FsError::PasswordRequired(_))));
+        assert!(!root.join("cofre").exists());
+
+        let (tx2, _rx2) = mpsc::unbounded_channel();
+        let err_wrong = run_async(run_extract_job(
+            21,
+            sz_path.clone(),
+            ExtractTargetMode::Subfolder,
+            ConflictPolicy::Overwrite,
+            Some("errada".to_owned()),
+            CancellationToken::new(),
+            tx2,
+        ));
+        assert!(matches!(err_wrong, Err(FsError::InvalidPassword(_))));
+        assert!(!root.join("cofre").exists());
+
+        let (tx3, _rx3) = mpsc::unbounded_channel();
+        let extracted = run_async(run_extract_job(
+            22,
+            sz_path,
+            ExtractTargetMode::Subfolder,
+            ConflictPolicy::Overwrite,
+            Some("chave7z!".to_owned()),
+            CancellationToken::new(),
+            tx3,
+        ))
+        .expect("extract 7z with valid password ok");
+        assert_eq!(
+            fs::read(extracted.join("dados.txt")).expect("read dados"),
+            b"payload cifrado 7z"
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

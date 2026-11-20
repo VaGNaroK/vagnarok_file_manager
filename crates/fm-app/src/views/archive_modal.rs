@@ -9,13 +9,18 @@ use iced::widget::{
     Space, button, column, container, mouse_area, pick_list, row, space, text, text_input,
 };
 use iced::{Color, Element, Length, mouse};
-use lucide_icons::iced::{icon_file_archive, icon_minus, icon_x};
-
-use crate::app::{App, Message};
-use crate::archive_jobs::{
-    ArchiveUiMsg, COMPRESS_MODAL_W, CompressModalState, effective_compress_modal_pos,
+use lucide_icons::iced::{
+    icon_eye, icon_eye_off, icon_file_archive, icon_lock, icon_minus, icon_x,
 };
-use crate::views::{modal_overlay_backdrop_at, sanitize_single_line, with_tooltip};
+
+use crate::app::{App, Message, archive_password_input_id};
+use crate::archive_jobs::{
+    ArchivePasswordModalState, ArchiveUiMsg, COMPRESS_MODAL_W, CompressModalState,
+    effective_compress_modal_pos,
+};
+use crate::views::{
+    modal_overlay_backdrop, modal_overlay_backdrop_at, sanitize_single_line, with_tooltip,
+};
 
 #[derive(Debug, Clone, Copy)]
 struct LabeledOption<T: PartialEq + Copy> {
@@ -485,4 +490,138 @@ fn running_progress_body<'a>(
     .spacing(12)
     .width(Length::Fill)
     .into()
+}
+
+/// Modal centralizado solicitando senha para extração de arquivos criptografados (`.zip`, `.7z`, `.rar`).
+pub fn archive_password_modal_overlay<'a>(
+    modal: &'a ArchivePasswordModalState,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let file_name = modal
+        .archive_path
+        .file_name()
+        .map(|n| sanitize_single_line(&n.to_string_lossy()))
+        .unwrap_or_default();
+
+    let header = row![
+        container(icon_lock().size(15).color(palette.accent_primary))
+            .padding(6)
+            .style(move |_| styles::panel_surface(
+                palette.accent_surface,
+                palette.accent_border,
+                8.0
+            )),
+        text(strings.arch_password_title)
+            .size(14)
+            .font(FONT_UI_SEMIBOLD)
+            .color(palette.text_primary),
+        space::horizontal(),
+        button(icon_x().size(14))
+            .padding([5, 7])
+            .style(styles::ghost_button(palette, 6.0))
+            .on_press(Message::Archive(ArchiveUiMsg::ClosePasswordModal)),
+    ]
+    .spacing(10)
+    .align_y(Center);
+
+    let file_badge = container(
+        text(file_name)
+            .size(12)
+            .font(FONT_MONO)
+            .color(palette.text_primary)
+            .wrapping(text::Wrapping::None),
+    )
+    .padding([6, 10])
+    .width(Length::Fill)
+    .clip(true)
+    .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 8.0));
+
+    let eye_icon = if modal.show_password {
+        icon_eye_off().size(15)
+    } else {
+        icon_eye().size(15)
+    };
+    let toggle_btn = with_tooltip(
+        button(eye_icon)
+            .padding([6, 8])
+            .style(styles::ghost_button(palette, 6.0))
+            .on_press(Message::Archive(ArchiveUiMsg::TogglePasswordVisibility)),
+        strings.arch_password_toggle,
+        iced::widget::tooltip::Position::Bottom,
+        palette,
+    );
+
+    let password_row = container(
+        row![
+            text_input(strings.arch_password_placeholder, &modal.password)
+                .id(archive_password_input_id())
+                .secure(!modal.show_password)
+                .on_input(|val| Message::Archive(ArchiveUiMsg::PasswordChanged(val)))
+                .on_submit(Message::Archive(ArchiveUiMsg::SubmitPassword))
+                .size(13)
+                .padding([7, 10])
+                .width(Length::Fill)
+                .style(styles::search_input_style(palette)),
+            toggle_btn,
+        ]
+        .spacing(4)
+        .align_y(Center),
+    )
+    .padding([2, 4])
+    .width(Length::Fill)
+    .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border_strong, 10.0));
+
+    let mut content = column![
+        header,
+        container(Space::new().width(Length::Fill).height(1)).style(styles::divider_line(palette)),
+        text(strings.arch_password_hint)
+            .size(12)
+            .font(FONT_UI)
+            .color(palette.text_secondary),
+        file_badge,
+        password_row,
+    ]
+    .spacing(10)
+    .width(Length::Fill);
+
+    if modal.wrong_password {
+        content = content.push(
+            text(strings.arch_password_wrong)
+                .size(12)
+                .font(FONT_UI_SEMIBOLD)
+                .color(palette.status_error),
+        );
+    }
+
+    let can_submit = !modal.password.is_empty();
+    let mut submit_btn = button(
+        text(strings.arch_password_submit)
+            .size(12)
+            .font(FONT_UI_SEMIBOLD),
+    )
+    .padding([7, 16])
+    .style(styles::pill_primary_button(palette));
+    if can_submit {
+        submit_btn = submit_btn.on_press(Message::Archive(ArchiveUiMsg::SubmitPassword));
+    }
+
+    let actions = row![
+        space::horizontal(),
+        button(text(strings.cancel).size(12))
+            .padding([7, 14])
+            .style(styles::pill_secondary_button(palette))
+            .on_press(Message::Archive(ArchiveUiMsg::ClosePasswordModal)),
+        submit_btn,
+    ]
+    .spacing(8)
+    .align_y(Center);
+
+    content = content.push(actions);
+
+    let card = container(content.padding(16))
+        .width(Length::Fixed(430.0))
+        .style(styles::modal_card(palette));
+
+    modal_overlay_backdrop(card)
 }

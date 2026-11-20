@@ -14,6 +14,10 @@ pub enum FsError {
     PermissionDenied(PathBuf),
     #[error("operação cancelada")]
     Cancelled,
+    #[error("senha necessária para extrair o arquivo: {0}")]
+    PasswordRequired(PathBuf),
+    #[error("senha incorreta para o arquivo: {0}")]
+    InvalidPassword(PathBuf),
     #[error("falha de I/O em {path}: {message}")]
     Io { path: PathBuf, message: String },
 }

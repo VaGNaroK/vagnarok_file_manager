@@ -399,6 +399,12 @@ arch-extracting = Estrazione
 arch-done-compress = Archivio creato
 arch-done-extract = Estrazione completata
 arch-cancelled = Operazione annullata
+arch-password-title = Archivio protetto da password
+arch-password-hint = Inserisci la password per estrarre questo archivio.
+arch-password-placeholder = Password...
+arch-password-wrong = Password errata. Riprova.
+arch-password-submit = Estrai
+arch-password-toggle = Mostra o nascondi password
 
 # Ricerca file duplicati
 dup-menu-action = Cerca file duplicati...
