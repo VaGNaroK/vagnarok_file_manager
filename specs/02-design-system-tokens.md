@@ -18,8 +18,8 @@ Todos os componentes visuais em `fm-app` devem consumir exclusivamente os tokens
 | `border` | `#E2E8F0` | Divisores `1px` estruturais |
 | `border_strong` | `#CBD5E1` | Bordas de controles interativos / hover |
 | `text_primary` | `#0F172A` | Nomes de arquivos, títulos |
-| `text_secondary` | `#64748B` | Tamanhos, metadados secundários, abas inativas |
-| `text_muted` | `#94A3B8` | Headers de seção (`QUICK ACCESS`), separadores `>` |
+| `text_secondary` | `#334155` | Tamanhos, metadados secundários, abas inativas, itens da sidebar |
+| `text_muted` | `#475569` | Headers de seção (`QUICK ACCESS`), separadores `>`, rótulos de modais |
 | `accent_primary` | `#2563EB` | Botão `+ Novo`, item selecionado, ícones ativos |
 | `accent_primary_hover` | `#1D4ED8` | Hover do botão primário |
 | `accent_surface` | `rgba(37, 99, 235, 0.10)` | Fundo de item selecionado no Grid/Table |

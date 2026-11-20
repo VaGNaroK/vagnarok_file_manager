@@ -67,8 +67,8 @@ impl ThemePalette {
             border: hex(0xE2E8F0),
             border_strong: hex(0xCBD5E1),
             text_primary: hex(0x0F172A),
-            text_secondary: hex(0x64748B),
-            text_muted: hex(0x94A3B8),
+            text_secondary: hex(0x334155),
+            text_muted: hex(0x475569),
             accent_primary: hex(0x2563EB),
             accent_primary_hover: hex(0x1D4ED8),
             accent_surface: rgba(0x25, 0x63, 0xEB, 0.10),
@@ -145,6 +145,24 @@ const fn rgba(r: u8, g: u8, b: u8, a: f32) -> Color {
 mod tests {
     use super::*;
 
+    fn relative_luminance(c: Color) -> f32 {
+        fn linear(channel: f32) -> f32 {
+            if channel <= 0.03928 {
+                channel / 12.92
+            } else {
+                ((channel + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
+    }
+
+    fn contrast_ratio(fg: Color, bg: Color) -> f32 {
+        let l1 = relative_luminance(fg);
+        let l2 = relative_luminance(bg);
+        let (hi, lo) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
     #[test]
     fn palettes_have_distinct_backgrounds_and_valid_channels() {
         let light = ThemePalette::aether_light();
@@ -152,5 +170,22 @@ mod tests {
         assert_ne!(light.canvas, dark.canvas);
         assert!(light.canvas.r > 0.9);
         assert!(dark.canvas.r < 0.1);
+    }
+
+    #[test]
+    fn text_tokens_meet_wcag_aa_contrast_on_surfaces() {
+        let light = ThemePalette::aether_light();
+        for surface in [light.canvas, light.surface_lowest, light.surface_low] {
+            assert!(contrast_ratio(light.text_primary, surface) >= 10.0);
+            assert!(contrast_ratio(light.text_secondary, surface) >= 7.0);
+            assert!(contrast_ratio(light.text_muted, surface) >= 4.5);
+        }
+
+        let dark = ThemePalette::obsidian_flow();
+        for surface in [dark.canvas, dark.surface_lowest, dark.surface_low] {
+            assert!(contrast_ratio(dark.text_primary, surface) >= 10.0);
+            assert!(contrast_ratio(dark.text_secondary, surface) >= 7.0);
+            assert!(contrast_ratio(dark.text_muted, surface) >= 4.5);
+        }
     }
 }
