@@ -116,7 +116,6 @@ pub struct Strings {
     pub default_view_label: &'static str,
     pub view_grid: &'static str,
     pub view_list: &'static str,
-    pub view_columns: &'static str,
     pub window_bar_native: &'static str,
     pub window_bar_csd: &'static str,
     pub pin_favorite: &'static str,
@@ -211,7 +210,6 @@ pub struct Strings {
     pub tip_deep_search: &'static str,
     pub tip_view_grid: &'static str,
     pub tip_view_list: &'static str,
-    pub tip_view_columns: &'static str,
     pub tip_new_item: &'static str,
     pub tip_group_folders: &'static str,
     pub tip_zoom_out: &'static str,
@@ -739,7 +737,6 @@ impl Strings {
         let default_view_label = resolve("default-view-label");
         let view_grid = resolve("view-grid");
         let view_list = resolve("view-list");
-        let view_columns = resolve("view-columns");
         let window_bar_native = resolve("window-bar-native");
         let window_bar_csd = resolve("window-bar-csd");
         let pin_favorite = resolve("pin-favorite");
@@ -834,7 +831,6 @@ impl Strings {
         let tip_deep_search = resolve("tip-deep-search");
         let tip_view_grid = resolve("tip-view-grid");
         let tip_view_list = resolve("tip-view-list");
-        let tip_view_columns = resolve("tip-view-columns");
         let tip_new_item = resolve("tip-new-item");
         let tip_group_folders = resolve("tip-group-folders");
         let tip_zoom_out = resolve("tip-zoom-out");
@@ -1155,7 +1151,6 @@ impl Strings {
             default_view_label,
             view_grid,
             view_list,
-            view_columns,
             window_bar_native,
             window_bar_csd,
             pin_favorite,
@@ -1250,7 +1245,6 @@ impl Strings {
             tip_deep_search,
             tip_view_grid,
             tip_view_list,
-            tip_view_columns,
             tip_new_item,
             tip_group_folders,
             tip_zoom_out,

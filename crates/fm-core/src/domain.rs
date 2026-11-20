@@ -315,9 +315,9 @@ pub fn is_mountable_disk_image(path: &Path) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ViewMode {
     #[default]
+    #[serde(alias = "Columns")]
     Grid,
     DetailTable,
-    Columns,
 }
 
 /// Operação de transferência na área de transferência ou fila do `CopyEngine`.

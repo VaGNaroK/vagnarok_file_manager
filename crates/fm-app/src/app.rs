@@ -475,11 +475,6 @@ pub enum Message {
         restored_path: PathBuf,
         result: Result<(), FsError>,
     },
-    ColumnPreviewLoaded {
-        request_id: u64,
-        path: PathBuf,
-        entries: Vec<FileEntry>,
-    },
     ToggleFavoriteActive,
     RemoveFavorite(PathBuf),
     OpenSidebarContextMenu {
@@ -617,7 +612,6 @@ pub enum Message {
     CopyText(String, String),
     StartColumnResize(usize),
     StartGridResize,
-    StartColumnsPanelResize,
     StartSidebarResize,
     StartPropertiesResize,
     SidebarDividerHovered(bool),
@@ -653,10 +647,6 @@ pub enum Message {
         modifiers: keyboard::Modifiers,
     },
     MetaCacheReady(Option<Arc<DiskMetadataCache>>),
-    ColumnAncestorsLoaded {
-        request_id: u64,
-        ancestors: Vec<(PathBuf, Vec<FileEntry>)>,
-    },
 }
 
 pub struct App {
@@ -672,17 +662,9 @@ pub struct App {
     pub preview_request_id: u64,
     pub selection_telemetry_cancel: Option<CancellationToken>,
     pub selection_telemetry_request_id: u64,
-    pub column_preview_cancel: Option<CancellationToken>,
-    pub column_preview_request_id: u64,
-    pub column_preview: Option<(PathBuf, Vec<FileEntry>)>,
-    pub column_ancestors: Vec<(PathBuf, Vec<FileEntry>)>,
-    pub column_ancestors_request_id: u64,
-    pub column_ancestors_cancel: Option<CancellationToken>,
     pub table_col_weights: [f32; 5],
     pub resizing_col: Option<(usize, f32, [f32; 5])>,
     pub resizing_grid: Option<(f32, f32)>,
-    pub columns_panel_width: f32,
-    pub resizing_columns_panel: Option<(f32, f32)>,
     pub resizing_sidebar: Option<(f32, f32)>,
     pub sidebar_divider_hovered: bool,
     pub properties_modal_size: (f32, f32),
@@ -815,17 +797,9 @@ impl App {
             preview_request_id: 0,
             selection_telemetry_cancel: None,
             selection_telemetry_request_id: 0,
-            column_preview_cancel: None,
-            column_preview_request_id: 0,
-            column_preview: None,
-            column_ancestors: Vec::new(),
-            column_ancestors_request_id: 0,
-            column_ancestors_cancel: None,
             table_col_weights: [48.0, 11.0, 9.0, 17.0, 15.0],
             resizing_col: None,
             resizing_grid: None,
-            columns_panel_width: 280.0,
-            resizing_columns_panel: None,
             resizing_sidebar: None,
             sidebar_divider_hovered: false,
             properties_modal_size: (760.0, 560.0),
@@ -1056,11 +1030,9 @@ impl App {
                     self.quicklook_open = false;
                     self.canvas_scroll_y = 0.0;
                     let thumb_task = self.queue_visible_thumbnails();
-                    let anc_task = self.maybe_load_column_ancestors();
                     return Task::batch([
                         operation::snap_to(canvas_scroll_id(), RelativeOffset::START),
                         thumb_task,
-                        anc_task,
                     ]);
                 }
                 Task::none()
@@ -1463,12 +1435,6 @@ impl App {
                             views::virtualized::DETAIL_LIST_SIDE_PADDING,
                             rect,
                         ),
-                        ViewMode::Columns => views::virtualized::list_marquee_hits(
-                            tab.visible_entries.len(),
-                            viewport_width,
-                            0.0,
-                            rect,
-                        ),
                     };
 
                     tab.selection.selected_ids = base_selection;
@@ -1531,18 +1497,10 @@ impl App {
                     tab.view_mode = mode;
                 }
                 self.canvas_scroll_y = 0.0;
-                let single = self
-                    .current_tab()
-                    .and_then(|t| t.selection.single_selected(&t.visible_entries))
-                    .cloned();
-                let col_task = self.maybe_load_column_preview(single.as_ref());
-                let anc_task = self.maybe_load_column_ancestors();
                 let thumb_task = self.queue_visible_thumbnails();
                 Task::batch([
                     operation::snap_to(canvas_scroll_id(), RelativeOffset::START),
                     thumb_task,
-                    col_task,
-                    anc_task,
                 ])
             }
             Message::CycleSortField => {
@@ -1902,10 +1860,6 @@ impl App {
                             tab.last_error = Some(err.to_string());
                         }
                     }
-                }
-
-                if tab_id == self.active_tab {
-                    tasks.push(self.maybe_load_column_ancestors());
                 }
 
                 if pending_selected_entry.is_some() {
@@ -2602,16 +2556,6 @@ impl App {
                     Task::none()
                 }
             },
-            Message::ColumnPreviewLoaded {
-                request_id,
-                path,
-                entries,
-            } => {
-                if request_id == self.column_preview_request_id {
-                    self.column_preview = Some((path, entries));
-                }
-                Task::none()
-            }
             Message::ToggleFavoriteActive => {
                 if let Some(cur) = self.current_tab().map(|t| t.current_path.clone()) {
                     if let Some(pos) = self.config.favorites.iter().position(|p| p == &cur) {
@@ -3609,11 +3553,6 @@ impl App {
                 ));
                 Task::none()
             }
-            Message::StartColumnsPanelResize => {
-                self.resizing_columns_panel =
-                    Some((self.cursor_position.x, self.columns_panel_width));
-                Task::none()
-            }
             Message::StartSidebarResize => {
                 let current_w = views::sidebar::effective_sidebar_width(self, self.strings());
                 let start_x = if self.cursor_position.x > 1.0 {
@@ -3644,7 +3583,6 @@ impl App {
                     return Task::none();
                 }
                 self.resizing_col = None;
-                self.resizing_columns_panel = None;
                 self.resizing_properties_modal = None;
                 self.dragging_properties_modal = None;
                 if let Some(modal) = &mut self.bulk_rename_modal {
@@ -3738,9 +3676,6 @@ impl App {
                 if let Some((start_x, initial_w)) = self.resizing_grid {
                     self.config.grid_card_width =
                         views::virtualized::clamp_grid_card_width(initial_w + (pos.x - start_x));
-                }
-                if let Some((start_x, initial_w)) = self.resizing_columns_panel {
-                    self.columns_panel_width = (initial_w + (pos.x - start_x)).clamp(200.0, 480.0);
                 }
                 if let Some((start_x, initial_w)) = self.resizing_sidebar {
                     self.config.sidebar_width = Some(compute_dragged_sidebar_width(
@@ -3847,15 +3782,6 @@ impl App {
             }
             Message::MetaCacheReady(cache) => {
                 self.metadata_cache = cache;
-                Task::none()
-            }
-            Message::ColumnAncestorsLoaded {
-                request_id,
-                ancestors,
-            } => {
-                if request_id == self.column_ancestors_request_id {
-                    self.column_ancestors = ancestors;
-                }
                 Task::none()
             }
             Message::WindowResized { window_id, size } => {
@@ -4901,10 +4827,6 @@ impl App {
         if let Some(cancel) = self.selection_telemetry_cancel.take() {
             cancel.cancel();
         }
-        if let Some(cancel) = self.column_preview_cancel.take() {
-            cancel.cancel();
-        }
-        self.column_preview = None;
         self.status_notice = None;
         self.canvas_scroll_y = 0.0;
         let cancel = self.reset_tab_cancel(tab_id);
@@ -4916,14 +4838,13 @@ impl App {
 
     fn dispatch_selection_side_effects(&mut self, entry: Option<&FileEntry>) -> Task<Message> {
         let tel_task = self.maybe_load_selection_telemetry(entry);
-        let col_task = self.maybe_load_column_preview(entry);
         let preview_task = if self.quicklook_open || self.config.show_inspector {
             self.maybe_load_preview(entry)
         } else {
             Task::none()
         };
         let thumb_task = self.queue_visible_thumbnails();
-        Task::batch([tel_task, col_task, preview_task, thumb_task])
+        Task::batch([tel_task, preview_task, thumb_task])
     }
 
     fn persist_config_task(&self) -> Task<Message> {
@@ -5141,117 +5062,6 @@ impl App {
         });
 
         Task::stream(transfer_stream)
-    }
-
-    fn maybe_load_column_preview(&mut self, entry: Option<&FileEntry>) -> Task<Message> {
-        if let Some(prev) = self.column_preview_cancel.take() {
-            prev.cancel();
-        }
-        let is_columns = self
-            .current_tab()
-            .is_some_and(|t| t.view_mode == ViewMode::Columns);
-        let Some(entry) = entry else {
-            self.column_preview = None;
-            return Task::none();
-        };
-        if !is_columns || !entry.kind.is_dir_like() {
-            self.column_preview = None;
-            return Task::none();
-        }
-        if self
-            .column_preview
-            .as_ref()
-            .is_some_and(|(p, _)| p == &entry.path)
-        {
-            return Task::none();
-        }
-
-        self.column_preview_request_id += 1;
-        let req_id = self.column_preview_request_id;
-        let cancel = CancellationToken::new();
-        self.column_preview_cancel = Some(cancel.clone());
-        let target = entry.path.clone();
-        let show_hidden = self.current_tab().is_some_and(|t| t.show_hidden);
-        let sort = self.current_tab().map(|t| t.sort).unwrap_or_default();
-        let vfs = Arc::clone(&self.vfs);
-
-        Task::perform(
-            async move {
-                let Ok(snap) = vfs.list_dir(&target, req_id, cancel).await else {
-                    return (req_id, target, Vec::new());
-                };
-                let mut entries: Vec<FileEntry> = snap
-                    .entries
-                    .into_iter()
-                    .filter(|e| show_hidden || !e.is_hidden)
-                    .collect();
-                entries.sort_by(|a, b| sort.compare(a, b));
-                (req_id, target, entries)
-            },
-            |(request_id, path, entries)| Message::ColumnPreviewLoaded {
-                request_id,
-                path,
-                entries,
-            },
-        )
-    }
-
-    fn maybe_load_column_ancestors(&mut self) -> Task<Message> {
-        if let Some(prev) = self.column_ancestors_cancel.take() {
-            prev.cancel();
-        }
-        let Some(tab) = self.current_tab() else {
-            self.column_ancestors.clear();
-            return Task::none();
-        };
-        if tab.view_mode != ViewMode::Columns {
-            return Task::none();
-        }
-        let show_hidden = tab.show_hidden;
-        let sort = tab.sort;
-        let mut chain: Vec<PathBuf> = tab
-            .current_path
-            .ancestors()
-            .skip(1)
-            .take(3)
-            .map(PathBuf::from)
-            .collect();
-        chain.reverse();
-        if chain.is_empty() {
-            self.column_ancestors.clear();
-            return Task::none();
-        }
-
-        self.column_ancestors_request_id += 1;
-        let req_id = self.column_ancestors_request_id;
-        let cancel = CancellationToken::new();
-        self.column_ancestors_cancel = Some(cancel.clone());
-        let vfs = Arc::clone(&self.vfs);
-
-        Task::perform(
-            async move {
-                let mut ancestors = Vec::with_capacity(chain.len());
-                for dir in chain {
-                    if cancel.is_cancelled() {
-                        break;
-                    }
-                    if let Ok(snap) = vfs.list_dir(&dir, req_id, cancel.clone()).await {
-                        let mut entries: Vec<FileEntry> = snap
-                            .entries
-                            .into_iter()
-                            .filter(|e| show_hidden || !e.is_hidden)
-                            .collect();
-                        entries.sort_by(|a, b| sort.compare(a, b));
-                        ancestors.push((dir, entries));
-                    }
-                }
-                (req_id, ancestors)
-            },
-            |(request_id, ancestors)| Message::ColumnAncestorsLoaded {
-                request_id,
-                ancestors,
-            },
-        )
     }
 
     fn maybe_load_selection_telemetry(&mut self, entry: Option<&FileEntry>) -> Task<Message> {
@@ -5647,15 +5457,10 @@ impl App {
                         }
                     }
                 }
-                ViewMode::DetailTable | ViewMode::Columns => {
-                    let step = if tab.view_mode == ViewMode::DetailTable {
-                        views::virtualized::DETAIL_ROW_STEP
-                    } else {
-                        32.0
-                    };
+                ViewMode::DetailTable => {
                     let win = views::virtualized::compute_fixed_window(
                         tab.visible_entries.len(),
-                        step,
+                        views::virtualized::DETAIL_ROW_STEP,
                         self.canvas_scroll_y,
                         self.canvas_viewport_height,
                         6,
@@ -5665,30 +5470,6 @@ impl App {
                             SystemIconKey::for_entry(entry, fm_fs::is_archive_file(&entry.path)),
                             entry_bucket,
                         );
-                    }
-                    if tab.view_mode == ViewMode::Columns {
-                        for (_, anc_entries) in &self.column_ancestors {
-                            for child in anc_entries.iter().take(60) {
-                                push_icon(
-                                    SystemIconKey::for_entry(
-                                        child,
-                                        fm_fs::is_archive_file(&child.path),
-                                    ),
-                                    SystemIconBucket::Small24,
-                                );
-                            }
-                        }
-                        if let Some((_, children)) = &self.column_preview {
-                            for child in children.iter().take(60) {
-                                push_icon(
-                                    SystemIconKey::for_entry(
-                                        child,
-                                        fm_fs::is_archive_file(&child.path),
-                                    ),
-                                    SystemIconBucket::Small24,
-                                );
-                            }
-                        }
                     }
                 }
             }
@@ -6150,24 +5931,6 @@ impl App {
         let view_mode = tab.view_mode;
         let focused = tab.selection.focused;
 
-        if view_mode == ViewMode::Columns && dy == 0 {
-            if modifiers.shift() {
-                return Task::none();
-            }
-            if dx < 0 {
-                return self.update(Message::NavigateUp);
-            }
-            if dx > 0
-                && let Some(idx) = focused
-                && let Some(entry) = tab.visible_entries.get(idx)
-                && entry.kind.is_dir_like()
-            {
-                let path = entry.path.clone();
-                return self.navigate_active_tab(path);
-            }
-            return Task::none();
-        }
-
         let (next_idx, visual_order) = if view_mode == ViewMode::Grid {
             let card_w = views::virtualized::clamp_grid_card_width(self.config.grid_card_width);
             let cols =
@@ -6294,10 +6057,6 @@ impl App {
             ViewMode::DetailTable => {
                 let top = idx as f32 * views::virtualized::DETAIL_ROW_STEP;
                 (top, top + views::virtualized::DETAIL_ROW_HEIGHT)
-            }
-            ViewMode::Columns => {
-                let top = idx as f32 * 32.0;
-                (top, top + 28.0)
             }
         };
 

@@ -121,7 +121,6 @@ decorations-label = Window bar
 default-view-label = Default view mode
 view-grid = Grid
 view-list = List
-view-columns = Columns
 window-bar-native = Native WM
 window-bar-csd = Integrated CSD
 
@@ -231,7 +230,6 @@ tip-edit-path = Edit path directly (Ctrl+L)
 tip-deep-search = Search recursively in subfolders (Ctrl+Shift+F)
 tip-view-grid = Grid view
 tip-view-list = Detail Table view
-tip-view-columns = Miller Columns view
 tip-new-item = Create new folder or file
 tip-group-folders = Group folders before files in Grid
 tip-zoom-out = Decrease card size (Ctrl+-)

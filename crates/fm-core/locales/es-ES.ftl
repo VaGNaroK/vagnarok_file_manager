@@ -121,7 +121,6 @@ decorations-label = Barra de ventana
 default-view-label = Vista predeterminada
 view-grid = Cuadrícula
 view-list = Lista
-view-columns = Columnas
 window-bar-native = Barra Nativa
 window-bar-csd = CSD Integrado
 
@@ -231,7 +230,6 @@ tip-edit-path = Editar ruta directamente (Ctrl+L)
 tip-deep-search = Buscar recursivamente en subcarpetas (Ctrl+Shift+F)
 tip-view-grid = Vista en Cuadrícula
 tip-view-list = Vista en Tabla de Detalles
-tip-view-columns = Vista en Columnas (Miller)
 tip-new-item = Crear nueva carpeta o archivo
 tip-group-folders = Agrupar carpetas antes que archivos
 tip-zoom-out = Reducir tamaño de tarjetas (Ctrl+-)

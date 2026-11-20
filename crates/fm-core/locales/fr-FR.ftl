@@ -121,7 +121,6 @@ decorations-label = Barre de fenêtre
 default-view-label = Vue par défaut
 view-grid = Grille
 view-list = Liste
-view-columns = Colonnes
 window-bar-native = Barre Native
 window-bar-csd = CSD Intégré
 
@@ -231,7 +230,6 @@ tip-edit-path = Modifier le chemin directement (Ctrl+L)
 tip-deep-search = Rechercher récursivement dans les sous-dossiers (Ctrl+Shift+F)
 tip-view-grid = Vue Grille
 tip-view-list = Vue Tableau détaillé
-tip-view-columns = Vue Colonnes (Miller)
 tip-new-item = Créer un nouveau dossier ou fichier
 tip-group-folders = Regrouper les dossiers avant les fichiers
 tip-zoom-out = Réduire la taille des cartes (Ctrl+-)

@@ -121,7 +121,6 @@ decorations-label = Barra de janela
 default-view-label = Visualização padrão
 view-grid = Grade
 view-list = Lista
-view-columns = Colunas
 window-bar-native = Barra Nativa
 window-bar-csd = CSD Integrado
 
@@ -231,7 +230,6 @@ tip-edit-path = Editar caminho diretamente (Ctrl+L)
 tip-deep-search = Buscar recursivamente em subpastas (Ctrl+Shift+F)
 tip-view-grid = Visualização em Grade
 tip-view-list = Visualização em Tabela de Detalhes
-tip-view-columns = Visualização em Colunas (Miller)
 tip-new-item = Criar nova pasta ou arquivo
 tip-group-folders = Agrupar pastas antes dos arquivos no Grid
 tip-zoom-out = Diminuir tamanho dos cards (Ctrl+-)

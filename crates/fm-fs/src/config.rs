@@ -96,7 +96,7 @@ mod tests {
             sidebar_collapsed: true,
             sidebar_width: Some(312.0),
             window_decorations: WindowDecorationsMode::IntegratedCsd,
-            default_view_mode: ViewMode::Columns,
+            default_view_mode: ViewMode::DetailTable,
             grid_group_folders: false,
             grid_center_items: true,
             grid_card_width: 172.0,
@@ -122,7 +122,7 @@ mod tests {
             loaded.window_decorations,
             WindowDecorationsMode::IntegratedCsd
         );
-        assert_eq!(loaded.default_view_mode, ViewMode::Columns);
+        assert_eq!(loaded.default_view_mode, ViewMode::DetailTable);
         assert!(!loaded.grid_group_folders);
         assert!(loaded.grid_center_items);
         assert!(!loaded.dirs_first);
@@ -157,5 +157,21 @@ favorites = []
         assert!(!parsed.grid_center_items);
         assert!(parsed.dirs_first);
         assert_eq!(parsed.icon_theme_mode, fm_core::IconThemeMode::Bundled);
+    }
+
+    #[test]
+    fn deserializes_legacy_columns_view_mode_as_grid() {
+        let legacy_toml = r#"
+theme = "AetherLight"
+language = "PtBr"
+show_hero_card = true
+show_inspector = false
+sidebar_collapsed = false
+window_decorations = "NativeWm"
+default_view_mode = "Columns"
+favorites = []
+"#;
+        let parsed: AppConfig = toml::from_str(legacy_toml).expect("legacy Columns config parses");
+        assert_eq!(parsed.default_view_mode, ViewMode::Grid);
     }
 }

@@ -2366,13 +2366,6 @@ pub fn preferences_modal<'a>(
                 app.config.default_view_mode == ViewMode::DetailTable
             ))
             .on_press(Message::SetDefaultViewMode(ViewMode::DetailTable)),
-        button(text(strings.view_columns).size(11).font(FONT_MONO))
-            .padding([4, 10])
-            .style(styles::tab_button(
-                palette,
-                app.config.default_view_mode == ViewMode::Columns
-            ))
-            .on_press(Message::SetDefaultViewMode(ViewMode::Columns)),
     ]
     .spacing(4);
 

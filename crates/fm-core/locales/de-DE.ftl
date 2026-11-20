@@ -121,7 +121,6 @@ decorations-label = Fenstertitelleiste
 default-view-label = Standardansicht
 view-grid = Raster
 view-list = Liste
-view-columns = Spalten
 window-bar-native = Natives WM
 window-bar-csd = Integriertes CSD
 
@@ -231,7 +230,6 @@ tip-edit-path = Pfad direkt bearbeiten (Ctrl+L)
 tip-deep-search = Rekursiv in Unterordnern suchen (Ctrl+Shift+F)
 tip-view-grid = Rasteransicht
 tip-view-list = Detailtabellenansicht
-tip-view-columns = Spaltenansicht (Miller)
 tip-new-item = Neuen Ordner oder neue Datei erstellen
 tip-group-folders = Ordner im Raster vor Dateien gruppieren
 tip-zoom-out = Kachelgröße verkleinern (Ctrl+-)

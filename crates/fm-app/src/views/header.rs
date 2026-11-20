@@ -6,9 +6,9 @@ use iced::Alignment::Center;
 use iced::widget::{Space, button, container, mouse_area, row, space, text, text_input, tooltip};
 use iced::{Element, Length, Padding};
 use lucide_icons::iced::{
-    icon_arrow_left, icon_arrow_right, icon_arrow_up, icon_chevron_right, icon_columns_3,
-    icon_home, icon_layout_grid, icon_list, icon_minus, icon_moon, icon_plus, icon_search,
-    icon_square, icon_sun, icon_x,
+    icon_arrow_left, icon_arrow_right, icon_arrow_up, icon_chevron_right, icon_home,
+    icon_layout_grid, icon_list, icon_minus, icon_moon, icon_plus, icon_search, icon_square,
+    icon_sun, icon_x,
 };
 
 use crate::app::{App, Message, path_input_id, search_input_id};
@@ -265,17 +265,6 @@ fn navigation_row<'a>(
                     palette
                 ),
                 strings.tip_view_list,
-                tooltip::Position::Bottom,
-                palette,
-            ),
-            with_tooltip(
-                view_mode_btn(
-                    icon_columns_3().size(14),
-                    ViewMode::Columns,
-                    current_mode,
-                    palette
-                ),
-                strings.tip_view_columns,
                 tooltip::Position::Bottom,
                 palette,
             ),
