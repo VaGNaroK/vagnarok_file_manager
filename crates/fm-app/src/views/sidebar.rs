@@ -1,4 +1,7 @@
-use fm_core::{DriveKind, Strings, SystemIconKey, SystemPlaceKind, format_bytes};
+use fm_core::{
+    DriveInfo, DriveKind, Strings, SystemIconKey, SystemPlaceKind, drive_needs_disambiguation,
+    drive_short_device_name, format_bytes,
+};
 use fm_theme::{FONT_MONO, FONT_UI, FONT_UI_SEMIBOLD, Spacing, ThemePalette, styles};
 use iced::Alignment::Center;
 use iced::widget::{
@@ -29,23 +32,86 @@ pub fn clamp_sidebar_width(width: f32) -> f32 {
     }
 }
 
-fn format_drive_label(drive: &fm_core::DriveInfo, strings: Strings) -> String {
+fn format_drive_subtitle(
+    drive: &DriveInfo,
+    all_drives: &[DriveInfo],
+    strings: Strings,
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
     if drive.is_mounted {
         if let Some(space_info) = &drive.space {
-            format!("{} ({})", drive.label, format_bytes(space_info.free_bytes))
-        } else {
-            drive.label.to_string()
+            parts.push(format!(
+                "{} {}",
+                format_bytes(space_info.free_bytes),
+                strings.drive_free_label
+            ));
+        }
+    } else {
+        if let Some(total) = drive.total_bytes_hint {
+            parts.push(format_bytes(total).to_string());
+        }
+        parts.push(strings.unmounted_label.to_owned());
+    }
+
+    if drive_needs_disambiguation(drive, all_drives)
+        && let Some(dev_short) = drive_short_device_name(drive)
+        && !drive.label.eq_ignore_ascii_case(dev_short)
+    {
+        parts.push(dev_short.to_owned());
+    }
+
+    (!parts.is_empty()).then(|| parts.join(" • "))
+}
+
+fn format_drive_tooltip(drive: &DriveInfo, strings: Strings) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let header = match drive.model.as_deref().filter(|m| !m.is_empty()) {
+        Some(model) => format!("{} — {model}", drive.label),
+        None => drive.label.to_string(),
+    };
+    lines.push(header);
+
+    let mut tech: Vec<String> = Vec::new();
+    if let Some(dev) = &drive.device_path {
+        tech.push(dev.to_string_lossy().into_owned());
+    }
+    if let Some(fs) = drive.fs_type.as_deref().filter(|s| !s.is_empty()) {
+        tech.push(fs.to_ascii_uppercase());
+    }
+    if !tech.is_empty() {
+        lines.push(tech.join(" • "));
+    }
+
+    if drive.is_mounted {
+        if let Some(space_info) = &drive.space
+            && space_info.total_bytes > 0
+        {
+            lines.push(format!(
+                "{} {} {} {}",
+                format_bytes(space_info.free_bytes),
+                strings.drive_free_label,
+                strings.free_of,
+                format_bytes(space_info.total_bytes)
+            ));
+        }
+        if !drive.mount_path.as_os_str().is_empty() {
+            lines.push(drive.mount_path.to_string_lossy().into_owned());
         }
     } else if let Some(total) = drive.total_bytes_hint {
-        format!(
-            "{} ({} • {})",
-            drive.label,
+        lines.push(format!(
+            "{} • {} — {}",
             format_bytes(total),
-            strings.unmounted_label
-        )
+            strings.unmounted_label,
+            strings.drive_click_to_mount
+        ));
     } else {
-        format!("{} ({})", drive.label, strings.unmounted_label)
+        lines.push(format!(
+            "{} — {}",
+            strings.unmounted_label, strings.drive_click_to_mount
+        ));
     }
+
+    lines.join("\n")
 }
 
 /// Calcula a largura efetiva da barra lateral: respeita o tamanho salvo pelo usuário ou ajusta ao maior disco/item.
@@ -59,11 +125,13 @@ pub fn effective_sidebar_width(app: &App, strings: Strings) -> f32 {
 
     let mut max_drive_px = 0.0_f32;
     for drive in &app.drives {
-        let lbl = format_drive_label(drive, strings);
-        let chars = lbl.chars().count() as f32;
+        let title_px = drive.label.chars().count() as f32 * 7.6;
+        let sub_px = format_drive_subtitle(drive, &app.drives, strings)
+            .map(|s| s.chars().count() as f32 * 6.4)
+            .unwrap_or(0.0);
         let has_action_btn = !drive.is_mounted || drive.can_unmount;
         let chrome = if has_action_btn { 108.0 } else { 76.0 };
-        max_drive_px = max_drive_px.max(chars * 7.6 + chrome);
+        max_drive_px = max_drive_px.max(title_px.max(sub_px) + chrome);
     }
 
     let quick_labels = [
@@ -292,11 +360,17 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
             } else {
                 base_icon.color(palette.text_muted)
             };
-            let label = if collapsed {
+            let title = if collapsed {
                 String::new()
             } else {
-                format_drive_label(drive, strings)
+                sanitize_single_line(&drive.label)
             };
+            let subtitle = if collapsed {
+                None
+            } else {
+                format_drive_subtitle(drive, &app.drives, strings)
+            };
+            let tip_text = format_drive_tooltip(drive, strings);
             let active = drive.is_mounted
                 && app
                     .current_tab()
@@ -317,14 +391,20 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
                 is_ejectable: drive.is_ejectable,
                 is_disk_image: drive.is_disk_image,
             };
-            let btn = sidebar_btn_owned(
-                render_drive_icon(app, drive, icon, 16.0),
-                label,
-                collapsed,
-                active,
+            let btn = with_tooltip(
+                sidebar_drive_btn(
+                    render_drive_icon(app, drive, icon, 16.0),
+                    title,
+                    subtitle,
+                    collapsed,
+                    active,
+                    palette,
+                    primary_msg,
+                    ctx_msg,
+                ),
+                tip_text,
+                tooltip::Position::Right,
                 palette,
-                primary_msg,
-                Some(ctx_msg),
             );
 
             let row_widget: Element<'a, Message> =
@@ -578,6 +658,59 @@ fn sidebar_btn_owned<'a>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn sidebar_drive_btn<'a>(
+    icon: Element<'a, Message>,
+    title: String,
+    subtitle: Option<String>,
+    collapsed: bool,
+    active: bool,
+    palette: ThemePalette,
+    msg: Message,
+    context_msg: Message,
+) -> Element<'a, Message> {
+    let content: Element<'a, Message> = if collapsed {
+        container(icon)
+            .width(Length::Fill)
+            .align_x(Center)
+            .align_y(Center)
+            .into()
+    } else {
+        let title_widget = text(title)
+            .size(12.5)
+            .font(if active { FONT_UI_SEMIBOLD } else { FONT_UI })
+            .wrapping(text::Wrapping::None);
+        let text_col: Element<'a, Message> = if let Some(sub) = subtitle {
+            column![
+                title_widget,
+                text(sub)
+                    .size(10.5)
+                    .font(FONT_UI)
+                    .color(palette.text_muted)
+                    .wrapping(text::Wrapping::None),
+            ]
+            .spacing(1)
+            .width(Length::Fill)
+            .into()
+        } else {
+            title_widget.into()
+        };
+        row![icon, container(text_col).width(Length::Fill).clip(true)]
+            .spacing(9)
+            .align_y(Center)
+            .width(Length::Fill)
+            .into()
+    };
+
+    let btn = button(content)
+        .width(Length::Fill)
+        .padding(if collapsed { [8, 0] } else { [5, 10] })
+        .style(styles::sidebar_item_button(palette, active))
+        .on_press(msg);
+
+    mouse_area(btn).on_right_press(context_msg).into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -594,13 +727,42 @@ mod tests {
     }
 
     #[test]
-    fn formats_unmounted_drive_label_with_capacity_and_status() {
+    fn formats_drive_subtitles_with_selective_disambiguation_and_rich_tooltip() {
         let strings = Strings::for_language(fm_core::Language::PtBr);
-        let drive = DriveInfo {
-            label: CompactString::new("JOGOS"),
+        let drive_a = DriveInfo {
+            label: CompactString::new("Download"),
             mount_path: PathBuf::new(),
-            device_path: Some(PathBuf::from("/dev/sda1")),
+            device_path: Some(PathBuf::from("/dev/sdc1")),
+            model: Some(CompactString::new("ST1000DM010")),
             fs_type: Some(CompactString::new("ntfs")),
+            kind: DriveKind::SecondaryDisk,
+            is_mounted: false,
+            can_unmount: false,
+            is_ejectable: false,
+            is_disk_image: false,
+            total_bytes_hint: Some(1_000_200_994_816),
+            space: None,
+        };
+        let drive_b = DriveInfo {
+            label: CompactString::new("Downloads"),
+            mount_path: PathBuf::new(),
+            device_path: Some(PathBuf::from("/dev/sdd2")),
+            model: None,
+            fs_type: Some(CompactString::new("ntfs")),
+            kind: DriveKind::SecondaryDisk,
+            is_mounted: false,
+            can_unmount: false,
+            is_ejectable: false,
+            is_disk_image: false,
+            total_bytes_hint: Some(1_000_186_314_752),
+            space: None,
+        };
+        let unique = DriveInfo {
+            label: CompactString::new("Backup"),
+            mount_path: PathBuf::new(),
+            device_path: Some(PathBuf::from("/dev/sde1")),
+            model: None,
+            fs_type: Some(CompactString::new("ext4")),
             kind: DriveKind::SecondaryDisk,
             is_mounted: false,
             can_unmount: false,
@@ -609,8 +771,20 @@ mod tests {
             total_bytes_hint: Some(480_102_055_936),
             space: None,
         };
-        let label = format_drive_label(&drive, strings);
-        assert!(label.contains("JOGOS"));
-        assert!(label.contains(strings.unmounted_label));
+        let all = [drive_a.clone(), drive_b, unique.clone()];
+
+        let sub_ambig = format_drive_subtitle(&drive_a, &all, strings).expect("subtitle");
+        assert!(sub_ambig.contains("sdc1"));
+        assert!(sub_ambig.contains(strings.unmounted_label));
+
+        let sub_unique = format_drive_subtitle(&unique, &all, strings).expect("subtitle");
+        assert!(!sub_unique.contains("sde1"));
+        assert!(sub_unique.contains(strings.unmounted_label));
+
+        let tip = format_drive_tooltip(&drive_a, strings);
+        assert!(tip.contains("Download — ST1000DM010"));
+        assert!(tip.contains("/dev/sdc1"));
+        assert!(tip.contains("NTFS"));
+        assert!(tip.contains(strings.drive_click_to_mount));
     }
 }

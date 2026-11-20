@@ -222,6 +222,7 @@ pub struct DriveInfo {
     pub label: CompactString,
     pub mount_path: PathBuf,
     pub device_path: Option<PathBuf>,
+    pub model: Option<CompactString>,
     pub fs_type: Option<CompactString>,
     pub kind: DriveKind,
     pub is_mounted: bool,
@@ -230,6 +231,76 @@ pub struct DriveInfo {
     pub is_disk_image: bool,
     pub total_bytes_hint: Option<u64>,
     pub space: Option<VolumeSpace>,
+}
+
+/// Ordena unidades para exibição na barra lateral:
+/// 1) Sistema principal (`InternalSsd` montado, ex.: `Root (/)` / `C:`),
+/// 2) Mídias removíveis e imagens `.iso`/`.img` montadas,
+/// 3) Demais volumes montados,
+/// 4) Volumes desmontados (removíveis antes de internos, por nome e dispositivo).
+pub fn sort_drives_for_display(drives: &mut [DriveInfo]) {
+    drives.sort_by(|a, b| {
+        let rank = |d: &DriveInfo| -> u8 {
+            if d.is_mounted {
+                match d.kind {
+                    DriveKind::InternalSsd => 0,
+                    DriveKind::OpticalOrIso => 1,
+                    DriveKind::Removable => 2,
+                    DriveKind::SecondaryDisk => 3,
+                    DriveKind::Network => 4,
+                }
+            } else {
+                match d.kind {
+                    DriveKind::OpticalOrIso => 5,
+                    DriveKind::Removable => 6,
+                    _ => 7,
+                }
+            }
+        };
+        rank(a)
+            .cmp(&rank(b))
+            .then_with(|| {
+                a.label
+                    .to_ascii_lowercase()
+                    .cmp(&b.label.to_ascii_lowercase())
+            })
+            .then_with(|| a.device_path.cmp(&b.device_path))
+            .then_with(|| a.mount_path.cmp(&b.mount_path))
+    });
+}
+
+/// Extrai o nome curto do dispositivo de bloco (ex.: `/dev/sdc1` -> `Some("sdc1")`).
+#[must_use]
+pub fn drive_short_device_name(drive: &DriveInfo) -> Option<&str> {
+    drive
+        .device_path
+        .as_deref()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .filter(|s| !s.is_empty())
+}
+
+/// Normaliza o rótulo de uma unidade para detectar nomes iguais ou quase iguais
+/// (ex.: `"JOGOS"` vs `"Jogos"`, `"Download"` vs `"Downloads"`).
+fn normalize_drive_label_for_collision(label: &str) -> String {
+    let trimmed = label.trim().to_ascii_lowercase();
+    let trimmed = trimmed.strip_suffix('s').unwrap_or(&trimmed);
+    trimmed.to_owned()
+}
+
+/// Retorna `true` quando existe outra unidade na lista com rótulo igual ou quase igual,
+/// indicando que convém exibir um marcador discreto do dispositivo (`sdc1` / `sdd2`).
+#[must_use]
+pub fn drive_needs_disambiguation(drive: &DriveInfo, all_drives: &[DriveInfo]) -> bool {
+    let key = normalize_drive_label_for_collision(&drive.label);
+    if key.is_empty() {
+        return false;
+    }
+    let matches = all_drives
+        .iter()
+        .filter(|other| normalize_drive_label_for_collision(&other.label) == key)
+        .count();
+    matches > 1
 }
 
 /// Indica se `path` possui extensão de imagem de disco montável (`.iso` ou `.img`).
@@ -879,5 +950,50 @@ mod tests {
         assert!(is_mountable_disk_image(Path::new("/tmp/backup.IMG")));
         assert!(!is_mountable_disk_image(Path::new("/tmp/archive.zip")));
         assert!(!is_mountable_disk_image(Path::new("/tmp/noext")));
+    }
+
+    #[test]
+    fn sorts_drives_with_system_first_and_disambiguates_similar_labels() {
+        let mk = |label: &str, dev: &str, kind: DriveKind, mounted: bool| DriveInfo {
+            label: CompactString::new(label),
+            mount_path: if mounted {
+                PathBuf::from(if kind == DriveKind::InternalSsd {
+                    "/"
+                } else {
+                    "/mnt/x"
+                })
+            } else {
+                PathBuf::new()
+            },
+            device_path: Some(PathBuf::from(dev)),
+            model: None,
+            fs_type: Some(CompactString::new("ntfs")),
+            kind,
+            is_mounted: mounted,
+            can_unmount: mounted && kind != DriveKind::InternalSsd,
+            is_ejectable: false,
+            is_disk_image: kind == DriveKind::OpticalOrIso,
+            total_bytes_hint: Some(1000),
+            space: None,
+        };
+
+        let mut drives = vec![
+            mk("Download", "/dev/sdc1", DriveKind::SecondaryDisk, false),
+            mk("Downloads", "/dev/sdd2", DriveKind::SecondaryDisk, false),
+            mk("Backup", "/dev/sde1", DriveKind::SecondaryDisk, false),
+            mk("Ubuntu ISO", "/dev/loop0", DriveKind::OpticalOrIso, true),
+            mk("Root (/)", "/dev/nvme0n1p4", DriveKind::InternalSsd, true),
+        ];
+
+        sort_drives_for_display(&mut drives);
+        assert_eq!(drives[0].label, "Root (/)");
+        assert_eq!(drives[1].label, "Ubuntu ISO");
+        assert_eq!(drives[2].label, "Backup");
+
+        assert!(drive_needs_disambiguation(&drives[3], &drives));
+        assert!(drive_needs_disambiguation(&drives[4], &drives));
+        assert!(!drive_needs_disambiguation(&drives[2], &drives));
+        assert!(!drive_needs_disambiguation(&drives[0], &drives));
+        assert_eq!(drive_short_device_name(&drives[3]), Some("sdc1"));
     }
 }

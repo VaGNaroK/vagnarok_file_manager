@@ -435,6 +435,7 @@ pub fn list_drives() -> Vec<DriveInfo> {
             label: display,
             mount_path,
             device_path: None,
+            model: None,
             fs_type,
             kind,
             is_mounted: true,

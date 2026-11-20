@@ -627,7 +627,24 @@ pub fn list_drives() -> Vec<DriveInfo> {
     let mut seen_devices = HashSet::new();
     let mut drives = Vec::new();
 
-    for dev in read_lsblk_devices() {
+    let raw_lsblk = read_lsblk_devices();
+    let disks_with_children: HashSet<String> = raw_lsblk
+        .iter()
+        .filter(|d| !d.pkname.is_empty())
+        .map(|d| d.pkname.clone())
+        .collect();
+    let disk_models: std::collections::HashMap<String, String> = raw_lsblk
+        .iter()
+        .filter(|d| !d.model.is_empty())
+        .map(|d| (d.name.clone(), d.model.clone()))
+        .collect();
+
+    for dev in raw_lsblk {
+        // Blindagem: ignora o dispositivo pai `disk` quando ele possui partições filhas
+        // (evita duplicidade real em pendrives híbridos / ISOs gravadas com `dd`).
+        if should_skip_parent_disk(&dev, &disks_with_children) {
+            continue;
+        }
         let is_loop_backed = dev.dev_type == "loop" || dev.pkname.starts_with("loop");
         if !matches!(
             dev.dev_type.as_str(),
@@ -659,6 +676,7 @@ pub fn list_drives() -> Vec<DriveInfo> {
         }
 
         let is_disk_image = is_loop_backed || matches!(dev.fstype.as_str(), "iso9660" | "udf");
+        let model = resolve_device_model(&dev, &disk_models);
 
         if let Some(mount_point) = dev.mountpoint.as_ref() {
             if is_ignored_system_mount(mount_point) {
@@ -693,6 +711,7 @@ pub fn list_drives() -> Vec<DriveInfo> {
                 label,
                 mount_path: mount_point.clone(),
                 device_path: Some(dev.path),
+                model,
                 fs_type: Some(CompactString::from(dev.fstype.as_str())),
                 kind,
                 is_mounted: true,
@@ -722,6 +741,7 @@ pub fn list_drives() -> Vec<DriveInfo> {
                 label,
                 mount_path: PathBuf::new(),
                 device_path: Some(dev.path),
+                model,
                 fs_type: Some(CompactString::from(dev.fstype.as_str())),
                 kind,
                 is_mounted: false,
@@ -765,6 +785,7 @@ pub fn list_drives() -> Vec<DriveInfo> {
             label,
             mount_path: mount.mount_point.clone(),
             device_path: dev_path,
+            model: None,
             fs_type: Some(mount.fs_type),
             kind,
             is_mounted: true,
@@ -1262,6 +1283,26 @@ fn find_mount_point_for_device(device_path: &Path) -> Option<PathBuf> {
     })
 }
 
+fn should_skip_parent_disk(dev: &LsblkDevice, disks_with_children: &HashSet<String>) -> bool {
+    dev.dev_type == "disk" && disks_with_children.contains(&dev.name)
+}
+
+fn resolve_device_model(
+    dev: &LsblkDevice,
+    disk_models: &std::collections::HashMap<String, String>,
+) -> Option<CompactString> {
+    let raw = if !dev.model.is_empty() {
+        Some(dev.model.as_str())
+    } else if !dev.pkname.is_empty() {
+        disk_models.get(&dev.pkname).map(String::as_str)
+    } else {
+        None
+    };
+    raw.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(CompactString::from)
+}
+
 struct LsblkDevice {
     name: String,
     path: PathBuf,
@@ -1273,6 +1314,7 @@ struct LsblkDevice {
     hotplug: bool,
     dev_type: String,
     pkname: String,
+    model: String,
 }
 
 fn read_lsblk_devices() -> Vec<LsblkDevice> {
@@ -1281,7 +1323,7 @@ fn read_lsblk_devices() -> Vec<LsblkDevice> {
             "-P",
             "-b",
             "-o",
-            "NAME,PATH,LABEL,FSTYPE,SIZE,MOUNTPOINT,RM,HOTPLUG,TYPE,PKNAME",
+            "NAME,PATH,LABEL,FSTYPE,SIZE,MOUNTPOINT,RM,HOTPLUG,TYPE,PKNAME,MODEL",
         ])
         .output()
     else {
@@ -1323,6 +1365,7 @@ fn parse_lsblk_line(line: &str) -> Option<LsblkDevice> {
         hotplug: get("HOTPLUG") == "1",
         dev_type: get("TYPE"),
         pkname: get("PKNAME"),
+        model: get("MODEL").trim().to_owned(),
     })
 }
 
@@ -1577,5 +1620,29 @@ mod tests {
             Some(PathBuf::from("/dev/loop3"))
         );
         assert_eq!(loop_root_device(Path::new("/dev/sdb1")), None);
+    }
+
+    #[test]
+    fn skips_parent_disk_when_partitions_exist_and_inherits_model() {
+        let disk = parse_lsblk_line(
+            r#"NAME="sde" PATH="/dev/sde" LABEL="LIVEUSB" FSTYPE="iso9660" SIZE="16000000000" MOUNTPOINT="" RM="1" HOTPLUG="1" TYPE="disk" PKNAME="" MODEL="SanDisk Ultra   ""#,
+        )
+        .expect("parse disk");
+        let part = parse_lsblk_line(
+            r#"NAME="sde1" PATH="/dev/sde1" LABEL="LIVEUSB" FSTYPE="iso9660" SIZE="16000000000" MOUNTPOINT="" RM="1" HOTPLUG="1" TYPE="part" PKNAME="sde" MODEL="""#,
+        )
+        .expect("parse part");
+
+        let mut disks_with_children = HashSet::new();
+        disks_with_children.insert(part.pkname.clone());
+        let mut models = std::collections::HashMap::new();
+        models.insert(disk.name.clone(), disk.model.clone());
+
+        assert!(should_skip_parent_disk(&disk, &disks_with_children));
+        assert!(!should_skip_parent_disk(&part, &disks_with_children));
+        assert_eq!(
+            resolve_device_model(&part, &models).as_deref(),
+            Some("SanDisk Ultra")
+        );
     }
 }

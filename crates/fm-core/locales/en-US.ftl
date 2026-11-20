@@ -483,3 +483,5 @@ unmount-disk-image = Unmount image
 eject-safely = Safely remove
 image-mounted = Disk image mounted
 drive-ejected = Drive safely removed
+drive-free-label = free
+drive-click-to-mount = Click to mount

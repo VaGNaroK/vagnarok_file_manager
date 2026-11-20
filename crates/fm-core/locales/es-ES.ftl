@@ -483,3 +483,5 @@ unmount-disk-image = Desmontar imagen
 eject-safely = Expulsar con seguridad
 image-mounted = Imagen montada correctamente
 drive-ejected = Unidad expulsada con seguridad
+drive-free-label = libres
+drive-click-to-mount = Haz clic para montar

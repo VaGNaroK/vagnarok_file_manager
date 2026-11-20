@@ -483,3 +483,5 @@ unmount-disk-image = Abbild aushängen
 eject-safely = Sicher entfernen
 image-mounted = Abbild erfolgreich eingehängt
 drive-ejected = Laufwerk sicher entfernt
+drive-free-label = frei
+drive-click-to-mount = Zum Einhängen klicken

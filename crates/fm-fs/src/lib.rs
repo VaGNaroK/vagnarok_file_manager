@@ -315,12 +315,16 @@ impl VfsProvider for LocalFs {
     }
 
     async fn list_drives(&self) -> Result<Vec<DriveInfo>, FsError> {
-        tokio::task::spawn_blocking(platform::list_drives)
-            .await
-            .map_err(|err| FsError::Io {
-                path: PathBuf::new(),
-                message: format!("falha ao listar unidades: {err}"),
-            })
+        tokio::task::spawn_blocking(|| {
+            let mut drives = platform::list_drives();
+            fm_core::sort_drives_for_display(&mut drives);
+            drives
+        })
+        .await
+        .map_err(|err| FsError::Io {
+            path: PathBuf::new(),
+            message: format!("falha ao listar unidades: {err}"),
+        })
     }
 
     async fn volume_space(&self, path: &Path) -> Result<Option<VolumeSpace>, FsError> {

@@ -175,7 +175,7 @@ pub fn sanitize_single_line(raw: &str) -> String {
 /// Envolve um controle de interface com tooltip estilizado pelo tema ativo.
 pub fn with_tooltip<'a, M: 'a>(
     content: impl Into<Element<'a, M>>,
-    tip: &'a str,
+    tip: impl iced::widget::text::IntoFragment<'a>,
     position: tooltip::Position,
     palette: ThemePalette,
 ) -> Element<'a, M> {

@@ -445,6 +445,8 @@ pub struct Strings {
     pub eject_safely: &'static str,
     pub image_mounted: &'static str,
     pub drive_ejected: &'static str,
+    pub drive_free_label: &'static str,
+    pub drive_click_to_mount: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -1066,6 +1068,8 @@ impl Strings {
         let eject_safely = resolve("eject-safely");
         let image_mounted = resolve("image-mounted");
         let drive_ejected = resolve("drive-ejected");
+        let drive_free_label = resolve("drive-free-label");
+        let drive_click_to_mount = resolve("drive-click-to-mount");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -1480,6 +1484,8 @@ impl Strings {
             eject_safely,
             image_mounted,
             drive_ejected,
+            drive_free_label,
+            drive_click_to_mount,
         }
     }
 }

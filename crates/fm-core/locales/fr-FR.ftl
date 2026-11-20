@@ -483,3 +483,5 @@ unmount-disk-image = Démonter l'image
 eject-safely = Retirer en toute sécurité
 image-mounted = Image disque montée
 drive-ejected = Lecteur retiré en toute sécurité
+drive-free-label = libres
+drive-click-to-mount = Cliquer pour monter
