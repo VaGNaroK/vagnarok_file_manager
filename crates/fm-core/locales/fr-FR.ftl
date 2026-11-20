@@ -478,3 +478,8 @@ undo-restored-count =
         [one] Restauré depuis la Corbeille.
        *[other] { $count } éléments restaurés depuis la Corbeille.
     }
+mount-disk-image = Monter l'image disque
+unmount-disk-image = Démonter l'image
+eject-safely = Retirer en toute sécurité
+image-mounted = Image disque montée
+drive-ejected = Lecteur retiré en toute sécurité

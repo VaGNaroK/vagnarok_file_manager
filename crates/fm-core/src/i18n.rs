@@ -440,6 +440,11 @@ pub struct Strings {
     pub moved_to_trash_undo_hint: &'static str,
     pub undo_nothing_in_trash: &'static str,
     pub undo_rename_done: &'static str,
+    pub mount_disk_image: &'static str,
+    pub unmount_disk_image: &'static str,
+    pub eject_safely: &'static str,
+    pub image_mounted: &'static str,
+    pub drive_ejected: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -1056,6 +1061,11 @@ impl Strings {
         let moved_to_trash_undo_hint = resolve("moved-to-trash-undo-hint");
         let undo_nothing_in_trash = resolve("undo-nothing-in-trash");
         let undo_rename_done = resolve("undo-rename-done");
+        let mount_disk_image = resolve("mount-disk-image");
+        let unmount_disk_image = resolve("unmount-disk-image");
+        let eject_safely = resolve("eject-safely");
+        let image_mounted = resolve("image-mounted");
+        let drive_ejected = resolve("drive-ejected");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -1465,6 +1475,11 @@ impl Strings {
             moved_to_trash_undo_hint,
             undo_nothing_in_trash,
             undo_rename_done,
+            mount_disk_image,
+            unmount_disk_image,
+            eject_safely,
+            image_mounted,
+            drive_ejected,
         }
     }
 }

@@ -16,11 +16,12 @@ use iced::widget::{
 use iced::{Background, Border, Color, Element, Length, Padding, border::Radius, mouse, window};
 use lucide_icons::iced::{
     icon_arrow_left, icon_arrow_up_from_line, icon_check, icon_check_square, icon_chevron_right,
-    icon_clipboard_copy, icon_clipboard_paste, icon_copy, icon_external_link, icon_eye,
-    icon_file_archive, icon_file_plus, icon_file_text, icon_filter, icon_folder, icon_folder_plus,
-    icon_hard_drive, icon_info, icon_link_2, icon_lock, icon_monitor, icon_pencil, icon_plug,
-    icon_rotate_ccw, icon_scissors, icon_search, icon_send, icon_settings, icon_shield_alert,
-    icon_shield_check, icon_sliders_horizontal, icon_star_off, icon_terminal, icon_trash_2, icon_x,
+    icon_clipboard_copy, icon_clipboard_paste, icon_copy, icon_disc_3, icon_external_link,
+    icon_eye, icon_file_archive, icon_file_plus, icon_file_text, icon_filter, icon_folder,
+    icon_folder_plus, icon_hard_drive, icon_info, icon_link_2, icon_lock, icon_monitor,
+    icon_pencil, icon_plug, icon_power, icon_rotate_ccw, icon_scissors, icon_search, icon_send,
+    icon_settings, icon_shield_alert, icon_shield_check, icon_sliders_horizontal, icon_star_off,
+    icon_terminal, icon_trash_2, icon_x,
 };
 
 use crate::app::{
@@ -2813,6 +2814,22 @@ pub fn context_menu_overlay<'a>(
                     offset_y += ROW_STEP;
                 }
             } else {
+                let sel_count_preview = app.current_tab().map(|t| t.selection.count()).unwrap_or(0);
+                if sel_count_preview <= 1
+                    && !fm_core::is_virtual_trash_path(path)
+                    && !fm_fs::archive::is_inside_archive_path(path)
+                    && fm_core::is_mountable_disk_image(path)
+                {
+                    items = items.push(ctx_entry_item(
+                        icon_disc_3().size(14).color(palette.accent_primary).into(),
+                        strings.mount_disk_image,
+                        palette.text_primary,
+                        Message::MountDiskImage(path.clone()),
+                        palette,
+                        close_sub_on_hover,
+                    ));
+                    offset_y += ROW_STEP;
+                }
                 if !fm_core::is_virtual_trash_path(path)
                     && !fm_fs::archive::is_inside_archive_path(path)
                 {
@@ -3158,6 +3175,8 @@ pub fn context_menu_overlay<'a>(
             device_path,
             is_mounted,
             can_unmount,
+            is_ejectable,
+            is_disk_image,
         } => {
             if *is_mounted {
                 items = items
@@ -3208,15 +3227,35 @@ pub fn context_menu_overlay<'a>(
                         Message::OpenProperties(mount_path.clone()),
                         palette,
                     ));
+                if *can_unmount || *is_ejectable {
+                    items = items.push(ctx_divider(palette));
+                }
                 if *can_unmount {
-                    items = items.push(ctx_divider(palette)).push(ctx_item(
+                    items = items.push(ctx_item(
                         icon_arrow_up_from_line()
                             .size(14)
                             .color(palette.status_warning)
                             .into(),
-                        strings.unmount_drive,
+                        if *is_disk_image {
+                            strings.unmount_disk_image
+                        } else {
+                            strings.unmount_drive
+                        },
                         palette.text_primary,
                         Message::UnmountDrive {
+                            device_path: device_path.clone(),
+                            mount_path: Some(mount_path.clone()),
+                            label: label.clone(),
+                        },
+                        palette,
+                    ));
+                }
+                if *is_ejectable && !*is_disk_image {
+                    items = items.push(ctx_item(
+                        icon_power().size(14).color(palette.status_error).into(),
+                        strings.eject_safely,
+                        palette.text_primary,
+                        Message::EjectDrive {
                             device_path: device_path.clone(),
                             mount_path: Some(mount_path.clone()),
                             label: label.clone(),
@@ -3232,6 +3271,19 @@ pub fn context_menu_overlay<'a>(
                     Message::MountAndOpenDrive(dev.clone()),
                     palette,
                 ));
+                if *is_ejectable {
+                    items = items.push(ctx_divider(palette)).push(ctx_item(
+                        icon_power().size(14).color(palette.status_error).into(),
+                        strings.eject_safely,
+                        palette.text_primary,
+                        Message::EjectDrive {
+                            device_path: Some(dev.clone()),
+                            mount_path: None,
+                            label: label.clone(),
+                        },
+                        palette,
+                    ));
+                }
             }
         }
         ContextMenuKind::FilterMenu => {
@@ -3493,8 +3545,13 @@ pub fn context_menu_overlay<'a>(
                 } else {
                     0.0
                 };
+                let disk_image_extra = if fm_core::is_mountable_disk_image(path) {
+                    30.0
+                } else {
+                    0.0
+                };
                 let perm_extra = if posix_mode.is_some() { 59.0 } else { 0.0 };
-                416.0 + archive_extra + perm_extra
+                416.0 + archive_extra + disk_image_extra + perm_extra
             }
         }
         ContextMenuKind::SidebarPlace {
@@ -3511,14 +3568,24 @@ pub fn context_menu_overlay<'a>(
         ContextMenuKind::Drive {
             is_mounted,
             can_unmount,
+            is_ejectable,
+            is_disk_image,
             ..
         } => {
             if !*is_mounted {
-                52.0
-            } else if *can_unmount {
-                186.0 + root_extra
+                if *is_ejectable { 92.0 } else { 52.0 }
             } else {
-                150.0 + root_extra
+                let mut h = 150.0 + root_extra;
+                if *can_unmount || *is_ejectable {
+                    h += 10.0;
+                }
+                if *can_unmount {
+                    h += 30.0;
+                }
+                if *is_ejectable && !*is_disk_image {
+                    h += 30.0;
+                }
+                h
             }
         }
         ContextMenuKind::Background => 296.0 + clipboard_extra + root_extra + undo_extra,

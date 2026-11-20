@@ -478,3 +478,8 @@ undo-restored-count =
         [one] Aus dem Papierkorb wiederhergestellt.
        *[other] { $count } Elemente aus dem Papierkorb wiederhergestellt.
     }
+mount-disk-image = Abbild einhängen
+unmount-disk-image = Abbild aushängen
+eject-safely = Sicher entfernen
+image-mounted = Abbild erfolgreich eingehängt
+drive-ejected = Laufwerk sicher entfernt

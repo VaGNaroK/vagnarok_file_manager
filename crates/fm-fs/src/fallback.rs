@@ -74,6 +74,21 @@ pub fn unmount_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> R
     })
 }
 
+pub fn mount_disk_image(image_path: &Path) -> Result<std::path::PathBuf, FsError> {
+    Err(FsError::Io {
+        path: image_path.to_path_buf(),
+        message: "montagem de imagens de disco não suportada nesta plataforma".to_owned(),
+    })
+}
+
+pub fn eject_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> Result<(), FsError> {
+    unmount_drive(device_path, mount_path)
+}
+
+pub fn drives_fingerprint() -> u64 {
+    0
+}
+
 pub fn supports_open_as_root() -> bool {
     false
 }

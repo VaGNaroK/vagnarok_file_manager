@@ -211,6 +211,41 @@ pub async fn unmount_drive(
     })?
 }
 
+/// Monta uma imagem de disco (`.iso` ou `.img`) em background e retorna o ponto de montagem.
+pub async fn mount_disk_image(image_path: PathBuf) -> Result<PathBuf, FsError> {
+    let err_path = image_path.clone();
+    tokio::task::spawn_blocking(move || platform::mount_disk_image(&image_path))
+        .await
+        .map_err(|err| FsError::Io {
+            path: err_path,
+            message: err.to_string(),
+        })?
+}
+
+/// Remove com segurança / desliga a energia de uma mídia removível ou ejeta uma imagem/CD em background.
+pub async fn eject_drive(
+    device_path: Option<PathBuf>,
+    mount_path: Option<PathBuf>,
+) -> Result<(), FsError> {
+    let err_path = mount_path
+        .clone()
+        .or_else(|| device_path.clone())
+        .unwrap_or_default();
+    tokio::task::spawn_blocking(move || {
+        platform::eject_drive(device_path.as_deref(), mount_path.as_deref())
+    })
+    .await
+    .map_err(|err| FsError::Io {
+        path: err_path,
+        message: err.to_string(),
+    })?
+}
+
+/// Retorna uma assinatura leve do estado atual de unidades montadas/conectadas para detecção de hotplug em background.
+pub fn drives_fingerprint() -> u64 {
+    platform::drives_fingerprint()
+}
+
 /// Indica se a plataforma atual suporta a ação "Abrir como root" no menu de contexto.
 pub fn supports_open_as_root() -> bool {
     platform::supports_open_as_root()

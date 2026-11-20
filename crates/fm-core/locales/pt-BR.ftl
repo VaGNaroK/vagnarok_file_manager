@@ -478,3 +478,8 @@ undo-restored-count =
         [one] Restaurado da Lixeira.
        *[other] { $count } itens restaurados da Lixeira.
     }
+mount-disk-image = Montar imagem de disco
+unmount-disk-image = Desmontar imagem
+eject-safely = Remover com segurança
+image-mounted = Imagem montada com sucesso
+drive-ejected = Unidade removida com segurança

@@ -212,6 +212,7 @@ pub enum DriveKind {
     InternalSsd,
     SecondaryDisk,
     Removable,
+    OpticalOrIso,
     Network,
 }
 
@@ -225,8 +226,18 @@ pub struct DriveInfo {
     pub kind: DriveKind,
     pub is_mounted: bool,
     pub can_unmount: bool,
+    pub is_ejectable: bool,
+    pub is_disk_image: bool,
     pub total_bytes_hint: Option<u64>,
     pub space: Option<VolumeSpace>,
+}
+
+/// Indica se `path` possui extensão de imagem de disco montável (`.iso` ou `.img`).
+#[must_use]
+pub fn is_mountable_disk_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("iso") || ext.eq_ignore_ascii_case("img"))
 }
 
 /// Modo de visualização do canvas central.
@@ -858,5 +869,15 @@ mod tests {
             suggest_shortcut_name(Path::new("/docs/v1.2.3"), true, true, 1, false),
             "v1.2.3 (2).lnk"
         );
+    }
+
+    #[test]
+    fn detects_mountable_disk_images_case_insensitively() {
+        assert!(is_mountable_disk_image(Path::new("/tmp/ubuntu-24.04.iso")));
+        assert!(is_mountable_disk_image(Path::new("/tmp/WINDOWS.ISO")));
+        assert!(is_mountable_disk_image(Path::new("/tmp/raspi-os.img")));
+        assert!(is_mountable_disk_image(Path::new("/tmp/backup.IMG")));
+        assert!(!is_mountable_disk_image(Path::new("/tmp/archive.zip")));
+        assert!(!is_mountable_disk_image(Path::new("/tmp/noext")));
     }
 }

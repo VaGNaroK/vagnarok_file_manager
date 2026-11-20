@@ -169,7 +169,10 @@ fn sh_icon_for_name(name: &str, is_dir: bool, size_flag: SHGFI_FLAGS) -> Option<
 
 fn sh_icon_for_drive(kind: DriveKind, size_flag: SHGFI_FLAGS) -> Option<OwnedHicon> {
     let probe = match kind {
-        DriveKind::InternalSsd | DriveKind::SecondaryDisk | DriveKind::Removable => {
+        DriveKind::InternalSsd
+        | DriveKind::SecondaryDisk
+        | DriveKind::Removable
+        | DriveKind::OpticalOrIso => {
             let root = std::env::var_os("SystemDrive")
                 .map(|d| format!("{}\\", d.to_string_lossy()))
                 .unwrap_or_else(|| "C:\\".to_owned());

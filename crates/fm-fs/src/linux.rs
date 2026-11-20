@@ -628,7 +628,11 @@ pub fn list_drives() -> Vec<DriveInfo> {
     let mut drives = Vec::new();
 
     for dev in read_lsblk_devices() {
-        if !matches!(dev.dev_type.as_str(), "part" | "disk" | "rom" | "crypt") {
+        let is_loop_backed = dev.dev_type == "loop" || dev.pkname.starts_with("loop");
+        if !matches!(
+            dev.dev_type.as_str(),
+            "part" | "disk" | "rom" | "crypt" | "loop"
+        ) {
             continue;
         }
         if dev.fstype.is_empty()
@@ -640,6 +644,21 @@ pub fn list_drives() -> Vec<DriveInfo> {
         {
             continue;
         }
+        // Ignora loops de sistema/Snap sem ponto de montagem ou que apontem para /snap / /var/lib/snapd.
+        if is_loop_backed
+            && dev.mountpoint.as_ref().is_some_and(|mp| {
+                mp.starts_with("/snap")
+                    || mp.starts_with("/var/lib/snapd")
+                    || mp.starts_with("/run/flatpak")
+            })
+        {
+            continue;
+        }
+        if dev.dev_type == "loop" && dev.mountpoint.is_none() {
+            continue;
+        }
+
+        let is_disk_image = is_loop_backed || matches!(dev.fstype.as_str(), "iso9660" | "udf");
 
         if let Some(mount_point) = dev.mountpoint.as_ref() {
             if is_ignored_system_mount(mount_point) {
@@ -654,7 +673,9 @@ pub fn list_drives() -> Vec<DriveInfo> {
             }
             seen_devices.insert(dev.path.clone());
             let mut kind = classify_drive(mount_point, &dev.fstype);
-            if (dev.removable || dev.hotplug) && mount_point != Path::new("/") {
+            if dev.dev_type == "rom" || is_disk_image {
+                kind = DriveKind::OpticalOrIso;
+            } else if (dev.removable || dev.hotplug) && mount_point != Path::new("/") {
                 kind = DriveKind::Removable;
             }
             let label = if mount_point == Path::new("/") {
@@ -665,6 +686,9 @@ pub fn list_drives() -> Vec<DriveInfo> {
                 drive_label(mount_point, kind)
             };
             let total_bytes_hint = space.as_ref().map(|s| s.total_bytes).or(dev.size_bytes);
+            let is_ejectable = (kind == DriveKind::Removable || dev.dev_type == "rom")
+                && !is_disk_image
+                && mount_point != Path::new("/");
             drives.push(DriveInfo {
                 label,
                 mount_path: mount_point.clone(),
@@ -673,6 +697,8 @@ pub fn list_drives() -> Vec<DriveInfo> {
                 kind,
                 is_mounted: true,
                 can_unmount: !is_critical_os_mount(mount_point),
+                is_ejectable,
+                is_disk_image,
                 total_bytes_hint,
                 space,
             });
@@ -680,7 +706,9 @@ pub fn list_drives() -> Vec<DriveInfo> {
             if !seen_devices.insert(dev.path.clone()) {
                 continue;
             }
-            let kind = if dev.removable || dev.hotplug {
+            let kind = if dev.dev_type == "rom" || is_disk_image {
+                DriveKind::OpticalOrIso
+            } else if dev.removable || dev.hotplug {
                 DriveKind::Removable
             } else {
                 DriveKind::SecondaryDisk
@@ -698,6 +726,9 @@ pub fn list_drives() -> Vec<DriveInfo> {
                 kind,
                 is_mounted: false,
                 can_unmount: false,
+                is_ejectable: (kind == DriveKind::Removable || dev.dev_type == "rom")
+                    && !is_disk_image,
+                is_disk_image,
                 total_bytes_hint: dev.size_bytes,
                 space: None,
             });
@@ -718,7 +749,13 @@ pub fn list_drives() -> Vec<DriveInfo> {
             continue;
         }
 
-        let kind = classify_drive(&mount.mount_point, &mount.fs_type);
+        let is_disk_image = mount.device.starts_with("/dev/loop")
+            || matches!(mount.fs_type.as_str(), "iso9660" | "udf");
+        let kind = if is_disk_image {
+            DriveKind::OpticalOrIso
+        } else {
+            classify_drive(&mount.mount_point, &mount.fs_type)
+        };
         let label = drive_label(&mount.mount_point, kind);
         let dev_path = mount
             .device
@@ -732,6 +769,8 @@ pub fn list_drives() -> Vec<DriveInfo> {
             kind,
             is_mounted: true,
             can_unmount: !is_critical_os_mount(&mount.mount_point),
+            is_ejectable: kind == DriveKind::Removable && !is_disk_image,
+            is_disk_image,
             total_bytes_hint: space.as_ref().map(|s| s.total_bytes),
             space,
         });
@@ -783,13 +822,19 @@ pub fn mount_drive(device_path: &Path) -> Result<PathBuf, FsError> {
 }
 
 /// Desmonta dispositivo ou ponto de montagem via `udisksctl`, `gio mount -u` ou `umount`.
+/// Quando o dispositivo é um `loop` (`.iso`/`.img`), também limpa o loop device com `udisksctl loop-delete`.
 pub fn unmount_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> Result<(), FsError> {
     let target_err_path = mount_path
         .or(device_path)
         .unwrap_or_else(|| Path::new("/"))
         .to_path_buf();
 
-    if let Some(dev) = device_path
+    let resolved_dev = device_path
+        .map(Path::to_path_buf)
+        .or_else(|| mount_path.and_then(find_device_for_mount_point));
+
+    let mut unmounted = false;
+    if let Some(dev) = resolved_dev.as_deref()
         && dev.to_string_lossy().starts_with("/dev/")
     {
         let dev_str = dev.to_string_lossy().into_owned();
@@ -798,10 +843,9 @@ pub fn unmount_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> R
             .output()
         {
             if output.status.success() {
-                return Ok(());
-            }
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            if mount_path.is_none() {
+                unmounted = true;
+            } else if mount_path.is_none() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
                 return Err(FsError::Io {
                     path: target_err_path,
                     message: if stderr.is_empty() {
@@ -814,38 +858,313 @@ pub fn unmount_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> R
         }
     }
 
-    if let Some(mp) = mount_path {
-        let mp_str = mp.to_string_lossy().into_owned();
-        if let Ok(output) = host_command("gio").args(["mount", "-u", &mp_str]).output()
-            && output.status.success()
-        {
-            return Ok(());
+    if !unmounted {
+        if let Some(mp) = mount_path {
+            let mp_str = mp.to_string_lossy().into_owned();
+            if let Ok(output) = host_command("gio").args(["mount", "-u", &mp_str]).output()
+                && output.status.success()
+            {
+                unmounted = true;
+            }
+            if !unmounted {
+                let output =
+                    host_command("umount")
+                        .arg(&mp_str)
+                        .output()
+                        .map_err(|e| FsError::Io {
+                            path: target_err_path.clone(),
+                            message: format!("falha ao desmontar unidade: {e}"),
+                        })?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                    return Err(FsError::Io {
+                        path: target_err_path,
+                        message: if stderr.is_empty() {
+                            format!("umount retornou código {:?}", output.status.code())
+                        } else {
+                            stderr
+                        },
+                    });
+                }
+            }
+        } else {
+            return Err(FsError::Io {
+                path: target_err_path,
+                message: "nenhum dispositivo ou ponto de montagem informado".to_owned(),
+            });
         }
-        let output = host_command("umount")
-            .arg(&mp_str)
-            .output()
-            .map_err(|e| FsError::Io {
-                path: target_err_path.clone(),
-                message: format!("falha ao desmontar unidade: {e}"),
-            })?;
-        if output.status.success() {
-            return Ok(());
-        }
+    }
+
+    if let Some(dev) = resolved_dev.as_deref()
+        && let Some(loop_root) = loop_root_device(dev)
+    {
+        cleanup_loop_device_if_idle(&loop_root);
+    }
+
+    Ok(())
+}
+
+/// Monta imagem `.iso` ou `.img` em modo somente leitura via `udisksctl loop-setup` + `udisksctl mount`.
+pub fn mount_disk_image(image_path: &Path) -> Result<PathBuf, FsError> {
+    if !image_path.is_file() {
+        return Err(FsError::NotFound(image_path.to_path_buf()));
+    }
+    if !fm_core::is_mountable_disk_image(image_path) {
+        return Err(FsError::Io {
+            path: image_path.to_path_buf(),
+            message: "formato de imagem não suportado (use .iso ou .img)".to_owned(),
+        });
+    }
+
+    let abs_image = std::fs::canonicalize(image_path).unwrap_or_else(|_| image_path.to_path_buf());
+    let output = host_command("udisksctl")
+        .args(["loop-setup", "-r", "-f"])
+        .arg(&abs_image)
+        .output()
+        .map_err(|e| FsError::Io {
+            path: image_path.to_path_buf(),
+            message: format!("falha ao executar udisksctl loop-setup: {e}"),
+        })?;
+
+    if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(FsError::Io {
-            path: target_err_path,
+            path: image_path.to_path_buf(),
             message: if stderr.is_empty() {
-                format!("umount retornou código {:?}", output.status.code())
+                format!(
+                    "udisksctl loop-setup retornou código {:?}",
+                    output.status.code()
+                )
             } else {
                 stderr
             },
         });
     }
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let Some(loop_dev) = parse_udisks_loop_device(&stdout) else {
+        return Err(FsError::Io {
+            path: image_path.to_path_buf(),
+            message: format!("não foi possível identificar o dispositivo loop em: {stdout}"),
+        });
+    };
+
+    // Aguarda brevemente caso o ambiente gráfico já monte o dispositivo loop automaticamente
+    // ou para o kernel enumerar partições internas de arquivos `.img`.
+    for _ in 0..5 {
+        if let Some(mp) = find_mount_point_for_loop(&loop_dev) {
+            return Ok(mp);
+        }
+        std::thread::sleep(Duration::from_millis(160));
+    }
+
+    let mount_target =
+        pick_mountable_target_for_loop(&loop_dev).unwrap_or_else(|| loop_dev.clone());
+    match mount_drive(&mount_target) {
+        Ok(mp) => Ok(mp),
+        Err(err) => {
+            if let Some(mp) = find_mount_point_for_loop(&loop_dev) {
+                return Ok(mp);
+            }
+            let _ = delete_loop_device(&loop_dev);
+            Err(err)
+        }
+    }
+}
+
+/// Remove mídia removível com segurança: desmonta todas as partições do disco pai e desliga energia (`udisksctl power-off`).
+pub fn eject_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> Result<(), FsError> {
+    let target_err_path = mount_path
+        .or(device_path)
+        .unwrap_or_else(|| Path::new("/"))
+        .to_path_buf();
+
+    let resolved_dev = device_path
+        .map(Path::to_path_buf)
+        .or_else(|| mount_path.and_then(find_device_for_mount_point));
+
+    if let Some(dev) = resolved_dev.as_deref()
+        && let Some(loop_root) = loop_root_device(dev)
+    {
+        unmount_drive(Some(dev), mount_path)?;
+        let _ = delete_loop_device(&loop_root);
+        return Ok(());
+    }
+
+    let lsblk_all = read_lsblk_devices();
+    let parent_disk = resolved_dev
+        .as_deref()
+        .and_then(|dev| resolve_parent_disk(dev, &lsblk_all))
+        .or_else(|| resolved_dev.clone());
+
+    if let Some(ref disk) = parent_disk {
+        let disk_name = disk
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut unmounted_any = false;
+        for entry in &lsblk_all {
+            if (entry.path == *disk || (!disk_name.is_empty() && entry.pkname == disk_name))
+                && let Some(mp) = entry.mountpoint.as_deref()
+            {
+                unmount_drive(Some(&entry.path), Some(mp))?;
+                unmounted_any = true;
+            }
+        }
+        if !unmounted_any && mount_path.is_some() {
+            unmount_drive(resolved_dev.as_deref(), mount_path)?;
+        }
+
+        let disk_str = disk.to_string_lossy().into_owned();
+        if let Ok(output) = host_command("udisksctl")
+            .args(["power-off", "-b", &disk_str])
+            .output()
+            && output.status.success()
+        {
+            return Ok(());
+        }
+        if disk_name.starts_with("sr")
+            && let Ok(output) = host_command("eject").arg(&disk_str).output()
+            && output.status.success()
+        {
+            return Ok(());
+        }
+        return Ok(());
+    }
+
+    if mount_path.is_some() {
+        return unmount_drive(device_path, mount_path);
+    }
+
     Err(FsError::Io {
         path: target_err_path,
-        message: "nenhum dispositivo ou ponto de montagem informado".to_owned(),
+        message: "não foi possível identificar o dispositivo para ejeção segura".to_owned(),
     })
+}
+
+/// Assinatura leve (sem fork de processos) do estado de montagens e dispositivos de bloco para hotplug.
+pub fn drives_fingerprint() -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |bytes: &[u8]| {
+        for &b in bytes {
+            hash ^= u64::from(b);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+
+    if let Ok(mounts) = std::fs::read("/proc/mounts") {
+        feed(&mounts);
+    }
+    if let Ok(entries) = std::fs::read_dir("/sys/block") {
+        let mut names: Vec<String> = entries
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        for name in names {
+            feed(name.as_bytes());
+            feed(b"\n");
+        }
+    }
+    hash
+}
+
+fn find_device_for_mount_point(mount_point: &Path) -> Option<PathBuf> {
+    read_proc_mounts().into_iter().find_map(|m| {
+        (m.mount_point == mount_point && m.device.starts_with("/dev/"))
+            .then(|| PathBuf::from(m.device))
+    })
+}
+
+fn parse_udisks_loop_device(stdout: &str) -> Option<PathBuf> {
+    for token in stdout.split_whitespace() {
+        let cleaned = token.trim_matches(|c: char| matches!(c, '.' | ',' | ';' | '\'' | '"'));
+        if cleaned.starts_with("/dev/loop") {
+            return Some(PathBuf::from(cleaned));
+        }
+    }
+    None
+}
+
+fn loop_root_device(dev: &Path) -> Option<PathBuf> {
+    let s = dev.to_str()?;
+    let rest = s.strip_prefix("/dev/loop")?;
+    let digits_len = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits_len == 0 {
+        return None;
+    }
+    Some(PathBuf::from(format!("/dev/loop{}", &rest[..digits_len])))
+}
+
+fn find_mount_point_for_loop(loop_dev: &Path) -> Option<PathBuf> {
+    let loop_name = loop_dev.file_name()?.to_string_lossy();
+    for entry in read_lsblk_devices() {
+        if (entry.path == loop_dev || entry.pkname == loop_name)
+            && let Some(mp) = entry.mountpoint
+        {
+            return Some(mp);
+        }
+    }
+    find_mount_point_for_device(loop_dev)
+}
+
+fn pick_mountable_target_for_loop(loop_dev: &Path) -> Option<PathBuf> {
+    let loop_name = loop_dev.file_name()?.to_string_lossy();
+    let devices = read_lsblk_devices();
+    // Prefere partição filha com filesystem válido (ex.: imagens `.img` particionadas).
+    for entry in &devices {
+        if entry.pkname == loop_name
+            && !entry.fstype.is_empty()
+            && !IGNORED_FS_TYPES.contains(&entry.fstype.as_str())
+            && entry.fstype != "swap"
+        {
+            return Some(entry.path.clone());
+        }
+    }
+    // Caso contrário usa o próprio loop (ex.: `.iso` ou `.img` sem tabela de partições).
+    devices
+        .into_iter()
+        .find(|entry| entry.path == loop_dev && !entry.fstype.is_empty())
+        .map(|entry| entry.path)
+}
+
+fn cleanup_loop_device_if_idle(loop_root: &Path) {
+    if find_mount_point_for_loop(loop_root).is_none() {
+        let _ = delete_loop_device(loop_root);
+    }
+}
+
+fn delete_loop_device(loop_root: &Path) -> Result<(), FsError> {
+    let dev_str = loop_root.to_string_lossy().into_owned();
+    let output = host_command("udisksctl")
+        .args(["loop-delete", "-b", &dev_str])
+        .output()
+        .map_err(|e| FsError::Io {
+            path: loop_root.to_path_buf(),
+            message: format!("falha ao liberar dispositivo loop: {e}"),
+        })?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(FsError::Io {
+            path: loop_root.to_path_buf(),
+            message: if stderr.is_empty() {
+                "falha ao remover dispositivo loop".to_owned()
+            } else {
+                stderr
+            },
+        })
+    }
+}
+
+fn resolve_parent_disk(dev: &Path, lsblk_all: &[LsblkDevice]) -> Option<PathBuf> {
+    let entry = lsblk_all.iter().find(|d| d.path == dev)?;
+    if !entry.pkname.is_empty() {
+        let parent_path = PathBuf::from(format!("/dev/{}", entry.pkname));
+        return Some(parent_path);
+    }
+    Some(entry.path.clone())
 }
 
 pub fn supports_open_as_root() -> bool {
@@ -953,6 +1272,7 @@ struct LsblkDevice {
     removable: bool,
     hotplug: bool,
     dev_type: String,
+    pkname: String,
 }
 
 fn read_lsblk_devices() -> Vec<LsblkDevice> {
@@ -961,7 +1281,7 @@ fn read_lsblk_devices() -> Vec<LsblkDevice> {
             "-P",
             "-b",
             "-o",
-            "NAME,PATH,LABEL,FSTYPE,SIZE,MOUNTPOINT,RM,HOTPLUG,TYPE",
+            "NAME,PATH,LABEL,FSTYPE,SIZE,MOUNTPOINT,RM,HOTPLUG,TYPE,PKNAME",
         ])
         .output()
     else {
@@ -1002,6 +1322,7 @@ fn parse_lsblk_line(line: &str) -> Option<LsblkDevice> {
         removable: get("RM") == "1",
         hotplug: get("HOTPLUG") == "1",
         dev_type: get("TYPE"),
+        pkname: get("PKNAME"),
     })
 }
 
@@ -1238,5 +1559,23 @@ mod tests {
                 "montagem válida deveria ser incluída no fallback: {mp}"
             );
         }
+    }
+
+    #[test]
+    fn parses_udisks_loop_device_and_root_paths() {
+        assert_eq!(
+            parse_udisks_loop_device("Mapped file /home/u/ubuntu.iso as /dev/loop4."),
+            Some(PathBuf::from("/dev/loop4"))
+        );
+        assert_eq!(parse_udisks_loop_device("nothing here"), None);
+        assert_eq!(
+            loop_root_device(Path::new("/dev/loop12p1")),
+            Some(PathBuf::from("/dev/loop12"))
+        );
+        assert_eq!(
+            loop_root_device(Path::new("/dev/loop3")),
+            Some(PathBuf::from("/dev/loop3"))
+        );
+        assert_eq!(loop_root_device(Path::new("/dev/sdb1")), None);
     }
 }

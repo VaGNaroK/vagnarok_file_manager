@@ -478,3 +478,8 @@ undo-restored-count =
         [one] Ripristinato dal Cestino.
        *[other] { $count } elementi ripristinati dal Cestino.
     }
+mount-disk-image = Monta immagine disco
+unmount-disk-image = Smonta immagine
+eject-safely = Rimozione sicura
+image-mounted = Immagine disco montata
+drive-ejected = Unità rimossa in sicurezza

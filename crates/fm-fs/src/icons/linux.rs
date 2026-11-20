@@ -521,6 +521,10 @@ fn candidate_icon_names(key: &SystemIconKey, mime: &MimeTable) -> Vec<String> {
                 }
                 DriveKind::SecondaryDisk => names.push("drive-harddisk".to_owned()),
                 DriveKind::Removable => names.push("drive-removable-media".to_owned()),
+                DriveKind::OpticalOrIso => {
+                    names.push("media-optical".to_owned());
+                    names.push("drive-optical".to_owned());
+                }
                 DriveKind::Network => names.push("network-server".to_owned()),
             }
             names.push("drive-harddisk".to_owned());

@@ -12,18 +12,30 @@ use fm_core::{
 };
 use tokio_util::sync::CancellationToken;
 use windows::Win32::Foundation::{
-    ERROR_NO_MORE_FILES, HANDLE, HWND, RPC_E_CHANGED_MODE, S_FALSE, S_OK,
+    CloseHandle, ERROR_NO_MORE_FILES, ERROR_SUCCESS, GENERIC_READ, HANDLE, HWND,
+    RPC_E_CHANGED_MODE, S_FALSE, S_OK,
 };
 use windows::Win32::Storage::FileSystem::{
-    COPYFILE_FLAGS, COPYPROGRESSROUTINE_PROGRESS, CopyFileExW, FILE_FLAGS_AND_ATTRIBUTES,
-    FIND_FIRST_EX_LARGE_FETCH, FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW,
-    FindNextFileW, GetDiskFreeSpaceExW, GetDriveTypeW, GetFileAttributesW, GetLogicalDriveStringsW,
-    GetVolumeInformationW, INVALID_FILE_ATTRIBUTES, LPPROGRESS_ROUTINE_CALLBACK_REASON,
-    PROGRESS_CANCEL, PROGRESS_CONTINUE, SetFileAttributesW, WIN32_FIND_DATAW,
+    COPYFILE_FLAGS, COPYPROGRESSROUTINE_PROGRESS, CopyFileExW, CreateFileW,
+    FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, FIND_FIRST_EX_LARGE_FETCH,
+    FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
+    GetDiskFreeSpaceExW, GetDriveTypeW, GetFileAttributesW, GetLogicalDriveStringsW,
+    GetLogicalDrives, GetVolumeInformationW, INVALID_FILE_ATTRIBUTES,
+    LPPROGRESS_ROUTINE_CALLBACK_REASON, OPEN_EXISTING, PROGRESS_CANCEL, PROGRESS_CONTINUE,
+    SetFileAttributesW, WIN32_FIND_DATAW,
+};
+use windows::Win32::Storage::Vhd::{
+    ATTACH_VIRTUAL_DISK_FLAG_PERMANENT_LIFETIME, ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY,
+    AttachVirtualDisk, OPEN_VIRTUAL_DISK_FLAG_NONE, OpenVirtualDisk, VIRTUAL_DISK_ACCESS_ATTACH_RO,
+    VIRTUAL_STORAGE_TYPE, VIRTUAL_STORAGE_TYPE_DEVICE_ISO, VIRTUAL_STORAGE_TYPE_VENDOR_MICROSOFT,
 };
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
     CoUninitialize, IPersistFile,
+};
+use windows::Win32::System::IO::DeviceIoControl;
+use windows::Win32::System::Ioctl::{
+    FSCTL_DISMOUNT_VOLUME, FSCTL_LOCK_VOLUME, IOCTL_STORAGE_EJECT_MEDIA,
 };
 use windows::Win32::UI::Shell::{
     IShellLinkW, SEE_MASK_FLAG_NO_UI, SEE_MASK_INVOKEIDLIST, SHELLEXECUTEINFOW, ShellExecuteExW,
@@ -37,6 +49,7 @@ use crate::{PropertyPatch, make_file_entry, map_io_err};
 const DRIVE_REMOVABLE: u32 = 2;
 const DRIVE_FIXED: u32 = 3;
 const DRIVE_REMOTE: u32 = 4;
+const DRIVE_CDROM: u32 = 5;
 const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
 const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
@@ -401,6 +414,7 @@ pub fn list_drives() -> Vec<DriveInfo> {
         let drive_type = unsafe { GetDriveTypeW(PCWSTR(wide.as_ptr())) };
         let kind = match drive_type {
             DRIVE_REMOVABLE => DriveKind::Removable,
+            DRIVE_CDROM => DriveKind::OpticalOrIso,
             DRIVE_REMOTE => DriveKind::Network,
             DRIVE_FIXED if i == 0 => DriveKind::InternalSsd,
             _ => DriveKind::SecondaryDisk,
@@ -415,6 +429,8 @@ pub fn list_drives() -> Vec<DriveInfo> {
             _ => CompactString::from(root_str.trim_end_matches('\\')),
         };
 
+        let is_optical = drive_type == DRIVE_CDROM;
+        let is_removable = drive_type == DRIVE_REMOVABLE;
         drives.push(DriveInfo {
             label: display,
             mount_path,
@@ -422,7 +438,9 @@ pub fn list_drives() -> Vec<DriveInfo> {
             fs_type,
             kind,
             is_mounted: true,
-            can_unmount: drive_type == DRIVE_REMOVABLE,
+            can_unmount: is_removable || is_optical,
+            is_ejectable: is_removable || is_optical,
+            is_disk_image: is_optical,
             total_bytes_hint: space.as_ref().map(|s| s.total_bytes),
             space,
         });
@@ -441,31 +459,208 @@ pub fn mount_drive(device_path: &Path) -> Result<PathBuf, FsError> {
     })
 }
 
+struct OwnedHandle(HANDLE);
+
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            // SAFETY: `self.0` é um handle válido aberto via `CreateFileW` ou `OpenVirtualDisk`.
+            let _ = unsafe { CloseHandle(self.0) };
+        }
+    }
+}
+
+/// Desmonta e ejeta unidade removível ou ISO/CD nativamente via `DeviceIoControl` (zero PowerShell).
 pub fn unmount_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> Result<(), FsError> {
     let target = mount_path
         .or(device_path)
         .unwrap_or_else(|| Path::new("C:\\"));
-    let drive_root = target.to_string_lossy();
-    let trimmed = drive_root.trim_end_matches('\\');
-    let script = format!(
-        "(New-Object -ComObject Shell.Application).Namespace(17).ParseName('{trimmed}\\').InvokeVerb('Eject')"
-    );
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-Command", &script])
-        .output()
-        .map_err(|e| map_io_err(target, e))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        Err(FsError::Io {
+    let Some(letter) = drive_letter_from_path(target) else {
+        return Err(FsError::Io {
             path: target.to_path_buf(),
-            message: if stderr.is_empty() {
-                "não foi possível ejetar a unidade removível".to_owned()
-            } else {
-                stderr
-            },
-        })
+            message: "não foi possível identificar a letra da unidade".to_owned(),
+        });
+    };
+
+    let vol_path = format!(r"\\.\{letter}:");
+    let vol_wide = to_str_wide(&vol_path);
+    // SAFETY: `vol_wide` é UTF-16 terminado em NUL.
+    let raw = unsafe {
+        CreateFileW(
+            PCWSTR(vol_wide.as_ptr()),
+            GENERIC_READ.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            None,
+        )
+    }
+    .map_err(|e| map_io_err(target, win_err_to_io(e)))?;
+    let handle = OwnedHandle(raw);
+
+    let mut bytes_returned = 0u32;
+    // Tenta travar e desmontar o volume antes de ejetar a mídia/ISO.
+    // SAFETY: `handle.0` é um handle válido de volume e `bytes_returned` está na stack.
+    let _ = unsafe {
+        DeviceIoControl(
+            handle.0,
+            FSCTL_LOCK_VOLUME,
+            None,
+            0,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+    let _ = unsafe {
+        DeviceIoControl(
+            handle.0,
+            FSCTL_DISMOUNT_VOLUME,
+            None,
+            0,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+    unsafe {
+        DeviceIoControl(
+            handle.0,
+            IOCTL_STORAGE_EJECT_MEDIA,
+            None,
+            0,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        )
+    }
+    .map_err(|e| map_io_err(target, win_err_to_io(e)))?;
+
+    Ok(())
+}
+
+/// Remove com segurança / ejeta unidade removível ou imagem virtual no Windows.
+pub fn eject_drive(device_path: Option<&Path>, mount_path: Option<&Path>) -> Result<(), FsError> {
+    unmount_drive(device_path, mount_path)
+}
+
+/// Monta imagem `.iso` ou `.img` nativamente no Windows via `OpenVirtualDisk` + `AttachVirtualDisk`.
+pub fn mount_disk_image(image_path: &Path) -> Result<PathBuf, FsError> {
+    if !image_path.is_file() {
+        return Err(FsError::NotFound(image_path.to_path_buf()));
+    }
+    if !fm_core::is_mountable_disk_image(image_path) {
+        return Err(FsError::Io {
+            path: image_path.to_path_buf(),
+            message: "formato de imagem não suportado (use .iso ou .img)".to_owned(),
+        });
+    }
+
+    let abs_image = if image_path.is_absolute() {
+        image_path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(image_path))
+            .unwrap_or_else(|_| image_path.to_path_buf())
+    };
+    let clean_image = strip_verbatim_prefix(&abs_image);
+    let image_w = to_wide(&clean_image);
+
+    // SAFETY: consulta bitmask de letras de unidade atuais antes da montagem.
+    let before_mask = unsafe { GetLogicalDrives() };
+
+    let storage_type = VIRTUAL_STORAGE_TYPE {
+        DeviceId: VIRTUAL_STORAGE_TYPE_DEVICE_ISO,
+        VendorId: VIRTUAL_STORAGE_TYPE_VENDOR_MICROSOFT,
+    };
+    let mut raw_handle = HANDLE::default();
+    // SAFETY: `image_w` é UTF-16 terminado em NUL e `raw_handle` é saída válida na stack.
+    let open_err = unsafe {
+        OpenVirtualDisk(
+            &storage_type,
+            PCWSTR(image_w.as_ptr()),
+            VIRTUAL_DISK_ACCESS_ATTACH_RO,
+            OPEN_VIRTUAL_DISK_FLAG_NONE,
+            None,
+            &mut raw_handle,
+        )
+    };
+    if open_err != ERROR_SUCCESS {
+        return Err(map_io_err(
+            image_path,
+            std::io::Error::from_raw_os_error(open_err.0 as i32),
+        ));
+    }
+    let handle = OwnedHandle(raw_handle);
+
+    // SAFETY: `handle.0` é um handle válido de disco virtual aberto para attach somente leitura.
+    let attach_err = unsafe {
+        AttachVirtualDisk(
+            handle.0,
+            None,
+            ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY | ATTACH_VIRTUAL_DISK_FLAG_PERMANENT_LIFETIME,
+            0,
+            None,
+            None,
+        )
+    };
+    if attach_err != ERROR_SUCCESS {
+        return Err(map_io_err(
+            image_path,
+            std::io::Error::from_raw_os_error(attach_err.0 as i32),
+        ));
+    }
+    drop(handle);
+
+    for _ in 0..25 {
+        // SAFETY: syscall sem estado de leitura da máscara de drives lógicos.
+        let after_mask = unsafe { GetLogicalDrives() };
+        let added = after_mask & !before_mask;
+        if let Some(letter) = first_drive_letter_from_mask(added) {
+            return Ok(PathBuf::from(format!("{letter}:\\")));
+        }
+        std::thread::sleep(Duration::from_millis(120));
+    }
+
+    Err(FsError::Io {
+        path: image_path.to_path_buf(),
+        message: "imagem anexada, mas nenhuma nova letra de unidade foi atribuída pelo Windows"
+            .to_owned(),
+    })
+}
+
+/// Assinatura leve (1 syscall) das letras de unidade ativas no Windows para hotplug automático.
+pub fn drives_fingerprint() -> u64 {
+    // SAFETY: `GetLogicalDrives` não recebe ponteiros e retorna apenas a bitmask de unidades.
+    u64::from(unsafe { GetLogicalDrives() })
+}
+
+fn drive_letter_from_path(path: &Path) -> Option<char> {
+    let s = path.to_string_lossy();
+    let trimmed = s.strip_prefix(r"\\?\").unwrap_or(&s);
+    let mut chars = trimmed.chars();
+    let first = chars.next()?;
+    let second = chars.next()?;
+    if first.is_ascii_alphabetic() && second == ':' {
+        Some(first.to_ascii_uppercase())
+    } else {
+        None
+    }
+}
+
+fn first_drive_letter_from_mask(mask: u32) -> Option<char> {
+    if mask == 0 {
+        return None;
+    }
+    let idx = mask.trailing_zeros();
+    if idx < 26 {
+        Some((b'A' + idx as u8) as char)
+    } else {
+        None
     }
 }
 
@@ -729,5 +924,20 @@ mod tests {
         assert_eq!(win_err_to_io(not_found_file).kind(), ErrorKind::NotFound);
         assert_eq!(win_err_to_io(not_found_path).kind(), ErrorKind::NotFound);
         assert_eq!(win_err_to_io(denied).kind(), ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn extracts_drive_letters_from_masks_and_paths() {
+        assert_eq!(super::first_drive_letter_from_mask(0), None);
+        assert_eq!(super::first_drive_letter_from_mask(1 << 2), Some('C'));
+        assert_eq!(super::first_drive_letter_from_mask(1 << 4), Some('E'));
+        assert_eq!(
+            super::drive_letter_from_path(std::path::Path::new(r"e:\")),
+            Some('E')
+        );
+        assert_eq!(
+            super::drive_letter_from_path(std::path::Path::new(r"\\?\D:\isos")),
+            Some('D')
+        );
     }
 }

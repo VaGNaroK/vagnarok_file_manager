@@ -478,3 +478,8 @@ undo-restored-count =
         [one] Restored from Trash.
        *[other] Restored { $count } items from Trash.
     }
+mount-disk-image = Mount disk image
+unmount-disk-image = Unmount image
+eject-safely = Safely remove
+image-mounted = Disk image mounted
+drive-ejected = Drive safely removed

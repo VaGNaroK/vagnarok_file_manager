@@ -478,3 +478,8 @@ undo-restored-count =
         [one] Restaurado desde la Papelera.
        *[other] { $count } elementos restaurados desde la Papelera.
     }
+mount-disk-image = Montar imagen de disco
+unmount-disk-image = Desmontar imagen
+eject-safely = Expulsar con seguridad
+image-mounted = Imagen montada correctamente
+drive-ejected = Unidad expulsada con seguridad

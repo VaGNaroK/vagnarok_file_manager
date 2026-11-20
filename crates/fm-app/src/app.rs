@@ -75,6 +75,8 @@ pub enum ContextMenuKind {
         device_path: Option<PathBuf>,
         is_mounted: bool,
         can_unmount: bool,
+        is_ejectable: bool,
+        is_disk_image: bool,
     },
     Background,
     NewMenu,
@@ -270,6 +272,11 @@ pub enum Message {
         device_path: PathBuf,
         result: Result<PathBuf, FsError>,
     },
+    MountDiskImage(PathBuf),
+    DiskImageMounted {
+        image_path: PathBuf,
+        result: Result<PathBuf, FsError>,
+    },
     UnmountDrive {
         device_path: Option<PathBuf>,
         mount_path: Option<PathBuf>,
@@ -280,12 +287,24 @@ pub enum Message {
         label: String,
         result: Result<(), FsError>,
     },
+    EjectDrive {
+        device_path: Option<PathBuf>,
+        mount_path: Option<PathBuf>,
+        label: String,
+    },
+    DriveEjected {
+        mount_path: Option<PathBuf>,
+        label: String,
+        result: Result<(), FsError>,
+    },
     OpenDriveContextMenu {
         label: String,
         mount_path: PathBuf,
         device_path: Option<PathBuf>,
         is_mounted: bool,
         can_unmount: bool,
+        is_ejectable: bool,
+        is_disk_image: bool,
     },
     SelectEntry {
         index: usize,
@@ -1172,22 +1191,62 @@ impl App {
                     }
                 }
             }
+            Message::MountDiskImage(image_path) => {
+                self.context_menu = None;
+                let img_for_cb = image_path.clone();
+                Task::perform(fm_fs::mount_disk_image(image_path), move |result| {
+                    Message::DiskImageMounted {
+                        image_path: img_for_cb,
+                        result,
+                    }
+                })
+            }
+            Message::DiskImageMounted { image_path, result } => {
+                let refresh_task = self.update(Message::RefreshDrives);
+                match result {
+                    Ok(mount_path) => {
+                        self.status_notice = Some(format!(
+                            "{}: {}",
+                            self.strings().image_mounted,
+                            mount_path.to_string_lossy()
+                        ));
+                        let tab_task = self.open_tab_at(mount_path);
+                        Task::batch([refresh_task, tab_task])
+                    }
+                    Err(err) => {
+                        let _ = image_path;
+                        self.status_notice = Some(err.to_string());
+                        refresh_task
+                    }
+                }
+            }
             Message::UnmountDrive {
                 device_path,
                 mount_path,
                 label,
             } => {
                 self.context_menu = None;
+                let (had_open_tab, release_task) = if let Some(mp) = mount_path.as_deref() {
+                    self.release_tabs_under_mount(mp)
+                } else {
+                    (false, Task::none())
+                };
                 let mp_for_cb = mount_path.clone();
                 let label_for_cb = label.clone();
-                Task::perform(
-                    fm_fs::unmount_drive(device_path, mount_path),
+                let unmount_task = Task::perform(
+                    async move {
+                        if had_open_tab {
+                            tokio::time::sleep(Duration::from_millis(120)).await;
+                        }
+                        fm_fs::unmount_drive(device_path, mount_path).await
+                    },
                     move |result| Message::DriveUnmounted {
                         mount_path: mp_for_cb,
                         label: label_for_cb,
                         result,
                     },
-                )
+                );
+                Task::batch([release_task, unmount_task])
             }
             Message::DriveUnmounted {
                 mount_path,
@@ -1199,12 +1258,59 @@ impl App {
                     Ok(()) => {
                         self.status_notice =
                             Some(format!("{}: {label}", self.strings().unmount_drive));
-                        let nav_task = if let Some(mp) = mount_path
-                            && self
-                                .current_tab()
-                                .is_some_and(|t| t.current_path.starts_with(&mp))
-                        {
-                            self.navigate_active_tab(self.places.home.clone())
+                        let nav_task = if let Some(mp) = mount_path.as_deref() {
+                            self.release_tabs_under_mount(mp).1
+                        } else {
+                            Task::none()
+                        };
+                        Task::batch([refresh_task, nav_task])
+                    }
+                    Err(err) => {
+                        self.status_notice = Some(err.to_string());
+                        refresh_task
+                    }
+                }
+            }
+            Message::EjectDrive {
+                device_path,
+                mount_path,
+                label,
+            } => {
+                self.context_menu = None;
+                let (had_open_tab, release_task) = if let Some(mp) = mount_path.as_deref() {
+                    self.release_tabs_under_mount(mp)
+                } else {
+                    (false, Task::none())
+                };
+                let mp_for_cb = mount_path.clone();
+                let label_for_cb = label.clone();
+                let eject_task = Task::perform(
+                    async move {
+                        if had_open_tab {
+                            tokio::time::sleep(Duration::from_millis(120)).await;
+                        }
+                        fm_fs::eject_drive(device_path, mount_path).await
+                    },
+                    move |result| Message::DriveEjected {
+                        mount_path: mp_for_cb,
+                        label: label_for_cb,
+                        result,
+                    },
+                );
+                Task::batch([release_task, eject_task])
+            }
+            Message::DriveEjected {
+                mount_path,
+                label,
+                result,
+            } => {
+                let refresh_task = self.update(Message::RefreshDrives);
+                match result {
+                    Ok(()) => {
+                        self.status_notice =
+                            Some(format!("{}: {label}", self.strings().drive_ejected));
+                        let nav_task = if let Some(mp) = mount_path.as_deref() {
+                            self.release_tabs_under_mount(mp).1
                         } else {
                             Task::none()
                         };
@@ -1222,6 +1328,8 @@ impl App {
                 device_path,
                 is_mounted,
                 can_unmount,
+                is_ejectable,
+                is_disk_image,
             } => {
                 self.breadcrumb_menu = None;
                 self.context_menu = Some(ContextMenuState {
@@ -1231,6 +1339,8 @@ impl App {
                         device_path,
                         is_mounted,
                         can_unmount,
+                        is_ejectable,
+                        is_disk_image,
                     },
                     position: self.cursor_position,
                     send_to_open: false,
@@ -3883,6 +3993,7 @@ impl App {
         let mut subs = vec![
             events_sub,
             window::close_events().map(Message::WindowClosed),
+            Subscription::run(watch_drives_stream),
         ];
         if !self.config.theme_customized {
             subs.push(system::theme_changes().map(Message::SystemThemeDetected));
@@ -4032,6 +4143,42 @@ impl App {
         } else {
             stack![main_shell].into()
         }
+    }
+
+    /// Libera todas as abas (ativas e inativas) posicionadas dentro de `mount_path`,
+    /// movendo-as para `Home` e encerrando leituras/watchers pendentes antes de desmontar/ejetar.
+    fn release_tabs_under_mount(&mut self, mount_path: &std::path::Path) -> (bool, Task<Message>) {
+        let affected_ids: Vec<TabId> = self
+            .tabs
+            .iter()
+            .filter(|tab| tab.current_path.starts_with(mount_path))
+            .map(|tab| tab.id)
+            .collect();
+        if affected_ids.is_empty() {
+            return (false, Task::none());
+        }
+        let home = self.places.home.clone();
+        let mut tasks = Vec::with_capacity(affected_ids.len());
+        for tab_id in affected_ids {
+            if tab_id == self.active_tab {
+                tasks.push(self.navigate_active_tab(home.clone()));
+            } else {
+                let req = self.alloc_request_id();
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                    tab.push_navigation(home.clone());
+                    prepare_tab_for_load(tab, req);
+                }
+                let cancel = self.reset_tab_cancel(tab_id);
+                tasks.push(spawn_list_task(
+                    Arc::clone(&self.vfs),
+                    tab_id,
+                    home.clone(),
+                    req,
+                    cancel,
+                ));
+            }
+        }
+        (true, Task::batch(tasks))
     }
 
     fn alloc_request_id(&mut self) -> u64 {
@@ -6003,6 +6150,27 @@ impl App {
 }
 
 #[allow(clippy::ptr_arg)] // Requerido por `Subscription::run_with::<PathBuf, _>` (`fn(&D) -> S`).
+fn watch_drives_stream() -> impl iced::futures::Stream<Item = Message> {
+    stream::channel(8, async move |mut output| {
+        let mut last = tokio::task::spawn_blocking(fm_fs::drives_fingerprint)
+            .await
+            .unwrap_or(0);
+        loop {
+            tokio::time::sleep(Duration::from_millis(1_500)).await;
+            let current = tokio::task::spawn_blocking(fm_fs::drives_fingerprint)
+                .await
+                .unwrap_or(last);
+            if current != last {
+                last = current;
+                if output.send(Message::RefreshDrives).await.is_err() {
+                    break;
+                }
+            }
+        }
+    })
+}
+
+#[allow(clippy::ptr_arg)]
 fn watch_directory_stream(root: &PathBuf) -> impl iced::futures::Stream<Item = Message> + use<> {
     let root = root.clone();
     stream::channel(16, async move |mut output| {

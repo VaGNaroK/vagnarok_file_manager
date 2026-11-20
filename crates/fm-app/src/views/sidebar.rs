@@ -6,10 +6,10 @@ use iced::widget::{
 };
 use iced::{Element, Length, Padding};
 use lucide_icons::iced::{
-    icon_arrow_up_from_line, icon_chevron_down, icon_chevron_right, icon_database, icon_download,
-    icon_file_text, icon_folder, icon_hard_drive, icon_home, icon_image, icon_monitor, icon_music,
-    icon_panel_left, icon_plug, icon_refresh_cw, icon_settings, icon_star, icon_trash_2,
-    icon_video,
+    icon_arrow_up_from_line, icon_chevron_down, icon_chevron_right, icon_database, icon_disc_3,
+    icon_download, icon_file_text, icon_folder, icon_hard_drive, icon_home, icon_image,
+    icon_monitor, icon_music, icon_panel_left, icon_plug, icon_refresh_cw, icon_settings,
+    icon_star, icon_trash_2, icon_video,
 };
 
 use crate::app::{App, Message, SidebarTarget};
@@ -284,6 +284,7 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
         for drive in &app.drives {
             let base_icon = match drive.kind {
                 DriveKind::InternalSsd => icon_hard_drive().size(16),
+                DriveKind::OpticalOrIso => icon_disc_3().size(16),
                 _ => icon_database().size(16),
             };
             let icon = if drive.is_mounted {
@@ -313,6 +314,8 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
                 device_path: drive.device_path.clone(),
                 is_mounted: drive.is_mounted,
                 can_unmount: drive.can_unmount,
+                is_ejectable: drive.is_ejectable,
+                is_disk_image: drive.is_disk_image,
             };
             let btn = sidebar_btn_owned(
                 render_drive_icon(app, drive, icon, 16.0),
@@ -339,7 +342,11 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
                             mount_path: Some(drive.mount_path.clone()),
                             label: drive.label.to_string(),
                         }),
-                        strings.unmount_drive,
+                        if drive.is_disk_image {
+                            strings.unmount_disk_image
+                        } else {
+                            strings.unmount_drive
+                        },
                         tooltip::Position::Right,
                         palette,
                     );
@@ -597,6 +604,8 @@ mod tests {
             kind: DriveKind::SecondaryDisk,
             is_mounted: false,
             can_unmount: false,
+            is_ejectable: false,
+            is_disk_image: false,
             total_bytes_hint: Some(480_102_055_936),
             space: None,
         };
