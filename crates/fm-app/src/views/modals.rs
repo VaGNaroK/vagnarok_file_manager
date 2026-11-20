@@ -27,7 +27,7 @@ use lucide_icons::iced::{
 use crate::app::{
     ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, PreferencesTab, PropertiesTab,
     PropertiesWindowState, UndoAction, dialog_input_id, effective_properties_modal_rect,
-    filter_ext_input_id, open_with_props_type_key,
+    filter_ext_input_id, open_with_props_type_key, resolve_open_in_new_tab_targets,
 };
 use crate::archive_jobs::ArchiveUiMsg;
 use crate::duplicate_finder::DuplicateFinderMsg;
@@ -2871,16 +2871,50 @@ pub fn context_menu_overlay<'a>(
             ));
             offset_y += ROW_STEP;
 
-            if *is_dir {
-                items = items.push(ctx_entry_item(
-                    icon_folder().size(14).color(palette.accent_primary).into(),
-                    strings.open_in_new_tab,
-                    palette.text_primary,
-                    Message::OpenInNewTab(path.clone()),
-                    palette,
-                    close_sub_on_hover,
-                ));
+            let open_tab_targets = app
+                .current_tab()
+                .map(|tab| {
+                    resolve_open_in_new_tab_targets(
+                        path,
+                        *is_dir,
+                        &tab.visible_entries,
+                        &tab.selection.selected_ids,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    if *is_dir {
+                        vec![path.clone()]
+                    } else {
+                        Vec::new()
+                    }
+                });
+
+            if !open_tab_targets.is_empty() {
+                let target_count = open_tab_targets.len();
+                let open_tab_item = if target_count > 1 {
+                    ctx_entry_item_owned(
+                        icon_folder().size(14).color(palette.accent_primary).into(),
+                        format!("{} ({target_count})", strings.open_in_new_tab),
+                        palette.text_primary,
+                        Message::OpenManyInNewTabs(open_tab_targets),
+                        palette,
+                        close_sub_on_hover,
+                    )
+                } else {
+                    ctx_entry_item(
+                        icon_folder().size(14).color(palette.accent_primary).into(),
+                        strings.open_in_new_tab,
+                        palette.text_primary,
+                        Message::OpenManyInNewTabs(open_tab_targets),
+                        palette,
+                        close_sub_on_hover,
+                    )
+                };
+                items = items.push(open_tab_item);
                 offset_y += ROW_STEP;
+            }
+
+            if *is_dir {
                 if show_open_as_root
                     && !fm_core::is_virtual_trash_path(path)
                     && !fm_fs::archive::is_inside_archive_path(path)
@@ -3636,7 +3670,24 @@ pub fn context_menu_overlay<'a>(
                     0.0
                 };
                 let perm_extra = if posix_mode.is_some() { 59.0 } else { 0.0 };
-                416.0 + archive_extra + disk_image_extra + perm_extra
+                let open_tab_extra = app
+                    .current_tab()
+                    .map(|tab| {
+                        if resolve_open_in_new_tab_targets(
+                            path,
+                            *is_dir,
+                            &tab.visible_entries,
+                            &tab.selection.selected_ids,
+                        )
+                        .is_empty()
+                        {
+                            0.0
+                        } else {
+                            30.0
+                        }
+                    })
+                    .unwrap_or(0.0);
+                416.0 + archive_extra + disk_image_extra + perm_extra + open_tab_extra
             }
         }
         ContextMenuKind::SidebarPlace {

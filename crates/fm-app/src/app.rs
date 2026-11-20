@@ -278,6 +278,7 @@ pub enum Message {
     TabNext(bool),
     TabClose(TabId),
     OpenInNewTab(PathBuf),
+    OpenManyInNewTabs(Vec<PathBuf>),
     NavigateTo(PathBuf),
     NavigateBack,
     NavigateForward,
@@ -1011,6 +1012,10 @@ impl App {
             Message::OpenInNewTab(path) => {
                 self.context_menu = None;
                 self.open_tab_at(path)
+            }
+            Message::OpenManyInNewTabs(paths) => {
+                self.context_menu = None;
+                self.open_tabs_at(paths)
             }
             Message::TabNext(reverse) => {
                 self.context_menu = None;
@@ -5793,23 +5798,56 @@ impl App {
     }
 
     fn open_tab_at(&mut self, path: PathBuf) -> Task<Message> {
-        let id = TabId(self.next_tab_id);
-        self.next_tab_id += 1;
-        let req = self.alloc_request_id();
-        let mut tab = TabState::new(id, path.clone());
-        tab.view_mode = self.config.default_view_mode;
-        tab.sort.dirs_first = self.config.dirs_first;
-        tab.active_request_id = req;
-        tab.is_loading = true;
-        self.tabs.push(tab);
-        self.active_tab = id;
+        self.open_tabs_at(vec![path])
+    }
+
+    fn open_tabs_at(&mut self, paths: Vec<PathBuf>) -> Task<Message> {
+        let mut seen = HashSet::new();
+        let mut unique_paths = Vec::with_capacity(paths.len());
+        for path in paths {
+            if seen.insert(path.clone()) {
+                unique_paths.push(path);
+            }
+        }
+        if unique_paths.is_empty() {
+            return Task::none();
+        }
+
+        let mut first_new_id = None;
+        let mut tasks = Vec::with_capacity(unique_paths.len() + 1);
+        for path in unique_paths {
+            let id = TabId(self.next_tab_id);
+            self.next_tab_id += 1;
+            if first_new_id.is_none() {
+                first_new_id = Some(id);
+            }
+            let req = self.alloc_request_id();
+            let mut tab = TabState::new(id, path.clone());
+            tab.view_mode = self.config.default_view_mode;
+            tab.sort.dirs_first = self.config.dirs_first;
+            tab.active_request_id = req;
+            tab.is_loading = true;
+            self.tabs.push(tab);
+            let cancel = self.reset_tab_cancel(id);
+            tasks.push(spawn_list_task(
+                Arc::clone(&self.vfs),
+                id,
+                path,
+                req,
+                cancel,
+            ));
+        }
+
+        if let Some(id) = first_new_id {
+            self.active_tab = id;
+        }
         self.path_editing = false;
         self.quicklook_open = false;
-        let cancel = self.reset_tab_cancel(id);
-        Task::batch([
-            spawn_list_task(Arc::clone(&self.vfs), id, path, req, cancel),
-            operation::snap_to(canvas_scroll_id(), RelativeOffset::START),
-        ])
+        tasks.push(operation::snap_to(
+            canvas_scroll_id(),
+            RelativeOffset::START,
+        ));
+        Task::batch(tasks)
     }
 
     fn autocomplete_path_draft(&mut self) -> Task<Message> {
@@ -6606,6 +6644,34 @@ fn compute_dragged_sidebar_width(
     views::sidebar::clamp_sidebar_width(initial_w + (pos_x - start_x)).clamp(min_w, max_w)
 }
 
+pub(crate) fn resolve_open_in_new_tab_targets(
+    clicked_path: &std::path::Path,
+    clicked_is_dir: bool,
+    visible_entries: &[FileEntry],
+    selected_ids: &HashSet<EntryId>,
+) -> Vec<PathBuf> {
+    let clicked_is_selected = visible_entries
+        .iter()
+        .any(|e| e.path == clicked_path && selected_ids.contains(&e.id));
+
+    if clicked_is_selected {
+        let selected_dirs: Vec<PathBuf> = visible_entries
+            .iter()
+            .filter(|e| selected_ids.contains(&e.id) && e.kind.is_dir_like())
+            .map(|e| e.path.clone())
+            .collect();
+        if !selected_dirs.is_empty() {
+            return selected_dirs;
+        }
+    }
+
+    if clicked_is_dir {
+        vec![clicked_path.to_path_buf()]
+    } else {
+        Vec::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -6862,5 +6928,92 @@ mod tests {
         assert_eq!(paths_cut, vec![std::path::PathBuf::from("/tmp/pasta")]);
 
         assert!(super::parse_clipboard_transfer_text("apenas texto solto").is_none());
+    }
+
+    #[test]
+    fn resolves_open_in_new_tab_targets_for_single_and_multi_selection() {
+        use fm_core::{EntryId, EntryKind, FileEntry, PermissionsMeta};
+        use std::collections::HashSet;
+        use std::path::{Path, PathBuf};
+
+        let make_entry = |id: u64, name: &str, kind: EntryKind| FileEntry {
+            id: EntryId(id),
+            name: name.into(),
+            path: PathBuf::from(format!("/tmp/{name}")),
+            kind,
+            size_bytes: 0,
+            modified_at: None,
+            created_at: None,
+            permissions: PermissionsMeta::PosixMode(0o755),
+            is_hidden: false,
+            extension: None,
+            mime_badge: None,
+            child_count: None,
+        };
+
+        let entries = vec![
+            make_entry(1, "Alpha", EntryKind::Directory),
+            make_entry(2, "Beta", EntryKind::Directory),
+            make_entry(
+                3,
+                "LinkDir",
+                EntryKind::Symlink {
+                    target_is_dir: true,
+                },
+            ),
+            make_entry(4, "notes.txt", EntryKind::File),
+        ];
+
+        // Multiple folders selected -> returns all selected folders in visible order
+        let sel_dirs: HashSet<EntryId> = [EntryId(1), EntryId(2), EntryId(3)].into_iter().collect();
+        assert_eq!(
+            super::resolve_open_in_new_tab_targets(
+                Path::new("/tmp/Beta"),
+                true,
+                &entries,
+                &sel_dirs,
+            ),
+            vec![
+                PathBuf::from("/tmp/Alpha"),
+                PathBuf::from("/tmp/Beta"),
+                PathBuf::from("/tmp/LinkDir"),
+            ]
+        );
+
+        // Mixed selection (folders + file) -> returns only the selected folders, even if right-clicked on the file
+        let sel_mixed: HashSet<EntryId> = [EntryId(1), EntryId(4)].into_iter().collect();
+        assert_eq!(
+            super::resolve_open_in_new_tab_targets(
+                Path::new("/tmp/notes.txt"),
+                false,
+                &entries,
+                &sel_mixed,
+            ),
+            vec![PathBuf::from("/tmp/Alpha")]
+        );
+
+        // Unselected folder clicked -> falls back to just the clicked folder
+        let sel_other: HashSet<EntryId> = [EntryId(1)].into_iter().collect();
+        assert_eq!(
+            super::resolve_open_in_new_tab_targets(
+                Path::new("/tmp/Beta"),
+                true,
+                &entries,
+                &sel_other,
+            ),
+            vec![PathBuf::from("/tmp/Beta")]
+        );
+
+        // Single file selected -> returns empty
+        let sel_file: HashSet<EntryId> = [EntryId(4)].into_iter().collect();
+        assert!(
+            super::resolve_open_in_new_tab_targets(
+                Path::new("/tmp/notes.txt"),
+                false,
+                &entries,
+                &sel_file,
+            )
+            .is_empty()
+        );
     }
 }
