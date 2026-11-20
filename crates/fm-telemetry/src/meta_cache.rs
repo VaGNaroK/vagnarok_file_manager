@@ -11,6 +11,7 @@ use redb::{Database, ReadableDatabase, TableDefinition};
 const FILE_META_TABLE: TableDefinition<'_, &[u8], &str> = TableDefinition::new("file_meta_v1");
 const DIR_COUNT_TABLE: TableDefinition<'_, &[u8], u32> = TableDefinition::new("dir_count_v1");
 const DIR_SIZE_TABLE: TableDefinition<'_, &[u8], &[u8]> = TableDefinition::new("dir_size_v1");
+const MD5_META_TABLE: TableDefinition<'_, &[u8], &[u8]> = TableDefinition::new("md5_meta_v1");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CachedFileTelemetry {
@@ -42,6 +43,7 @@ impl DiskMetadataCache {
             let _ = write_txn.open_table(FILE_META_TABLE).ok()?;
             let _ = write_txn.open_table(DIR_COUNT_TABLE).ok()?;
             let _ = write_txn.open_table(DIR_SIZE_TABLE).ok()?;
+            let _ = write_txn.open_table(MD5_META_TABLE).ok()?;
         }
         write_txn.commit().ok()?;
         Some(Self { db })
@@ -154,6 +156,41 @@ impl DiskMetadataCache {
         }
         let _ = write_txn.commit();
     }
+
+    /// Consulta MD5 completo em cache validando `(path_bytes, size, mtime_nanos, integrity_stamp)`.
+    pub fn get_md5(
+        &self,
+        path: &Path,
+        size_bytes: u64,
+        modified_nanos: u128,
+        integrity_stamp: u128,
+    ) -> Option<[u8; 16]> {
+        let key = encode_md5_key(path, size_bytes, modified_nanos, integrity_stamp);
+        let read_txn = self.db.begin_read().ok()?;
+        let table = read_txn.open_table(MD5_META_TABLE).ok()?;
+        let guard = table.get(key.as_slice()).ok()??;
+        let bytes = guard.value();
+        bytes.try_into().ok()
+    }
+
+    /// Grava múltiplos digests MD5 em lote em uma única transação `redb` (evita `fsync` por arquivo).
+    pub fn put_md5_batch(&self, entries: &[(&Path, u64, u128, u128, [u8; 16])]) {
+        if entries.is_empty() {
+            return;
+        }
+        for chunk in entries.chunks(512) {
+            let Ok(write_txn) = self.db.begin_write() else {
+                return;
+            };
+            if let Ok(mut table) = write_txn.open_table(MD5_META_TABLE) {
+                for &(path, size_bytes, modified_nanos, integrity_stamp, digest) in chunk {
+                    let key = encode_md5_key(path, size_bytes, modified_nanos, integrity_stamp);
+                    let _ = table.insert(key.as_slice(), digest.as_slice());
+                }
+            }
+            let _ = write_txn.commit();
+        }
+    }
 }
 
 pub fn mtime_nanos(path: &Path) -> u128 {
@@ -171,6 +208,23 @@ fn encode_file_key(path: &Path, size_bytes: u64, modified_nanos: u128) -> Vec<u8
     out.extend_from_slice(p.as_bytes());
     out.extend_from_slice(&size_bytes.to_le_bytes());
     out.extend_from_slice(&modified_nanos.to_le_bytes());
+    out
+}
+
+/// Codifica chave da tabela `md5_meta_v1` preservando os bytes brutos do `OsStr` (seguro para paths não-UTF8).
+fn encode_md5_key(
+    path: &Path,
+    size_bytes: u64,
+    modified_nanos: u128,
+    integrity_stamp: u128,
+) -> Vec<u8> {
+    let raw = path.as_os_str().as_encoded_bytes();
+    let mut out = Vec::with_capacity(raw.len() + 44);
+    out.extend_from_slice(&(raw.len() as u32).to_le_bytes());
+    out.extend_from_slice(raw);
+    out.extend_from_slice(&size_bytes.to_le_bytes());
+    out.extend_from_slice(&modified_nanos.to_le_bytes());
+    out.extend_from_slice(&integrity_stamp.to_le_bytes());
     out
 }
 
@@ -211,6 +265,13 @@ mod tests {
         };
         cache.put_dir_size(folder, 123_456, rsize);
         assert_eq!(cache.get_dir_size(folder, 123_456), Some(rsize));
+
+        let digest = [0xABu8; 16];
+        let entries = [(file, 42u64, 999_000u128, 777_111u128, digest)];
+        cache.put_md5_batch(&entries);
+        assert_eq!(cache.get_md5(file, 42, 999_000, 777_111), Some(digest));
+        // Invalidação quando o carimbo ctime/integridade muda mesmo mantendo size e mtime.
+        assert!(cache.get_md5(file, 42, 999_000, 777_112).is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

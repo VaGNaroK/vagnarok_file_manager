@@ -3,10 +3,12 @@ use fm_theme::{FONT_MONO, FONT_UI, Spacing, ThemePalette, styles};
 use iced::Alignment::Center;
 use iced::widget::{Space, button, container, row, space, text};
 use iced::{Color, Element, Length, Padding};
-use lucide_icons::iced::{icon_file_archive, icon_maximize_2, icon_x};
+use lucide_icons::iced::{icon_file_archive, icon_maximize_2, icon_search, icon_x};
 
 use crate::app::{App, Message};
 use crate::archive_jobs::ArchiveUiMsg;
+use crate::duplicate_finder::DuplicateFinderMsg;
+use crate::views::duplicate_finder::stage_badge_text;
 use crate::views::modals::format_transfer_summary;
 use crate::views::sanitize_single_line;
 
@@ -170,6 +172,74 @@ pub fn view<'a>(
         .padding([2, 8])
         .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 6.0));
         right = right.push(draft_pill);
+    }
+    if let Some(dup) = &app.duplicate_finder
+        && dup.minimized
+    {
+        let pill_label = if dup.scanning {
+            format!(
+                "{}: {}",
+                strings.dup_footer_prefix,
+                stage_badge_text(dup, strings)
+            )
+        } else {
+            format!(
+                "{}: {} • {} {}",
+                strings.dup_footer_prefix,
+                stage_badge_text(dup, strings),
+                dup.groups.len(),
+                strings.dup_groups_found
+            )
+        };
+        let accent_pill = dup.scanning;
+        let dup_pill = container(
+            row![
+                icon_search().size(12).color(if accent_pill {
+                    palette.accent_primary
+                } else {
+                    palette.text_secondary
+                }),
+                text(pill_label)
+                    .size(11)
+                    .font(FONT_MONO)
+                    .color(if accent_pill {
+                        palette.accent_primary
+                    } else {
+                        palette.text_secondary
+                    }),
+                button(
+                    row![
+                        icon_maximize_2().size(11).color(palette.text_primary),
+                        text(strings.arch_restore)
+                            .size(11)
+                            .font(FONT_UI)
+                            .color(palette.text_primary),
+                    ]
+                    .spacing(4)
+                    .align_y(Center),
+                )
+                .padding([2, 6])
+                .style(styles::ghost_button(palette, 4.0))
+                .on_press(Message::DuplicateFinder(DuplicateFinderMsg::Restore)),
+                button(icon_x().size(11).color(palette.status_error))
+                    .padding([2, 4])
+                    .style(styles::ghost_button(palette, 4.0))
+                    .on_press(Message::DuplicateFinder(
+                        DuplicateFinderMsg::CancelFromFooter,
+                    )),
+            ]
+            .spacing(6)
+            .align_y(Center),
+        )
+        .padding([2, 8])
+        .style(move |_| {
+            if accent_pill {
+                styles::panel_surface(palette.accent_surface, palette.accent_border, 6.0)
+            } else {
+                styles::panel_surface(palette.surface_low, palette.border, 6.0)
+            }
+        });
+        right = right.push(dup_pill);
     }
     if let Some(job) = &app.active_transfer {
         right = right.push(

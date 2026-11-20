@@ -1779,12 +1779,15 @@ dependencies = [
  "directories",
  "fm-core",
  "gix",
+ "ignore",
  "infer",
  "kamadak-exif",
+ "rayon",
  "redb",
  "sha2 0.11.1",
  "tokio",
  "tokio-util",
+ "windows 0.62.2",
 ]
 
 [[package]]

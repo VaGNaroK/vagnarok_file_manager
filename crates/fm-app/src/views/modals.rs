@@ -18,9 +18,9 @@ use lucide_icons::iced::{
     icon_arrow_left, icon_arrow_up_from_line, icon_check, icon_check_square, icon_clipboard_copy,
     icon_clipboard_paste, icon_copy, icon_external_link, icon_eye, icon_file_archive,
     icon_file_plus, icon_file_text, icon_filter, icon_folder, icon_folder_plus, icon_hard_drive,
-    icon_info, icon_lock, icon_pencil, icon_plug, icon_rotate_ccw, icon_scissors, icon_settings,
-    icon_shield_alert, icon_shield_check, icon_sliders_horizontal, icon_star_off, icon_terminal,
-    icon_trash_2, icon_x,
+    icon_info, icon_lock, icon_pencil, icon_plug, icon_rotate_ccw, icon_scissors, icon_search,
+    icon_settings, icon_shield_alert, icon_shield_check, icon_sliders_horizontal, icon_star_off,
+    icon_terminal, icon_trash_2, icon_x,
 };
 
 use crate::app::{
@@ -29,6 +29,7 @@ use crate::app::{
     open_with_props_type_key,
 };
 use crate::archive_jobs::ArchiveUiMsg;
+use crate::duplicate_finder::DuplicateFinderMsg;
 use crate::views::{
     entry_icon, modal_overlay_backdrop, modal_overlay_backdrop_at, sanitize_single_line,
     with_tooltip,
@@ -2969,6 +2970,18 @@ pub fn context_menu_overlay<'a>(
                         Message::Archive(ArchiveUiMsg::OpenCompressDialog),
                         palette,
                     ));
+                if *is_dir {
+                    items = items.push(ctx_item(
+                        icon_search()
+                            .size(14)
+                            .color(palette.accent_primary)
+                            .into(),
+                        strings.dup_menu_action,
+                        palette.text_primary,
+                        Message::DuplicateFinder(DuplicateFinderMsg::OpenForPath(path.clone())),
+                        palette,
+                    ));
+                }
             }
             if !is_in_trash && let Some(mode) = *posix_mode {
                 let exec_enabled = is_posix_executable(mode);
@@ -3348,10 +3361,21 @@ pub fn context_menu_overlay<'a>(
                 ));
             }
             if let Some(tab) = app.current_tab() {
-                if show_open_as_root
-                    && !fm_core::is_virtual_trash_path(&tab.current_path)
-                    && fm_fs::archive::split_archive_path(&tab.current_path).is_none()
-                {
+                let can_scan_dups = !fm_core::is_virtual_trash_path(&tab.current_path)
+                    && fm_fs::archive::split_archive_path(&tab.current_path).is_none();
+                if can_scan_dups {
+                    items = items.push(ctx_item(
+                        icon_search()
+                            .size(14)
+                            .color(palette.accent_primary)
+                            .into(),
+                        strings.dup_menu_action,
+                        palette.text_primary,
+                        Message::DuplicateFinder(DuplicateFinderMsg::OpenForCurrentDir),
+                        palette,
+                    ));
+                }
+                if show_open_as_root && can_scan_dups {
                     items = items.push(ctx_item(
                         icon_shield_alert()
                             .size(14)
@@ -3386,7 +3410,7 @@ pub fn context_menu_overlay<'a>(
             is_dir, posix_mode, ..
         } => {
             if *is_dir {
-                376.0 + root_extra
+                412.0 + root_extra
             } else if posix_mode.is_some() {
                 464.0
             } else {
@@ -3417,7 +3441,7 @@ pub fn context_menu_overlay<'a>(
                 156.0 + root_extra
             }
         }
-        ContextMenuKind::Background => 284.0 + root_extra + undo_extra,
+        ContextMenuKind::Background => 320.0 + root_extra + undo_extra,
         ContextMenuKind::FilterMenu => 320.0,
         ContextMenuKind::LanguageMenu => 256.0,
         ContextMenuKind::PreferencesMenu => 84.0,

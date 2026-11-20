@@ -3,6 +3,7 @@
 mod app;
 mod archive_jobs;
 mod bulk_rename;
+mod duplicate_finder;
 mod views;
 
 use mimalloc::MiMalloc;

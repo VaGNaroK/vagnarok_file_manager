@@ -69,10 +69,9 @@ pub async fn count_direct_children_cached(
     .unwrap_or_default()
 }
 
-fn is_pseudo_or_root_path(path: &Path) -> bool {
+pub(crate) fn is_pseudo_fs_path(path: &Path) -> bool {
     let s = path.to_string_lossy();
-    s == "/"
-        || s == "/proc"
+    s == "/proc"
         || s.starts_with("/proc/")
         || s == "/sys"
         || s.starts_with("/sys/")
@@ -80,6 +79,10 @@ fn is_pseudo_or_root_path(path: &Path) -> bool {
         || s.starts_with("/dev/")
         || s == "/run"
         || s.starts_with("/run/")
+}
+
+fn is_pseudo_or_root_path(path: &Path) -> bool {
+    path == Path::new("/") || is_pseudo_fs_path(path)
 }
 
 /// Calcula tamanho recursivo da subárvore de `dir_path` em background com limite, cache e cancelamento.

@@ -5,6 +5,7 @@
 pub mod archive_job;
 pub mod bulk_rename;
 pub mod domain;
+pub mod duplicates;
 pub mod i18n;
 pub mod state;
 pub mod vfs;
@@ -12,6 +13,12 @@ pub mod vfs;
 pub use archive_job::{
     ArchiveFormat, ArchiveJobKind, ArchiveJobProgress, CompressionLevel, ExtractTargetMode,
     sanitize_archive_rel_path, strip_known_archive_suffix, suggest_archive_base_name,
+};
+
+pub use duplicates::{
+    DuplicateConfirmLevel, DuplicateFileItem, DuplicateGroup, DuplicateMinSizePreset,
+    DuplicateScanEvent, DuplicateScanOptions, DuplicateScanProgress, DuplicateScanStage,
+    KeepStrategy, apply_keep_strategy, format_short_hash,
 };
 
 pub use bulk_rename::{

@@ -375,6 +375,60 @@ pub struct Strings {
     pub arch_done_compress: &'static str,
     pub arch_done_extract: &'static str,
     pub arch_cancelled: &'static str,
+    pub dup_menu_action: &'static str,
+    pub dup_modal_title: &'static str,
+    pub dup_readonly_error: &'static str,
+    pub dup_confirm_level_label: &'static str,
+    pub dup_level_quick: &'static str,
+    pub dup_level_standard: &'static str,
+    pub dup_level_sha256: &'static str,
+    pub dup_level_byte: &'static str,
+    pub dup_min_size_label: &'static str,
+    pub dup_min_size_any: &'static str,
+    pub dup_min_size_1kb: &'static str,
+    pub dup_min_size_1mb: &'static str,
+    pub dup_min_size_10mb: &'static str,
+    pub dup_start_scan: &'static str,
+    pub dup_rescan: &'static str,
+    pub dup_stop_scan: &'static str,
+    pub dup_opt_subfolders: &'static str,
+    pub dup_opt_hidden: &'static str,
+    pub dup_opt_ignore_empty: &'static str,
+    pub dup_opt_ignore_hardlinks: &'static str,
+    pub dup_quick_warning: &'static str,
+    pub dup_quick_select_label: &'static str,
+    pub dup_keep_oldest: &'static str,
+    pub dup_keep_newest: &'static str,
+    pub dup_keep_shortest: &'static str,
+    pub dup_clear_selection: &'static str,
+    pub dup_badge_oldest: &'static str,
+    pub dup_badge_hardlink: &'static str,
+    pub dup_verify_partial: &'static str,
+    pub dup_verify_md5: &'static str,
+    pub dup_verify_sha256: &'static str,
+    pub dup_verify_byte: &'static str,
+    pub dup_stage_walking: &'static str,
+    pub dup_stage_partial: &'static str,
+    pub dup_stage_full: &'static str,
+    pub dup_stage_sha256: &'static str,
+    pub dup_stage_byte: &'static str,
+    pub dup_all_selected_warning: &'static str,
+    pub dup_delete_permanent: &'static str,
+    pub dup_move_to_trash: &'static str,
+    pub dup_confirm_perm_delete: &'static str,
+    pub dup_empty_idle: &'static str,
+    pub dup_empty_none: &'static str,
+    pub dup_group_prefix: &'static str,
+    pub dup_copies_word: &'static str,
+    pub dup_each_word: &'static str,
+    pub dup_selected_word: &'static str,
+    pub dup_groups_found: &'static str,
+    pub dup_reclaimable: &'static str,
+    pub dup_footer_prefix: &'static str,
+    pub dup_cancelled: &'static str,
+    pub dup_stale_skipped: &'static str,
+    pub dup_last_copy_protected: &'static str,
+    pub dup_delete_done: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -912,6 +966,60 @@ impl Strings {
         let arch_done_compress = resolve("arch-done-compress");
         let arch_done_extract = resolve("arch-done-extract");
         let arch_cancelled = resolve("arch-cancelled");
+        let dup_menu_action = resolve("dup-menu-action");
+        let dup_modal_title = resolve("dup-modal-title");
+        let dup_readonly_error = resolve("dup-readonly-error");
+        let dup_confirm_level_label = resolve("dup-confirm-level-label");
+        let dup_level_quick = resolve("dup-level-quick");
+        let dup_level_standard = resolve("dup-level-standard");
+        let dup_level_sha256 = resolve("dup-level-sha256");
+        let dup_level_byte = resolve("dup-level-byte");
+        let dup_min_size_label = resolve("dup-min-size-label");
+        let dup_min_size_any = resolve("dup-min-size-any");
+        let dup_min_size_1kb = resolve("dup-min-size-1kb");
+        let dup_min_size_1mb = resolve("dup-min-size-1mb");
+        let dup_min_size_10mb = resolve("dup-min-size-10mb");
+        let dup_start_scan = resolve("dup-start-scan");
+        let dup_rescan = resolve("dup-rescan");
+        let dup_stop_scan = resolve("dup-stop-scan");
+        let dup_opt_subfolders = resolve("dup-opt-subfolders");
+        let dup_opt_hidden = resolve("dup-opt-hidden");
+        let dup_opt_ignore_empty = resolve("dup-opt-ignore-empty");
+        let dup_opt_ignore_hardlinks = resolve("dup-opt-ignore-hardlinks");
+        let dup_quick_warning = resolve("dup-quick-warning");
+        let dup_quick_select_label = resolve("dup-quick-select-label");
+        let dup_keep_oldest = resolve("dup-keep-oldest");
+        let dup_keep_newest = resolve("dup-keep-newest");
+        let dup_keep_shortest = resolve("dup-keep-shortest");
+        let dup_clear_selection = resolve("dup-clear-selection");
+        let dup_badge_oldest = resolve("dup-badge-oldest");
+        let dup_badge_hardlink = resolve("dup-badge-hardlink");
+        let dup_verify_partial = resolve("dup-verify-partial");
+        let dup_verify_md5 = resolve("dup-verify-md5");
+        let dup_verify_sha256 = resolve("dup-verify-sha256");
+        let dup_verify_byte = resolve("dup-verify-byte");
+        let dup_stage_walking = resolve("dup-stage-walking");
+        let dup_stage_partial = resolve("dup-stage-partial");
+        let dup_stage_full = resolve("dup-stage-full");
+        let dup_stage_sha256 = resolve("dup-stage-sha256");
+        let dup_stage_byte = resolve("dup-stage-byte");
+        let dup_all_selected_warning = resolve("dup-all-selected-warning");
+        let dup_delete_permanent = resolve("dup-delete-permanent");
+        let dup_move_to_trash = resolve("dup-move-to-trash");
+        let dup_confirm_perm_delete = resolve("dup-confirm-perm-delete");
+        let dup_empty_idle = resolve("dup-empty-idle");
+        let dup_empty_none = resolve("dup-empty-none");
+        let dup_group_prefix = resolve("dup-group-prefix");
+        let dup_copies_word = resolve("dup-copies-word");
+        let dup_each_word = resolve("dup-each-word");
+        let dup_selected_word = resolve("dup-selected-word");
+        let dup_groups_found = resolve("dup-groups-found");
+        let dup_reclaimable = resolve("dup-reclaimable");
+        let dup_footer_prefix = resolve("dup-footer-prefix");
+        let dup_cancelled = resolve("dup-cancelled");
+        let dup_stale_skipped = resolve("dup-stale-skipped");
+        let dup_last_copy_protected = resolve("dup-last-copy-protected");
+        let dup_delete_done = resolve("dup-delete-done");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -1256,6 +1364,60 @@ impl Strings {
             arch_done_compress,
             arch_done_extract,
             arch_cancelled,
+            dup_menu_action,
+            dup_modal_title,
+            dup_readonly_error,
+            dup_confirm_level_label,
+            dup_level_quick,
+            dup_level_standard,
+            dup_level_sha256,
+            dup_level_byte,
+            dup_min_size_label,
+            dup_min_size_any,
+            dup_min_size_1kb,
+            dup_min_size_1mb,
+            dup_min_size_10mb,
+            dup_start_scan,
+            dup_rescan,
+            dup_stop_scan,
+            dup_opt_subfolders,
+            dup_opt_hidden,
+            dup_opt_ignore_empty,
+            dup_opt_ignore_hardlinks,
+            dup_quick_warning,
+            dup_quick_select_label,
+            dup_keep_oldest,
+            dup_keep_newest,
+            dup_keep_shortest,
+            dup_clear_selection,
+            dup_badge_oldest,
+            dup_badge_hardlink,
+            dup_verify_partial,
+            dup_verify_md5,
+            dup_verify_sha256,
+            dup_verify_byte,
+            dup_stage_walking,
+            dup_stage_partial,
+            dup_stage_full,
+            dup_stage_sha256,
+            dup_stage_byte,
+            dup_all_selected_warning,
+            dup_delete_permanent,
+            dup_move_to_trash,
+            dup_confirm_perm_delete,
+            dup_empty_idle,
+            dup_empty_none,
+            dup_group_prefix,
+            dup_copies_word,
+            dup_each_word,
+            dup_selected_word,
+            dup_groups_found,
+            dup_reclaimable,
+            dup_footer_prefix,
+            dup_cancelled,
+            dup_stale_skipped,
+            dup_last_copy_protected,
+            dup_delete_done,
         }
     }
 }

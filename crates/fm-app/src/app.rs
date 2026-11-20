@@ -34,6 +34,7 @@ pub use crate::bulk_rename::{
     BulkRenameExtensionKind, BulkRenameInsertKind, BulkRenameModalState, BulkRenameMsg,
     effective_bulk_rename_modal_rect,
 };
+use crate::duplicate_finder::{DuplicateFinderMsg, DuplicateFinderState};
 use crate::views;
 
 pub fn search_input_id() -> Id {
@@ -526,6 +527,7 @@ pub enum Message {
     UndoLastBulkRename,
     UndoBulkRenameFinished(Result<usize, FsError>),
     Archive(ArchiveUiMsg),
+    DuplicateFinder(DuplicateFinderMsg),
     OpenNewMenu,
     OpenFilterMenu,
     SetExtensionFilter(Option<CompactString>),
@@ -619,6 +621,7 @@ pub struct App {
     pub last_bulk_rename_undo: Option<Vec<(PathBuf, PathBuf)>>,
     pub compress_modal: Option<CompressModalState>,
     pub archive_jobs: BTreeMap<u64, ArchiveJobRuntime>,
+    pub duplicate_finder: Option<DuplicateFinderState>,
     pub prefs_open: bool,
     pub prefs_tab: PreferencesTab,
     pub clipboard: Option<ClipboardTransfer>,
@@ -758,6 +761,7 @@ impl App {
             last_bulk_rename_undo: None,
             compress_modal: None,
             archive_jobs: BTreeMap::new(),
+            duplicate_finder: None,
             prefs_open: false,
             prefs_tab: PreferencesTab::General,
             clipboard: None,
@@ -2163,6 +2167,9 @@ impl App {
                 }
             },
             Message::Archive(msg) => crate::archive_jobs::handle_archive_msg(self, msg),
+            Message::DuplicateFinder(msg) => {
+                crate::duplicate_finder::handle_duplicate_finder_msg(self, msg)
+            }
             Message::RequestDelete(permanent) => {
                 self.context_menu = None;
                 let paths = self.selected_paths();
@@ -3233,6 +3240,10 @@ impl App {
                 if let Some(modal) = &mut self.compress_modal {
                     modal.dragging_modal = None;
                 }
+                if let Some(modal) = &mut self.duplicate_finder {
+                    modal.dragging_modal = None;
+                    modal.resizing_modal = None;
+                }
                 let mut should_persist = self.resizing_grid.take().is_some();
                 if self.resizing_sidebar.take().is_some() {
                     should_persist = true;
@@ -3392,6 +3403,32 @@ impl App {
                         self.window_size,
                     ));
                 }
+                if let Some(modal) = &mut self.duplicate_finder {
+                    if let Some((start, start_x, start_y)) = modal.dragging_modal {
+                        modal.modal_offset =
+                            Some(crate::duplicate_finder::clamp_duplicate_drag_pos(
+                                modal,
+                                start,
+                                start_x,
+                                start_y,
+                                pos,
+                                self.window_size,
+                            ));
+                    }
+                    if let Some((start, anchor_x, anchor_y, initial_w, initial_h)) =
+                        modal.resizing_modal
+                    {
+                        modal.modal_size = crate::duplicate_finder::clamp_duplicate_resize_size(
+                            anchor_x,
+                            anchor_y,
+                            initial_w,
+                            initial_h,
+                            start,
+                            pos,
+                            self.window_size,
+                        );
+                    }
+                }
                 Task::none()
             }
             Message::MetaCacheReady(cache) => {
@@ -3435,6 +3472,11 @@ impl App {
                     }
                     for (_, runtime) in std::mem::take(&mut self.archive_jobs) {
                         runtime.cancel.cancel();
+                    }
+                    if let Some(mut dup) = self.duplicate_finder.take()
+                        && let Some(cancel) = dup.cancel.take()
+                    {
+                        cancel.cancel();
                     }
                     for (_, mut props) in self.properties_windows.drain() {
                         if let Some(cancel) = props.cancel.take() {
@@ -3678,6 +3720,10 @@ impl App {
             ))
         } else if let Some(modal) = self.compress_modal.as_ref().filter(|m| !m.minimized) {
             Some(views::archive_modal::compress_modal_overlay(
+                self, modal, palette, strings,
+            ))
+        } else if let Some(modal) = self.duplicate_finder.as_ref().filter(|m| !m.minimized) {
+            Some(views::duplicate_finder::duplicate_finder_modal_overlay(
                 self, modal, palette, strings,
             ))
         } else if let Some(dialog) = &self.active_dialog {
@@ -5109,12 +5155,19 @@ impl App {
             keyboard::Key::Character(c) if c.eq_ignore_ascii_case("q") && modifiers.control()
         );
         let compress_modal_visible = self.compress_modal.as_ref().is_some_and(|m| !m.minimized);
+        let dup_modal_visible = self
+            .duplicate_finder
+            .as_ref()
+            .is_some_and(|m| !m.minimized);
         if is_ctrl_q {
             if self.bulk_rename_modal.is_some() {
                 return self.update(Message::BulkRename(BulkRenameMsg::Close));
             }
             if compress_modal_visible {
                 return self.update(Message::Archive(ArchiveUiMsg::CloseModal));
+            }
+            if dup_modal_visible {
+                return self.update(Message::DuplicateFinder(DuplicateFinderMsg::Close));
             }
             if self.properties_windows.contains_key(&window_id) {
                 return self.update(Message::ClosePropertiesWindow(window_id));
@@ -5142,6 +5195,7 @@ impl App {
         }
         let text_input_modal_active = self.bulk_rename_modal.is_some()
             || compress_modal_visible
+            || dup_modal_visible
             || self.active_dialog.is_some()
             || self.deep_search_open
             || self.path_editing
@@ -5155,6 +5209,8 @@ impl App {
                     return self.update(Message::BulkRename(BulkRenameMsg::Close));
                 } else if compress_modal_visible {
                     return self.update(Message::Archive(ArchiveUiMsg::CloseModal));
+                } else if dup_modal_visible {
+                    return self.update(Message::DuplicateFinder(DuplicateFinderMsg::Close));
                 } else if self.active_dialog.is_some() {
                     return self.update(Message::CloseDialog);
                 } else if self.prefs_open {

@@ -25,7 +25,7 @@ pub async fn compute_sha256(
         .ok()?
 }
 
-fn compute_sha256_blocking(
+pub(crate) fn compute_sha256_blocking(
     path: &Path,
     cancel: &CancellationToken,
 ) -> Option<(CompactString, CompactString)> {

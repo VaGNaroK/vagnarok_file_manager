@@ -401,3 +401,59 @@ arch-extracting = Extracting
 arch-done-compress = Archive created
 arch-done-extract = Extraction completed
 arch-cancelled = Operation cancelled
+
+# Duplicate File Finder
+dup-menu-action = Find duplicate files...
+dup-modal-title = Find Duplicate Files
+dup-readonly-error = Duplicate finder is not supported in Trash or compressed archives.
+dup-confirm-level-label = Duplicate confirmation level
+dup-level-quick = 1. Fast — Size + Partial MD5 (Triage)
+dup-level-standard = 2. Standard — Size + Partial MD5 + Full MD5
+dup-level-sha256 = 3. Safe — Full MD5 + SHA-256 Confirmation
+dup-level-byte = 4. Maximum — Full MD5 + Byte-by-Byte Comparison
+dup-min-size-label = Minimum size
+dup-min-size-any = Any (>= 1 B)
+dup-min-size-1kb = >= 1 KB
+dup-min-size-1mb = >= 1 MB
+dup-min-size-10mb = >= 10 MB
+dup-start-scan = Start Scan
+dup-rescan = Rescan
+dup-stop-scan = Stop
+dup-opt-subfolders = Include subfolders
+dup-opt-hidden = Include hidden
+dup-opt-ignore-empty = Ignore empty (0 B)
+dup-opt-ignore-hardlinks = Ignore hardlinks
+dup-quick-warning = Fast mode only compares start, middle and end chunks. For permanent deletion, Standard, Safe or Maximum is recommended.
+dup-quick-select-label = Quick select:
+dup-keep-oldest = Keep oldest
+dup-keep-newest = Keep newest
+dup-keep-shortest = Shortest path
+dup-clear-selection = Clear
+dup-badge-oldest = Oldest
+dup-badge-hardlink = Hardlink
+dup-verify-partial = Partial MD5 (approx.)
+dup-verify-md5 = Full MD5 ✓
+dup-verify-sha256 = MD5 + SHA-256 ✓
+dup-verify-byte = Byte-by-Byte 100% ✓
+dup-stage-walking = Scanning folder
+dup-stage-partial = Partial MD5
+dup-stage-full = Full MD5
+dup-stage-sha256 = MD5 + SHA-256
+dup-stage-byte = MD5 + Byte-by-Byte
+dup-all-selected-warning = Warning: ALL copies of at least 1 group are selected! Uncheck 1 copy so you do not lose the original file.
+dup-delete-permanent = Delete permanently
+dup-move-to-trash = Move to Trash
+dup-confirm-perm-delete = Confirm permanent delete?
+dup-empty-idle = Choose a confirmation level and click Start Scan to find duplicate files.
+dup-empty-none = No duplicate files found with the current filters.
+dup-group-prefix = Group
+dup-copies-word = copies
+dup-each-word = each
+dup-selected-word = selected
+dup-groups-found = groups found
+dup-reclaimable = reclaimable
+dup-footer-prefix = Duplicates
+dup-cancelled = Duplicate scan cancelled
+dup-stale-skipped = Some files changed or disappeared on disk and were skipped for safety.
+dup-last-copy-protected = Deletion blocked in group(s) whose last unselected copy no longer exists on disk.
+dup-delete-done = Duplicate files removed safely
