@@ -5,12 +5,12 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use compact_str::CompactString;
 use fm_core::{
-    AppConfig, ClipboardTransfer, ConflictPolicy, CopyMode, DIR_FILTER_SENTINEL, DirectorySnapshot,
-    DriveInfo, EntryExtraInfo, EntryId, FileEntry, FolderSummary, FsError, IconThemeMode,
-    JobProgress, JobState, Language, OpenWithAssociation, OpenWithCatalog, PermissionsMeta,
-    RecursiveSize, SelectedFileTelemetry, SelectionModifiers, SortDirection, SortField, Strings,
-    SystemIconBucket, SystemIconKey, SystemPlaceKind, TabId, TabState, ThemePreset, UserPlaces,
-    VfsProvider, ViewMode, VolumeSpace, WindowDecorationsMode,
+    AppConfig, ClipboardTransfer, ConflictPolicy, CopyMode, DirectorySnapshot, DriveInfo,
+    EntryExtraInfo, EntryId, FileEntry, FolderSummary, FsError, IconThemeMode, JobProgress,
+    JobState, Language, OpenWithAssociation, OpenWithCatalog, PermissionsMeta, RecursiveSize,
+    SelectedFileTelemetry, SelectionModifiers, SortDirection, SortField, Strings, SystemIconBucket,
+    SystemIconKey, SystemPlaceKind, TabId, TabState, ThemePreset, UserPlaces, VfsProvider,
+    ViewMode, VolumeSpace, WindowDecorationsMode,
 };
 use fm_fs::LocalFs;
 use fm_index::SearchHit;
@@ -2838,6 +2838,7 @@ impl App {
             }
             Message::CloseContextMenu => {
                 self.context_menu = None;
+                self.filter_ext_draft.clear();
                 Task::none()
             }
             Message::ContextMenuSetSendToOpen(open) => {
@@ -3558,14 +3559,10 @@ impl App {
                 );
                 if is_already_filter {
                     self.context_menu = None;
+                    self.filter_ext_draft.clear();
                     Task::none()
                 } else {
-                    self.filter_ext_draft = self
-                        .current_tab()
-                        .and_then(|t| t.extension_filter.as_deref())
-                        .filter(|ext| *ext != DIR_FILTER_SENTINEL)
-                        .map(fm_core::format_extension_filter_badge)
-                        .unwrap_or_default();
+                    self.filter_ext_draft.clear();
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::FilterMenu,
                         position: self.cursor_position,
@@ -3596,6 +3593,7 @@ impl App {
             }
             Message::SubmitFilterExtDraft => {
                 self.context_menu = None;
+                self.filter_ext_draft.clear();
                 Task::none()
             }
             Message::StartColumnResize(idx) => {
@@ -5752,6 +5750,17 @@ impl App {
         Task::batch(tasks)
     }
 
+    fn clear_active_canvas_filters(&mut self) -> Task<Message> {
+        self.filter_ext_draft.clear();
+        let changed = self.current_tab_mut().is_some_and(clear_tab_filters);
+        if changed {
+            self.canvas_scroll_y = 0.0;
+            self.queue_visible_thumbnails()
+        } else {
+            Task::none()
+        }
+    }
+
     fn handle_global_key(
         &mut self,
         window_id: window::Id,
@@ -5924,7 +5933,7 @@ impl App {
                 } else if self.quicklook_open {
                     self.update(Message::CloseQuickLook)
                 } else {
-                    self.update(Message::FilterChanged(String::new()))
+                    self.clear_active_canvas_filters()
                 }
             }
             keyboard::Key::Character("=" | "+") if modifiers.control() => {
@@ -6732,6 +6741,17 @@ fn common_parent_dir(paths: &[PathBuf]) -> Option<PathBuf> {
     (!out.as_os_str().is_empty()).then_some(out)
 }
 
+/// Limpa filtro de texto e filtro de extensão da aba e restaura a listagem normal.
+fn clear_tab_filters(tab: &mut TabState) -> bool {
+    if tab.filter_query.is_empty() && tab.extension_filter.is_none() {
+        return false;
+    }
+    tab.filter_query.clear();
+    tab.extension_filter = None;
+    apply_tab_filter(tab);
+    true
+}
+
 /// Calcula a largura da barra lateral durante o arraste respeitando o limite mínimo, máximo e largura da janela.
 fn compute_dragged_sidebar_width(
     initial_w: f32,
@@ -6917,5 +6937,69 @@ mod tests {
             super::common_parent_dir(&nested),
             Some(std::path::PathBuf::from("/home/user/projects"))
         );
+    }
+
+    #[test]
+    fn clear_tab_filters_resets_extension_and_query_and_restores_directories() {
+        use fm_core::{EntryId, EntryKind, FileEntry, PermissionsMeta, TabId, TabState};
+        use std::path::PathBuf;
+
+        let mut tab = TabState::new(TabId(1), PathBuf::from("/tmp"));
+        tab.raw_entries = vec![
+            FileEntry {
+                id: EntryId(1),
+                name: "Projetos".into(),
+                path: PathBuf::from("/tmp/Projetos"),
+                kind: EntryKind::Directory,
+                size_bytes: 0,
+                modified_at: None,
+                created_at: None,
+                permissions: PermissionsMeta::PosixMode(0o755),
+                is_hidden: false,
+                extension: None,
+                mime_badge: None,
+                child_count: Some(3),
+            },
+            FileEntry {
+                id: EntryId(2),
+                name: "backup.zip".into(),
+                path: PathBuf::from("/tmp/backup.zip"),
+                kind: EntryKind::File,
+                size_bytes: 1024,
+                modified_at: None,
+                created_at: None,
+                permissions: PermissionsMeta::PosixMode(0o644),
+                is_hidden: false,
+                extension: Some("zip".into()),
+                mime_badge: None,
+                child_count: None,
+            },
+            FileEntry {
+                id: EntryId(3),
+                name: "notas.txt".into(),
+                path: PathBuf::from("/tmp/notas.txt"),
+                kind: EntryKind::File,
+                size_bytes: 64,
+                modified_at: None,
+                created_at: None,
+                permissions: PermissionsMeta::PosixMode(0o644),
+                is_hidden: false,
+                extension: Some("txt".into()),
+                mime_badge: None,
+                child_count: None,
+            },
+        ];
+
+        tab.extension_filter = Some("zip".into());
+        tab.filter_query = "back".to_owned();
+        super::apply_tab_filter(&mut tab);
+        assert_eq!(tab.visible_entries.len(), 1);
+        assert_eq!(tab.visible_entries[0].name.as_str(), "backup.zip");
+
+        assert!(super::clear_tab_filters(&mut tab));
+        assert!(tab.extension_filter.is_none());
+        assert!(tab.filter_query.is_empty());
+        assert_eq!(tab.visible_entries.len(), 3);
+        assert!(!super::clear_tab_filters(&mut tab));
     }
 }
