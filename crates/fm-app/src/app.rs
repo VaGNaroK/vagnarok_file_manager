@@ -4062,8 +4062,15 @@ impl App {
         if let Some(assoc) = self.config.open_with_defaults.get(&primary_key) {
             return Some(assoc.clone());
         }
+        let glob_key = fm_fs::open_with_type_key_for_path(path, None);
+        if glob_key != primary_key
+            && let Some(assoc) = self.config.open_with_defaults.get(&glob_key)
+        {
+            return Some(assoc.clone());
+        }
         if let Some(ext_key) = extension_fallback_key(path)
             && ext_key != primary_key
+            && ext_key != glob_key
             && let Some(assoc) = self.config.open_with_defaults.get(&ext_key)
         {
             return Some(assoc.clone());
@@ -5202,6 +5209,14 @@ impl App {
         if text_input_modal_active {
             if matches!(key.as_ref(), keyboard::Key::Named(Named::Tab)) && self.path_editing {
                 return self.autocomplete_path_draft();
+            }
+            if matches!(key.as_ref(), keyboard::Key::Named(Named::Enter))
+                && matches!(
+                    self.active_dialog,
+                    Some(ActiveDialog::ConfirmDelete { .. } | ActiveDialog::ConfirmEmptyTrash)
+                )
+            {
+                return self.update(Message::SubmitDialog);
             }
             if matches!(key.as_ref(), keyboard::Key::Named(Named::Escape)) {
                 if self.bulk_rename_modal.is_some() {

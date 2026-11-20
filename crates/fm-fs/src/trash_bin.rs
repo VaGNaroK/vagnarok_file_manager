@@ -360,6 +360,14 @@ mod freedesktop_host {
             });
         };
 
+        // No Flatpak, despacha primeiro para o `gio trash` do host (mesmo motor FreeDesktop/GVFS
+        // usado por Nemo/Nautilus): respeita `~/.local/share/Trash`, lixeiras `.Trash-$uid` em
+        // partições externas (incluindo NTFS/fuseblk e exFAT) e montagens GVFS sem cair na lixeira
+        // isolada do sandbox (`~/.var/app/.../data/Trash`).
+        if let Some(gio_res) = try_host_gio_trash(targets) {
+            return gio_res;
+        }
+
         let home_dev = host_home_dev(&host_trash);
         let mut external_targets = Vec::new();
 
@@ -389,6 +397,65 @@ mod freedesktop_host {
             })?;
         }
         Ok(())
+    }
+
+    /// Tenta enviar itens para a Lixeira usando o `gio trash` do sistema hospedeiro.
+    ///
+    /// Retorna `None` se `flatpak-spawn` / `gio` não estiver disponível (permitindo fallback nativo).
+    fn try_host_gio_trash(targets: &[PathBuf]) -> Option<Result<(), FsError>> {
+        use std::process::Stdio;
+
+        // Valida primeiro se todos os alvos existem antes de delegar em lotes.
+        for chunk in targets.chunks(256) {
+            let output = match crate::linux::host_command("gio")
+                .arg("trash")
+                .arg("--")
+                .args(chunk)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .output()
+            {
+                Ok(out) => out,
+                Err(_) => return None,
+            };
+
+            if output.status.success() {
+                continue;
+            }
+
+            // Código 127 (command not found) ou falha do flatpak-spawn -> usa fallback nativo.
+            if output.status.code() == Some(127) {
+                return None;
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            if stderr.contains("No such file or directory")
+                && (stderr.contains("gio") || stderr.contains("flatpak-spawn"))
+            {
+                return None;
+            }
+
+            // Se `gio trash` falhou em algum volume incomum, cai para o fallback nativo apenas
+            // se nenhum item do lote foi movido; caso contrário reporta o erro real.
+            let any_still_present = chunk.iter().any(|p| fs::symlink_metadata(p).is_ok());
+            if !any_still_present {
+                continue;
+            }
+            let msg = if stderr.is_empty() {
+                format!(
+                    "falha ao enviar para a lixeira (gio status {:?})",
+                    output.status.code()
+                )
+            } else {
+                format!("falha ao enviar para a lixeira: {stderr}")
+            };
+            return Some(Err(FsError::Io {
+                path: chunk.first().cloned().unwrap_or_default(),
+                message: msg,
+            }));
+        }
+        Some(Ok(()))
     }
 
     #[derive(Debug, PartialEq, Eq)]

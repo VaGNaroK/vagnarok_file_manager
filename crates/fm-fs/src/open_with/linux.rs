@@ -104,7 +104,15 @@ pub(super) fn save_system_default(
     };
     let existing = fs::read_to_string(&path).unwrap_or_default();
     let updated = update_mimeapps_default(&existing, type_key, Some(&assoc.app_id));
-    atomic_write_text(&path, &updated)
+    atomic_write_text(&path, &updated)?;
+    // Sincronização best-effort com GLib/XDG no host (inclui Flatpak) para refletir de imediato.
+    let _ = host_command("gio")
+        .args(["mime", type_key, &assoc.app_id])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    Ok(())
 }
 
 pub(super) fn reset_system_default(type_key: &str) -> Result<(), FsError> {
@@ -503,6 +511,7 @@ fn parse_mimeapps_for_mime(
 fn update_mimeapps_default(existing: &str, mime: &str, desktop_id: Option<&str>) -> String {
     let mut sections: Vec<(String, BTreeMap<String, String>)> = Vec::new();
     let mut order: HashMap<String, usize> = HashMap::new();
+    let mut current_sec: Option<usize> = None;
 
     for line in existing.lines() {
         let trimmed = line.trim();
@@ -511,18 +520,28 @@ fn update_mimeapps_default(existing: &str, mime: &str, desktop_id: Option<&str>)
         }
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
             let sec_name = trimmed.to_owned();
-            if !order.contains_key(&sec_name) {
-                order.insert(sec_name.clone(), sections.len());
+            let idx = *order.entry(sec_name.clone()).or_insert_with(|| {
                 sections.push((sec_name, BTreeMap::new()));
-            }
+                sections.len() - 1
+            });
+            current_sec = Some(idx);
             continue;
         }
         if let Some((k, v)) = trimmed.split_once('=') {
-            if sections.is_empty() {
-                order.insert("[Default Applications]".to_owned(), 0);
-                sections.push(("[Default Applications]".to_owned(), BTreeMap::new()));
-            }
-            if let Some((_, map)) = sections.last_mut() {
+            let idx = match current_sec {
+                Some(i) => i,
+                None => {
+                    let i = *order
+                        .entry("[Default Applications]".to_owned())
+                        .or_insert_with(|| {
+                            sections.push(("[Default Applications]".to_owned(), BTreeMap::new()));
+                            sections.len() - 1
+                        });
+                    current_sec = Some(i);
+                    i
+                }
+            };
+            if let Some((_, map)) = sections.get_mut(idx) {
                 map.insert(k.trim().to_owned(), v.trim().to_owned());
             }
         }
@@ -557,6 +576,21 @@ fn update_mimeapps_default(existing: &str, mime: &str, desktop_id: Option<&str>)
             items.insert(0, id.to_owned());
         }
         *entry = format!("{};", items.join(";"));
+
+        if let Some(&rem_idx) = order.get("[Removed Associations]")
+            && let Some(rem_val) = sections[rem_idx].1.get_mut(mime)
+        {
+            let kept: Vec<&str> = rem_val
+                .split(';')
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && *s != id)
+                .collect();
+            if kept.is_empty() {
+                sections[rem_idx].1.remove(mime);
+            } else {
+                *rem_val = format!("{};", kept.join(";"));
+            }
+        }
     } else {
         sections[def_idx].1.remove(mime);
     }
@@ -775,6 +809,17 @@ Exec=/usr/bin/vlc --new
         assert!(defs_after.is_empty());
         let (text_defs, _, _) = parse_mimeapps_for_mime(&reset, "text/plain");
         assert_eq!(text_defs, vec!["gedit.desktop"]);
+
+        let with_removed = "[Default Applications]\napplication/pdf=xreader.desktop;\n\n[Removed Associations]\napplication/pdf=ai.storyteller.pdfcraft.desktop;evince.desktop;\n";
+        let restored = update_mimeapps_default(
+            with_removed,
+            "application/pdf",
+            Some("ai.storyteller.pdfcraft.desktop"),
+        );
+        let (pdf_defs, pdf_added, pdf_rem) = parse_mimeapps_for_mime(&restored, "application/pdf");
+        assert_eq!(pdf_defs, vec!["ai.storyteller.pdfcraft.desktop"]);
+        assert_eq!(pdf_added, vec!["ai.storyteller.pdfcraft.desktop"]);
+        assert_eq!(pdf_rem, vec!["evince.desktop"]);
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::mem::MaybeUninit;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use compact_str::CompactString;
@@ -260,6 +260,33 @@ fn spawn_terminal_cmd(bin: &str, path: &Path, in_flatpak: bool) -> bool {
 }
 
 pub fn open_default(path: &Path) -> Result<(), FsError> {
+    if std::env::var_os("FLATPAK_ID").is_some() {
+        // No Flatpak, `open::that_detached` aciona o shim `/usr/bin/xdg-open` do sandbox
+        // (org.freedesktop.portal.OpenURI), que ignora `~/.config/mimeapps.list` e abre
+        // repetidamente o diálogo AppChooser. Despachamos para o `gio open` / `xdg-open`
+        // do host para respeitar os aplicativos padrão reais do sistema.
+        if host_command("gio")
+            .arg("open")
+            .arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|st| st.success())
+        {
+            return Ok(());
+        }
+        if host_command("xdg-open")
+            .arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .is_ok()
+        {
+            return Ok(());
+        }
+    }
     open::that_detached(path).map_err(|e| map_io_err(path, e))
 }
 
@@ -419,7 +446,7 @@ pub fn fs_type_for_path(path: &Path) -> Option<CompactString> {
 pub(crate) fn host_command(program: &str) -> Command {
     if std::env::var_os("FLATPAK_ID").is_some() {
         let mut cmd = Command::new("flatpak-spawn");
-        cmd.arg("--host").arg(program);
+        cmd.arg("--host").arg("--").arg(program);
         cmd
     } else {
         Command::new(program)
