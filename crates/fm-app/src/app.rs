@@ -1257,10 +1257,24 @@ impl App {
                 self.last_entry_click =
                     clicked_entry.map(|(tab_id, path)| (tab_id, path, Instant::now()));
 
+                let visual_order = if modifiers.shift {
+                    self.current_tab_visual_order()
+                } else {
+                    Vec::new()
+                };
                 let mut single_entry = None;
                 if let Some(tab) = self.current_tab_mut() {
-                    tab.selection
-                        .apply_click(index, modifiers, &tab.visible_entries);
+                    if modifiers.shift {
+                        tab.selection.select_range_in_order(
+                            index,
+                            &visual_order,
+                            modifiers.ctrl,
+                            &tab.visible_entries,
+                        );
+                    } else {
+                        tab.selection
+                            .apply_click(index, modifiers, &tab.visible_entries);
+                    }
                     single_entry = tab.selection.single_selected(&tab.visible_entries).cloned();
                     tab.selected_telemetry = single_entry.as_ref().map(basic_file_telemetry);
                 }
@@ -5617,10 +5631,22 @@ impl App {
                 let page = (self.canvas_viewport_height * 0.85).max(200.0);
                 operation::scroll_by(canvas_scroll_id(), AbsoluteOffset { x: 0.0, y: -page })
             }
-            keyboard::Key::Named(Named::ArrowDown) => self.navigate_selection_arrow(0, 1),
-            keyboard::Key::Named(Named::ArrowUp) => self.navigate_selection_arrow(0, -1),
-            keyboard::Key::Named(Named::ArrowRight) => self.navigate_selection_arrow(1, 0),
-            keyboard::Key::Named(Named::ArrowLeft) => self.navigate_selection_arrow(-1, 0),
+            keyboard::Key::Named(Named::ArrowDown) => {
+                self.navigate_selection_arrow(0, 1, modifiers)
+            }
+            keyboard::Key::Named(Named::ArrowUp) => self.navigate_selection_arrow(0, -1, modifiers),
+            keyboard::Key::Named(Named::ArrowRight) => {
+                self.navigate_selection_arrow(1, 0, modifiers)
+            }
+            keyboard::Key::Named(Named::ArrowLeft) => {
+                self.navigate_selection_arrow(-1, 0, modifiers)
+            }
+            keyboard::Key::Named(Named::Home) if !modifiers.alt() => {
+                self.navigate_selection_edge(false, modifiers)
+            }
+            keyboard::Key::Named(Named::End) if !modifiers.alt() => {
+                self.navigate_selection_edge(true, modifiers)
+            }
             keyboard::Key::Named(Named::Enter) => {
                 if let Some(focused) = self.current_tab().and_then(|t| t.selection.focused) {
                     return self.update(Message::ActivateEntry(focused));
@@ -5767,7 +5793,31 @@ impl App {
         (self.window_size.width - sidebar - inspector - 40.0).max(200.0)
     }
 
-    fn navigate_selection_arrow(&mut self, dx: isize, dy: isize) -> Task<Message> {
+    fn current_tab_visual_order(&self) -> Vec<usize> {
+        let Some(tab) = self.current_tab() else {
+            return Vec::new();
+        };
+        if tab.view_mode != ViewMode::Grid {
+            return Vec::new();
+        }
+        let card_w = views::virtualized::clamp_grid_card_width(self.config.grid_card_width);
+        let cols =
+            views::virtualized::grid_columns_for_width(self.effective_canvas_width(), card_w);
+        let bands = views::virtualized::build_tab_grid_bands(
+            &tab.visible_entries,
+            cols,
+            self.config.grid_group_folders,
+            self.strings(),
+        );
+        views::virtualized::grid_visual_order(&bands)
+    }
+
+    fn navigate_selection_arrow(
+        &mut self,
+        dx: isize,
+        dy: isize,
+        modifiers: keyboard::Modifiers,
+    ) -> Task<Message> {
         let Some(tab) = self.current_tab() else {
             return Task::none();
         };
@@ -5779,6 +5829,9 @@ impl App {
         let focused = tab.selection.focused;
 
         if view_mode == ViewMode::Columns && dy == 0 {
+            if modifiers.shift() {
+                return Task::none();
+            }
             if dx < 0 {
                 return self.update(Message::NavigateUp);
             }
@@ -5793,7 +5846,7 @@ impl App {
             return Task::none();
         }
 
-        let next_idx = if view_mode == ViewMode::Grid {
+        let (next_idx, visual_order) = if view_mode == ViewMode::Grid {
             let card_w = views::virtualized::clamp_grid_card_width(self.config.grid_card_width);
             let cols =
                 views::virtualized::grid_columns_for_width(self.effective_canvas_width(), card_w);
@@ -5804,23 +5857,82 @@ impl App {
                 self.config.grid_group_folders,
                 strings,
             );
-            views::virtualized::step_grid_selection(&bands, focused, dx, dy)
+            let next = views::virtualized::step_grid_selection(&bands, focused, dx, dy);
+            let order = if modifiers.shift() {
+                views::virtualized::grid_visual_order(&bands)
+            } else {
+                Vec::new()
+            };
+            (next, order)
         } else {
             let delta = if dy != 0 { dy } else { dx };
-            let len = tab.visible_entries.len() as isize;
-            let current = focused.unwrap_or(0) as isize;
-            Some((current + delta).clamp(0, len - 1) as usize)
+            let len = tab.visible_entries.len();
+            let next = match focused {
+                Some(cur) => (cur as isize + delta).clamp(0, len as isize - 1) as usize,
+                None if delta < 0 => len - 1,
+                None => 0,
+            };
+            (Some(next), Vec::new())
         };
 
         let Some(next_idx) = next_idx else {
             return Task::none();
         };
 
+        self.apply_keyboard_selection(next_idx, &visual_order, modifiers)
+    }
+
+    fn navigate_selection_edge(
+        &mut self,
+        to_end: bool,
+        modifiers: keyboard::Modifiers,
+    ) -> Task<Message> {
+        let Some(tab) = self.current_tab() else {
+            return Task::none();
+        };
+        if tab.visible_entries.is_empty() {
+            return Task::none();
+        }
+
+        let visual_order = self.current_tab_visual_order();
+        let target_idx = if !visual_order.is_empty() {
+            if to_end {
+                visual_order.last().copied()
+            } else {
+                visual_order.first().copied()
+            }
+        } else if to_end {
+            Some(tab.visible_entries.len() - 1)
+        } else {
+            Some(0)
+        };
+
+        let Some(target_idx) = target_idx else {
+            return Task::none();
+        };
+        self.apply_keyboard_selection(target_idx, &visual_order, modifiers)
+    }
+
+    fn apply_keyboard_selection(
+        &mut self,
+        next_idx: usize,
+        visual_order: &[usize],
+        modifiers: keyboard::Modifiers,
+    ) -> Task<Message> {
         let mut selected_entry = None;
         if let Some(tab_mut) = self.current_tab_mut() {
-            tab_mut
-                .selection
-                .select_single(next_idx, &tab_mut.visible_entries);
+            if modifiers.shift() {
+                tab_mut.selection.select_range_in_order(
+                    next_idx,
+                    visual_order,
+                    modifiers.control(),
+                    &tab_mut.visible_entries,
+                );
+            } else {
+                tab_mut
+                    .selection
+                    .select_single(next_idx, &tab_mut.visible_entries);
+            }
             let single = tab_mut
                 .selection
                 .single_selected(&tab_mut.visible_entries)

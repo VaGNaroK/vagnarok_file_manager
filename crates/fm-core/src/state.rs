@@ -57,6 +57,53 @@ impl SelectionState {
         }
     }
 
+    /// Seleciona o intervalo contínuo entre a âncora atual e `target_index` seguindo `visual_order`.
+    ///
+    /// - Mantém `anchor` fixa (inicializando com `focused` ou `target_index` se ausente) e move `focused`.
+    /// - Quando `visual_order` é vazio, usa diretamente a ordem de índices `0..entries.len()`.
+    /// - Quando `additive` é `false` (`Shift+Setas`), substitui a seleção pelo intervalo (permitindo
+    ///   estender e contrair ao inverter a direção); quando `true` (`Ctrl+Shift+Setas`), acumula.
+    pub fn select_range_in_order(
+        &mut self,
+        target_index: usize,
+        visual_order: &[usize],
+        additive: bool,
+        entries: &[FileEntry],
+    ) {
+        if entries.get(target_index).is_none() {
+            return;
+        }
+        let anchor_idx = self.anchor.or(self.focused).unwrap_or(target_index);
+        self.anchor = Some(anchor_idx);
+        self.focused = Some(target_index);
+
+        if !additive {
+            self.selected_ids.clear();
+        }
+
+        if let (Some(pos_a), Some(pos_b)) = (
+            visual_order.iter().position(|&idx| idx == anchor_idx),
+            visual_order.iter().position(|&idx| idx == target_index),
+        ) {
+            let (lo, hi) = if pos_a <= pos_b {
+                (pos_a, pos_b)
+            } else {
+                (pos_b, pos_a)
+            };
+            for &entry_idx in &visual_order[lo..=hi] {
+                if let Some(entry) = entries.get(entry_idx) {
+                    self.selected_ids.insert(entry.id);
+                }
+            }
+        } else {
+            let lo = anchor_idx.min(target_index);
+            let hi = anchor_idx.max(target_index);
+            for entry in entries.iter().take(hi + 1).skip(lo) {
+                self.selected_ids.insert(entry.id);
+            }
+        }
+    }
+
     /// Aplica seleção respeitando `Ctrl` (toggle) e `Shift` (intervalo contínuo).
     pub fn apply_click(
         &mut self,
@@ -644,5 +691,51 @@ mod tests {
         assert!(!matches_extension_filter(&entries[0], DIR_FILTER_SENTINEL));
 
         assert_eq!(normalize_extension_filter_input("   ... , "), None);
+    }
+
+    #[test]
+    fn shift_arrow_range_extends_contracts_and_respects_visual_order() {
+        let entries = make_entries(6);
+        let mut sel = SelectionState::default();
+
+        // Começa no item 2 e estende para 4 (Shift+Down/Right).
+        sel.select_single(2, &entries);
+        sel.select_range_in_order(3, &[], false, &entries);
+        sel.select_range_in_order(4, &[], false, &entries);
+        assert_eq!(sel.anchor, Some(2));
+        assert_eq!(sel.focused, Some(4));
+        assert_eq!(sel.count(), 3);
+        assert!(sel.selected_ids.contains(&entries[2].id));
+        assert!(sel.selected_ids.contains(&entries[3].id));
+        assert!(sel.selected_ids.contains(&entries[4].id));
+
+        // Recua para 3: deve contrair removendo o 4.
+        sel.select_range_in_order(3, &[], false, &entries);
+        assert_eq!(sel.count(), 2);
+        assert!(!sel.selected_ids.contains(&entries[4].id));
+
+        // Cruza a âncora para o lado oposto (índice 1): seleciona [1, 2].
+        sel.select_range_in_order(1, &[], false, &entries);
+        assert_eq!(sel.anchor, Some(2));
+        assert_eq!(sel.focused, Some(1));
+        assert_eq!(sel.count(), 2);
+        assert!(sel.selected_ids.contains(&entries[1].id));
+        assert!(sel.selected_ids.contains(&entries[2].id));
+        assert!(!sel.selected_ids.contains(&entries[3].id));
+
+        // Ordem visual agrupada (ex.: Pastas [4, 1], depois Arquivos [0, 2, 3, 5]).
+        let visual_order = [4, 1, 0, 2, 3, 5];
+        sel.select_single(4, &entries);
+        sel.select_range_in_order(0, &visual_order, false, &entries);
+        assert_eq!(sel.count(), 3);
+        assert!(sel.selected_ids.contains(&entries[4].id));
+        assert!(sel.selected_ids.contains(&entries[1].id));
+        assert!(sel.selected_ids.contains(&entries[0].id));
+        assert!(!sel.selected_ids.contains(&entries[2].id));
+
+        // Ctrl+Shift (additive) mantém os itens anteriores ao estender.
+        sel.select_range_in_order(2, &visual_order, true, &entries);
+        assert_eq!(sel.count(), 4);
+        assert!(sel.selected_ids.contains(&entries[2].id));
     }
 }

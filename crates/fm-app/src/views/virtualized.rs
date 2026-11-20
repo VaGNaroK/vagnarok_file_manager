@@ -393,6 +393,18 @@ pub fn list_marquee_hits(
 }
 
 /// Move a seleção na grade em 2D (`dx` horizontal, `dy` vertical por linha).
+/// Retorna a ordem linear visual (esquerda->direita, cima->baixo) dos índices de entrada nas bandas da grade.
+pub fn grid_visual_order(bands: &[GridBand<'_>]) -> Vec<usize> {
+    bands
+        .iter()
+        .filter_map(|b| match b {
+            GridBand::Items(chunk) => Some(chunk.iter().map(|(idx, _)| *idx)),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
 pub fn step_grid_selection(
     bands: &[GridBand<'_>],
     current_entry_idx: Option<usize>,
