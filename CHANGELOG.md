@@ -29,8 +29,34 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-16 | **Alpha 5 (`v0.1.0-alpha.5`), Barra Lateral Estilo Nemo, Discos & Propriedades** | Cards compactos no Grid, `Propriedades` no fundo do diretório (conteúdo + espaço livre), `PageUp`/`PageDown`, `Ctrl+Q`, tooltips localizados, barra lateral estilo Nemo redimensionável, montar/desmontar discos e `Abrir como root` no Linux | 51 unitários |
 | 2026-11-17 | **Alpha 6 (`v0.1.0-alpha.6`), Seleção em Caixa, Alinhamento Grid, Correções Flatpak & Ícones do Sistema** | Seleção em caixa (marquee), alinhamento do Grid esquerda→direita por padrão + alternância, preservação de scroll no menu de contexto, filtro de bind-mounts no Flatpak, divisor/scrollbar da barra lateral e ícones híbridos do sistema hospedeiro | 58 unitários |
 | 2026-11-19 | **Alpha 7 (`v0.1.0-alpha.7`), Abrir Com, Renomeação em Lote, 7z/RAR, Compactação Minimizável & Buscador de Duplicados MD5** | Recurso **Abrir com...** + persistência por tipo, modal de **Propriedades** arrastável/redimensionável com bloqueio de cliques ao fundo, **Renomeação em Lote** visual (EXIF/ID3/Regex/Desfazer), extração (`.zip`, `.tar`, `.tar.gz`, `.7z`, `.rar`), janela **Compactar como...** minimizável em segundo plano, **Buscador de Arquivos Duplicados (MD5 em 4 níveis)** virtualizado/minimizável, lixeira virtual unificada e permissão executável rápida | 103 unitários |
+| 2026-11-20 | **Alpha 8 (`v0.1.0-alpha.8`), Montagem de ISO/IMG, Desfazer (`Ctrl+Z`), Atalhos (`Enviar para... ▸`), Seleção `Shift+Setas` & Polimento Flatpak** | Montagem nativa de `.iso`/`.img` abrindo em nova aba, ejeção segura e hotplug automático de mídias removíveis (Linux/Flatpak/Windows), pilha de **Desfazer (`Ctrl+Z`)** para Lixeira e renomeações, submenu cascata **Enviar para... ▸** (symlinks Linux / `.lnk` Windows), seleção contínua por teclado (`Shift+Setas` e `Shift+Home/End`), caixa de filtro customizado por extensão, menu de contexto inteligente sem barra de rolagem forçada e correções Flatpak/arquivos compactados | 116 unitários |
 
 ---
+
+## [0.1.0-alpha.8] — 2026-11-20
+
+### Adicionado
+- **Montagem de imagens de disco (`.iso` e `.img`) e melhorias em Mídias Removíveis (Linux, Flatpak e Windows)**:
+  - Nova opção **Montar imagem de disco** no menu de contexto de arquivos `.iso` e `.img`: monta em modo somente leitura (`udisksctl loop-setup` no Linux/Flatpak sem root; Win32 nativo `OpenVirtualDisk` + `AttachVirtualDisk` no Windows) e **abre automaticamente em uma nova aba**.
+  - Desmontagem limpa de imagens (com `udisksctl loop-delete` no Linux) e ação **Remover com segurança** (`udisksctl power-off` no Linux; `DeviceIoControl` nativo sem PowerShell no Windows) com ícone dedicado `OpticalOrIso` na barra lateral.
+  - **Detecção automática de hotplug** em background (`watch_drives_stream`) atualizando a barra lateral ao conectar/remover pendrives ou montar ISOs, e liberação automática de todas as abas/watchers dentro do volume antes de desmontar.
+- **Desfazer (`Ctrl+Z`) para Lixeira e Renomeações**:
+  - Pilha de desfazer LIFO (`Ctrl+Z` e opção no menu de contexto do fundo do diretório) para restaurar imediatamente pastas e arquivos enviados para a Lixeira (inclusive a partir do Buscador de Duplicados) e desfazer renomeações simples ou em lote.
+  - Seleção determinística da entrada mais recente (`time_deleted`) em `trash_bin` evitando colisões quando itens de mesmo nome já foram apagados anteriormente.
+- **Submenu em cascata `Enviar para... ▸` para Atalhos / Links Simbólicos**:
+  - Abertura ao passar o mouse (com inversão automática perto das bordas da janela) oferecendo **Criar atalho na Área de Trabalho** e **Criar link simbólico aqui** (Linux) / **Criar atalho aqui** (Windows).
+  - Links simbólicos POSIX nativos no Linux/Flatpak (com fallback de `XDG_DESKTOP_DIR`) e atalhos `.lnk` nativos via Win32 COM (`IShellLinkW` + `IPersistFile`) no Windows, sem exigir privilégios de administrador e com proteção contra sobrescrita.
+- **Seleção contínua por teclado (`Shift + Setas` e `Shift + Home/End`)**:
+  - Estende, contrai e inverte seleções respeitando a ordem visual das bandas no modo Grade (além de Lista e Colunas), com suporte a `Ctrl+Shift+Setas` aditivo e auto-scroll.
+- **Filtro customizado por extensão no menu Filtrar**:
+  - Substituída a lista estática de extensões por uma caixa de texto com foco automático e exemplo (`ex: .exe, .zip...`), suportando uma ou múltiplas extensões em tempo real.
+
+### Melhorado e Corrigido
+- **Menu de contexto mais limpo e posicionamento inteligente**:
+  - Exibe apenas **Renomear** quando 1 item está selecionado e apenas **Renomear em lote** quando 2+ itens estão selecionados.
+  - Inverte automaticamente o menu para cima/esquerda próximo às bordas da janela e remove o limite artificial de `460px`, evitando barras de rolagem desnecessárias.
+- **Exclusão e edição de arquivos compactados reais**: corrigido guarda `is_inside_archive_path` para permitir enviar para a Lixeira, excluir, renomear e abrir propriedades de arquivos `.zip`/`.7z`/`.rar` reais em disco, mantendo entradas internas virtuais somente leitura.
+- **Correções no Flatpak**: roteamento de Lixeira (`gio trash`) e abertura padrão (`gio open` / `xdg-open` no host), limpeza de `[Removed Associations]` em `mimeapps.list` e confirmação de exclusão pela tecla `Enter`.
 
 ## [0.1.0-alpha.7] — 2026-11-19
 

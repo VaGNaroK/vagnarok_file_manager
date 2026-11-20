@@ -29,6 +29,11 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.1.0-alpha.8" date="2026-11-20">
+      <description>
+        <p>Adds native .iso/.img disk image mounting (opening in a new tab), safe eject and automatic drive hotplug on Linux/Flatpak/Windows, Ctrl+Z undo stack for Trash restore and renames, cascading Send to shortcut submenu (POSIX symlinks on Linux and native COM .lnk on Windows), Shift+Arrows and Shift+Home/End keyboard range selection, custom extension filter input box, smart context menu flipping, and Flatpak trash/default-app fixes.</p>
+      </description>
+    </release>
     <release version="0.1.0-alpha.7" date="2026-11-19">
       <description>
         <p>Adds Open With app discovery and per-type defaults, user-friendly Bulk Rename with live virtualized preview and EXIF/ID3/Regex/Undo support, pure-Rust archive extraction (.zip, .tar, .tar.gz, .7z, .rar) and minimizable background compression (.7z, .zip, .tar, .tar.gz), draggable/opaque modals, quick executable bit toggle, and unified Linux/Windows trash handling.</p>
