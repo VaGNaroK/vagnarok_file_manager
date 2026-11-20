@@ -6,9 +6,9 @@ use iced::Alignment::Center;
 use iced::widget::{Space, button, container, mouse_area, row, space, text, text_input, tooltip};
 use iced::{Element, Length, Padding};
 use lucide_icons::iced::{
-    icon_arrow_left, icon_arrow_right, icon_arrow_up, icon_chevron_right, icon_home,
-    icon_layout_grid, icon_list, icon_minus, icon_moon, icon_plus, icon_search, icon_square,
-    icon_sun, icon_x,
+    icon_arrow_left, icon_arrow_right, icon_arrow_up, icon_chevron_right, icon_columns_2,
+    icon_home, icon_layout_grid, icon_list, icon_minus, icon_moon, icon_plus, icon_search,
+    icon_square, icon_sun, icon_x,
 };
 
 use crate::app::{App, Message, path_input_id, search_input_id};
@@ -244,6 +244,20 @@ fn navigation_row<'a>(
     .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 9999.0));
 
     let current_mode = tab.map(|t| t.view_mode).unwrap_or(ViewMode::Grid);
+    let split_active = app.split_view.is_some();
+    let split_btn = with_tooltip(
+        button(icon_columns_2().size(14).color(if split_active {
+            palette.accent_primary
+        } else {
+            palette.text_secondary
+        }))
+        .padding([4, 8])
+        .style(styles::tab_button(palette, split_active))
+        .on_press(Message::ToggleSplitView),
+        strings.tip_split_view,
+        tooltip::Position::Bottom,
+        palette,
+    );
     let view_switcher = container(
         row![
             with_tooltip(
@@ -268,6 +282,8 @@ fn navigation_row<'a>(
                 tooltip::Position::Bottom,
                 palette,
             ),
+            container(Space::new().width(1).height(16)).style(styles::divider_line(palette)),
+            split_btn,
         ]
         .spacing(2)
         .align_y(Center),

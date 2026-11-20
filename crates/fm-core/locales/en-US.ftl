@@ -489,3 +489,8 @@ image-mounted = Disk image mounted
 drive-ejected = Drive safely removed
 drive-free-label = free
 drive-click-to-mount = Click to mount
+tip-split-view = Split view (F3)
+close-split-pane = Close split pane (F3)
+drag-move-prefix = Move
+drag-copy-prefix = Copy
+drag-ctrl-copy-hint = Ctrl = Copy

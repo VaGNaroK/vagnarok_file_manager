@@ -451,6 +451,11 @@ pub struct Strings {
     pub drive_ejected: &'static str,
     pub drive_free_label: &'static str,
     pub drive_click_to_mount: &'static str,
+    pub tip_split_view: &'static str,
+    pub close_split_pane: &'static str,
+    pub drag_move_prefix: &'static str,
+    pub drag_copy_prefix: &'static str,
+    pub drag_ctrl_copy_hint: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -1078,6 +1083,11 @@ impl Strings {
         let drive_ejected = resolve("drive-ejected");
         let drive_free_label = resolve("drive-free-label");
         let drive_click_to_mount = resolve("drive-click-to-mount");
+        let tip_split_view = resolve("tip-split-view");
+        let close_split_pane = resolve("close-split-pane");
+        let drag_move_prefix = resolve("drag-move-prefix");
+        let drag_copy_prefix = resolve("drag-copy-prefix");
+        let drag_ctrl_copy_hint = resolve("drag-ctrl-copy-hint");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -1498,6 +1508,11 @@ impl Strings {
             drive_ejected,
             drive_free_label,
             drive_click_to_mount,
+            tip_split_view,
+            close_split_pane,
+            drag_move_prefix,
+            drag_copy_prefix,
+            drag_ctrl_copy_hint,
         }
     }
 }

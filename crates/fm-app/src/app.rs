@@ -221,8 +221,47 @@ pub enum UndoAction {
     BulkRename { pairs: Vec<(PathBuf, PathBuf)> },
 }
 
+/// Identifica o painel esquerdo ou direito no modo de tela dividida (Dual Pane).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitPane {
+    Left,
+    Right,
+}
+
+/// Estado do painel secundário (direito) no modo de tela dividida.
+#[derive(Debug, Clone)]
+pub struct SplitViewState {
+    pub right_tab: TabState,
+    pub active_pane: SplitPane,
+    /// Proporção de largura do painel esquerdo (`0.25..=0.75`).
+    pub ratio: f32,
+    pub divider_hovered: bool,
+    pub resizing: Option<(f32, f32)>,
+    pub right_scroll_y: f32,
+    pub right_viewport_height: f32,
+    pub right_viewport_width: Option<f32>,
+}
+
+/// Estado de arraste interno (drag & drop entre painéis ou sobre subpastas).
+#[derive(Debug, Clone)]
+pub struct InternalEntryDrag {
+    pub paths: Vec<PathBuf>,
+    pub primary_label: String,
+}
+
 pub fn canvas_scroll_id() -> Id {
     Id::new("fm_canvas_scroll")
+}
+
+pub fn secondary_canvas_scroll_id() -> Id {
+    Id::new("fm_canvas_scroll_secondary")
+}
+
+pub fn pane_scroll_id(pane: SplitPane) -> Id {
+    match pane {
+        SplitPane::Left => canvas_scroll_id(),
+        SplitPane::Right => secondary_canvas_scroll_id(),
+    }
 }
 
 pub fn entry_mtime_nanos(modified_at: Option<std::time::SystemTime>) -> u128 {
@@ -329,22 +368,46 @@ pub enum Message {
         is_disk_image: bool,
     },
     SelectEntry {
+        pane: SplitPane,
         index: usize,
         modifiers: SelectionModifiers,
     },
-    ClearSelection,
+    ClearSelection(SplitPane),
     MarqueeSelect {
+        pane: SplitPane,
         rect: views::virtualized::ContentRect,
         viewport_width: f32,
         additive: bool,
         is_initial: bool,
     },
-    MarqueeFinished,
+    MarqueeFinished(SplitPane),
     SelectAll,
     ActivateEntry(usize),
     SetViewMode(ViewMode),
+    ToggleSplitView,
+    FocusSplitPane(SplitPane),
+    SplitNavigateBack(SplitPane),
+    SplitNavigateForward(SplitPane),
+    SplitNavigateUp(SplitPane),
+    StartSplitResize,
+    SplitDividerHovered(bool),
+    ResetSplitRatio,
+    StartEntryDrag {
+        pane: SplitPane,
+        index: usize,
+    },
+    PanePointerEnter(SplitPane),
+    PanePointerExit(SplitPane),
+    DragHoverFolderEnter {
+        pane: SplitPane,
+        path: PathBuf,
+    },
+    DragHoverFolderExit(PathBuf),
     CycleSortField,
-    SortByField(SortField),
+    SortByField {
+        pane: SplitPane,
+        field: SortField,
+    },
     ToggleSortDirection,
     ToggleHidden,
     FilterChanged(String),
@@ -368,6 +431,7 @@ pub enum Message {
     ToggleQuickLook,
     CloseQuickLook,
     CanvasScrolled {
+        pane: SplitPane,
         offset_y: f32,
         viewport_height: f32,
         viewport_width: f32,
@@ -608,8 +672,11 @@ pub enum Message {
     SetExtensionFilter(Option<CompactString>),
     FilterExtDraftChanged(String),
     SubmitFilterExtDraft,
-    OpenEntryContextMenu(usize),
-    OpenCanvasContextMenu,
+    OpenEntryContextMenu {
+        pane: SplitPane,
+        index: usize,
+    },
+    OpenCanvasContextMenu(SplitPane),
     CloseContextMenu,
     ContextMenuSetSendToOpen(bool),
     CreateShortcutInDir {
@@ -745,6 +812,11 @@ pub struct App {
     pub last_watcher_reload: Option<(PathBuf, Instant)>,
     pub grid_zoom_dirty: bool,
     pub zoom_save_seq: u64,
+    pub split_view: Option<SplitViewState>,
+    pub entry_drag: Option<InternalEntryDrag>,
+    pub drag_hover_pane: Option<SplitPane>,
+    pub drag_hover_folder: Option<(SplitPane, PathBuf)>,
+    pub suppress_click_until: Option<Instant>,
 }
 
 impl App {
@@ -880,6 +952,11 @@ impl App {
             last_watcher_reload: None,
             grid_zoom_dirty: false,
             zoom_save_seq: 0,
+            split_view: None,
+            entry_drag: None,
+            drag_hover_pane: None,
+            drag_hover_folder: None,
+            suppress_click_until: None,
         };
 
         let auto_theme_task = if !app.config.theme_customized {
@@ -979,8 +1056,95 @@ impl App {
         Strings::for_language(self.config.language)
     }
 
-    pub fn current_tab(&self) -> Option<&TabState> {
+    pub fn active_pane(&self) -> SplitPane {
+        self.split_view
+            .as_ref()
+            .map(|s| s.active_pane)
+            .unwrap_or(SplitPane::Left)
+    }
+
+    pub fn active_tab_id(&self) -> TabId {
+        match &self.split_view {
+            Some(split) if split.active_pane == SplitPane::Right => split.right_tab.id,
+            _ => self.active_tab,
+        }
+    }
+
+    pub fn left_tab(&self) -> Option<&TabState> {
         self.tabs.iter().find(|t| t.id == self.active_tab)
+    }
+
+    pub fn pane_tab(&self, pane: SplitPane) -> Option<&TabState> {
+        match pane {
+            SplitPane::Left => self.left_tab(),
+            SplitPane::Right => self.split_view.as_ref().map(|s| &s.right_tab),
+        }
+    }
+
+    pub fn pane_tab_mut(&mut self, pane: SplitPane) -> Option<&mut TabState> {
+        match pane {
+            SplitPane::Left => {
+                let active = self.active_tab;
+                self.tabs.iter_mut().find(|t| t.id == active)
+            }
+            SplitPane::Right => self.split_view.as_mut().map(|s| &mut s.right_tab),
+        }
+    }
+
+    pub fn pane_scroll_metrics(&self, pane: SplitPane) -> (f32, f32, Option<f32>) {
+        match pane {
+            SplitPane::Left => (
+                self.canvas_scroll_y,
+                self.canvas_viewport_height,
+                self.canvas_viewport_width,
+            ),
+            SplitPane::Right => self
+                .split_view
+                .as_ref()
+                .map(|s| {
+                    (
+                        s.right_scroll_y,
+                        s.right_viewport_height,
+                        s.right_viewport_width,
+                    )
+                })
+                .unwrap_or((0.0, self.canvas_viewport_height, None)),
+        }
+    }
+
+    fn set_active_scroll_y(&mut self, y: f32) {
+        match self.active_pane() {
+            SplitPane::Left => self.canvas_scroll_y = y,
+            SplitPane::Right => {
+                if let Some(split) = &mut self.split_view {
+                    split.right_scroll_y = y;
+                }
+            }
+        }
+    }
+
+    fn active_canvas_scroll_id(&self) -> Id {
+        pane_scroll_id(self.active_pane())
+    }
+
+    fn find_tab_mut(&mut self, id: TabId) -> Option<&mut TabState> {
+        find_tab_mut_parts(&mut self.tabs, &mut self.split_view, id)
+    }
+
+    fn focus_split_pane(&mut self, pane: SplitPane) {
+        if let Some(split) = &mut self.split_view
+            && split.active_pane != pane
+        {
+            split.active_pane = pane;
+            self.path_editing = false;
+            self.quicklook_open = false;
+            self.breadcrumb_menu = None;
+            self.last_entry_click = None;
+        }
+    }
+
+    pub fn current_tab(&self) -> Option<&TabState> {
+        self.pane_tab(self.active_pane())
     }
 
     pub fn is_current_tab_trash(&self) -> bool {
@@ -995,8 +1159,7 @@ impl App {
     }
 
     pub fn current_tab_mut(&mut self) -> Option<&mut TabState> {
-        let active = self.active_tab;
-        self.tabs.iter_mut().find(|t| t.id == active)
+        self.pane_tab_mut(self.active_pane())
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -1041,6 +1204,7 @@ impl App {
                 self.context_menu = None;
                 if self.tabs.iter().any(|t| t.id == id) {
                     self.active_tab = id;
+                    self.focus_split_pane(SplitPane::Left);
                     self.path_editing = false;
                     self.quicklook_open = false;
                     self.canvas_scroll_y = 0.0;
@@ -1077,7 +1241,7 @@ impl App {
             Message::NavigateBack => {
                 let req = self.alloc_request_id();
                 let mut target_path = None;
-                let active = self.active_tab;
+                let active = self.active_tab_id();
                 if let Some(tab) = self.current_tab_mut()
                     && let Some(prev) = tab.history_back.pop()
                 {
@@ -1095,7 +1259,7 @@ impl App {
             Message::NavigateForward => {
                 let req = self.alloc_request_id();
                 let mut target_path = None;
-                let active = self.active_tab;
+                let active = self.active_tab_id();
                 if let Some(tab) = self.current_tab_mut()
                     && let Some(next) = tab.history_forward.pop()
                 {
@@ -1123,7 +1287,7 @@ impl App {
             }
             Message::RefreshActiveTab => {
                 let req = self.alloc_request_id();
-                let active = self.active_tab;
+                let active = self.active_tab_id();
                 let target_path = self.current_tab_mut().map(|tab| {
                     prepare_tab_for_load(tab, req);
                     tab.current_path.clone()
@@ -1358,12 +1522,25 @@ impl App {
                 });
                 Task::none()
             }
-            Message::SelectEntry { index, modifiers } => {
+            Message::SelectEntry {
+                pane,
+                index,
+                modifiers,
+            } => {
+                if self.entry_drag.is_some()
+                    || self
+                        .suppress_click_until
+                        .is_some_and(|until| Instant::now() < until)
+                {
+                    return Task::none();
+                }
                 self.context_menu = None;
+                self.focus_split_pane(pane);
+                let active_id = self.active_tab_id();
                 let clicked_entry = self
                     .current_tab()
                     .and_then(|t| t.visible_entries.get(index))
-                    .map(|e| (self.active_tab, e.path.clone()));
+                    .map(|e| (active_id, e.path.clone()));
                 if !modifiers.ctrl
                     && !modifiers.shift
                     && let Some((tab_id, path)) = clicked_entry.as_ref()
@@ -1401,8 +1578,9 @@ impl App {
                 }
                 self.dispatch_selection_side_effects(single_entry.as_ref())
             }
-            Message::ClearSelection => {
+            Message::ClearSelection(pane) => {
                 self.context_menu = None;
+                self.focus_split_pane(pane);
                 self.last_entry_click = None;
                 self.marquee_base_selection.clear();
                 if let Some(tab) = self.current_tab_mut() {
@@ -1412,12 +1590,14 @@ impl App {
                 Task::none()
             }
             Message::MarqueeSelect {
+                pane,
                 rect,
                 viewport_width,
                 additive,
                 is_initial,
             } => {
                 self.context_menu = None;
+                self.focus_split_pane(pane);
                 self.last_entry_click = None;
                 let strings = self.strings();
                 let card_width = self.config.grid_card_width;
@@ -1472,7 +1652,8 @@ impl App {
                 }
                 Task::none()
             }
-            Message::MarqueeFinished => {
+            Message::MarqueeFinished(pane) => {
+                self.focus_split_pane(pane);
                 self.marquee_base_selection.clear();
                 let single = self
                     .current_tab()
@@ -1511,12 +1692,170 @@ impl App {
                 if let Some(tab) = self.current_tab_mut() {
                     tab.view_mode = mode;
                 }
-                self.canvas_scroll_y = 0.0;
+                self.set_active_scroll_y(0.0);
+                let scroll_id = self.active_canvas_scroll_id();
                 let thumb_task = self.queue_visible_thumbnails();
                 Task::batch([
-                    operation::snap_to(canvas_scroll_id(), RelativeOffset::START),
+                    operation::snap_to(scroll_id, RelativeOffset::START),
                     thumb_task,
                 ])
+            }
+            Message::ToggleSplitView => {
+                self.context_menu = None;
+                self.entry_drag = None;
+                self.drag_hover_pane = None;
+                self.drag_hover_folder = None;
+                if let Some(split) = self.split_view.take() {
+                    if let Some(cancel) = self.tab_cancels.remove(&split.right_tab.id) {
+                        cancel.cancel();
+                    }
+                    self.canvas_viewport_width = None;
+                    return Task::none();
+                }
+
+                let (initial_path, view_mode, sort, show_hidden) = self
+                    .left_tab()
+                    .map(|t| (t.current_path.clone(), t.view_mode, t.sort, t.show_hidden))
+                    .unwrap_or_else(|| {
+                        (
+                            self.places.home.clone(),
+                            self.config.default_view_mode,
+                            fm_core::SortSpec {
+                                dirs_first: self.config.dirs_first,
+                                ..fm_core::SortSpec::default()
+                            },
+                            false,
+                        )
+                    });
+                let right_id = TabId(self.next_tab_id);
+                self.next_tab_id += 1;
+                let req = self.alloc_request_id();
+                let mut right_tab = TabState::new(right_id, initial_path.clone());
+                right_tab.view_mode = view_mode;
+                right_tab.sort = sort;
+                right_tab.show_hidden = show_hidden;
+                right_tab.active_request_id = req;
+                right_tab.is_loading = true;
+                self.canvas_viewport_width = None;
+                self.split_view = Some(SplitViewState {
+                    right_tab,
+                    active_pane: SplitPane::Left,
+                    ratio: 0.5,
+                    divider_hovered: false,
+                    resizing: None,
+                    right_scroll_y: 0.0,
+                    right_viewport_height: self.canvas_viewport_height,
+                    right_viewport_width: None,
+                });
+                let cancel = self.reset_tab_cancel(right_id);
+                Task::batch([
+                    spawn_list_task(Arc::clone(&self.vfs), right_id, initial_path, req, cancel),
+                    operation::snap_to(secondary_canvas_scroll_id(), RelativeOffset::START),
+                ])
+            }
+            Message::FocusSplitPane(pane) => {
+                self.context_menu = None;
+                self.focus_split_pane(pane);
+                Task::none()
+            }
+            Message::SplitNavigateBack(pane) => {
+                self.focus_split_pane(pane);
+                self.update(Message::NavigateBack)
+            }
+            Message::SplitNavigateForward(pane) => {
+                self.focus_split_pane(pane);
+                self.update(Message::NavigateForward)
+            }
+            Message::SplitNavigateUp(pane) => {
+                self.focus_split_pane(pane);
+                self.update(Message::NavigateUp)
+            }
+            Message::StartSplitResize => {
+                if let Some(split) = &mut self.split_view {
+                    split.resizing = Some((self.cursor_position.x, split.ratio));
+                }
+                Task::none()
+            }
+            Message::SplitDividerHovered(hovered) => {
+                if let Some(split) = &mut self.split_view {
+                    split.divider_hovered = hovered;
+                }
+                Task::none()
+            }
+            Message::ResetSplitRatio => {
+                if let Some(split) = &mut self.split_view {
+                    split.ratio = 0.5;
+                    split.resizing = None;
+                    split.right_viewport_width = None;
+                }
+                self.canvas_viewport_width = None;
+                Task::none()
+            }
+            Message::StartEntryDrag { pane, index } => {
+                self.context_menu = None;
+                let drag_info = self.pane_tab_mut(pane).and_then(|tab| {
+                    let entry = tab.visible_entries.get(index)?;
+                    if fm_core::is_virtual_trash_path(&entry.path)
+                        || fm_fs::archive::is_inside_archive_path(&entry.path)
+                    {
+                        return None;
+                    }
+                    if !tab.selection.selected_ids.contains(&entry.id) {
+                        tab.selection.select_single(index, &tab.visible_entries);
+                    }
+                    let (paths, primary_label) = collect_drag_paths(
+                        index,
+                        &tab.visible_entries,
+                        &tab.selection.selected_ids,
+                    )?;
+                    Some(InternalEntryDrag {
+                        paths,
+                        primary_label,
+                    })
+                });
+                if let Some(drag) = drag_info {
+                    self.focus_split_pane(pane);
+                    self.entry_drag = Some(drag);
+                    self.drag_hover_pane = Some(pane);
+                    self.drag_hover_folder = None;
+                }
+                Task::none()
+            }
+            Message::PanePointerEnter(pane) => {
+                if self.entry_drag.is_some() {
+                    self.drag_hover_pane = Some(pane);
+                }
+                Task::none()
+            }
+            Message::PanePointerExit(pane) => {
+                if self.drag_hover_pane == Some(pane) {
+                    self.drag_hover_pane = None;
+                }
+                if self
+                    .drag_hover_folder
+                    .as_ref()
+                    .is_some_and(|(p, _)| *p == pane)
+                {
+                    self.drag_hover_folder = None;
+                }
+                Task::none()
+            }
+            Message::DragHoverFolderEnter { pane, path } => {
+                if self.entry_drag.is_some() {
+                    self.drag_hover_pane = Some(pane);
+                    self.drag_hover_folder = Some((pane, path));
+                }
+                Task::none()
+            }
+            Message::DragHoverFolderExit(path) => {
+                if self
+                    .drag_hover_folder
+                    .as_ref()
+                    .is_some_and(|(_, p)| p == &path)
+                {
+                    self.drag_hover_folder = None;
+                }
+                Task::none()
             }
             Message::CycleSortField => {
                 if let Some(tab) = self.current_tab_mut() {
@@ -1530,7 +1869,8 @@ impl App {
                 }
                 self.queue_visible_thumbnails()
             }
-            Message::SortByField(field) => {
+            Message::SortByField { pane, field } => {
+                self.focus_split_pane(pane);
                 if let Some(tab) = self.current_tab_mut() {
                     if tab.sort.field == field {
                         tab.sort.direction = tab.sort.direction.toggled();
@@ -1561,7 +1901,7 @@ impl App {
                     tab.filter_query = query;
                     apply_tab_filter(tab);
                 }
-                self.canvas_scroll_y = 0.0;
+                self.set_active_scroll_y(0.0);
                 self.queue_visible_thumbnails()
             }
             Message::TogglePathEdit => {
@@ -1699,16 +2039,32 @@ impl App {
                 Task::none()
             }
             Message::CanvasScrolled {
+                pane,
                 offset_y,
                 viewport_height,
                 viewport_width,
             } => {
-                self.canvas_scroll_y = offset_y;
-                if viewport_height > 0.0 {
-                    self.canvas_viewport_height = viewport_height;
-                }
-                if viewport_width > 0.0 {
-                    self.canvas_viewport_width = Some(viewport_width);
+                match pane {
+                    SplitPane::Left => {
+                        self.canvas_scroll_y = offset_y;
+                        if viewport_height > 0.0 {
+                            self.canvas_viewport_height = viewport_height;
+                        }
+                        if viewport_width > 0.0 {
+                            self.canvas_viewport_width = Some(viewport_width);
+                        }
+                    }
+                    SplitPane::Right => {
+                        if let Some(split) = &mut self.split_view {
+                            split.right_scroll_y = offset_y;
+                            if viewport_height > 0.0 {
+                                split.right_viewport_height = viewport_height;
+                            }
+                            if viewport_width > 0.0 {
+                                split.right_viewport_width = Some(viewport_width);
+                            }
+                        }
+                    }
                 }
                 self.queue_visible_thumbnails()
             }
@@ -1726,8 +2082,15 @@ impl App {
             } => {
                 let mut tasks = Vec::new();
                 let mut pending_selected_entry = None;
+                let active_id = self.active_tab_id();
+                let is_visible_pane = tab_id == self.active_tab
+                    || self
+                        .split_view
+                        .as_ref()
+                        .is_some_and(|s| s.right_tab.id == tab_id);
 
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                if let Some(tab) = find_tab_mut_parts(&mut self.tabs, &mut self.split_view, tab_id)
+                {
                     // Descarta respostas obsoletas de navegações canceladas.
                     if tab.active_request_id != request_id {
                         return Task::none();
@@ -1756,7 +2119,7 @@ impl App {
                             apply_tab_filter(tab);
                             tab.title = display_tab_title(&tab.current_path);
 
-                            if tab_id == self.active_tab {
+                            if tab_id == active_id {
                                 let pending_batch = std::mem::take(&mut self.pending_select_paths);
                                 if !pending_batch.is_empty() {
                                     let target_set: HashSet<&PathBuf> =
@@ -1881,7 +2244,7 @@ impl App {
                     tasks.push(
                         self.dispatch_selection_side_effects(pending_selected_entry.as_ref()),
                     );
-                } else if tab_id == self.active_tab {
+                } else if is_visible_pane {
                     tasks.push(self.queue_visible_thumbnails());
                 }
 
@@ -1963,7 +2326,7 @@ impl App {
                 }
                 self.last_watcher_reload = Some((watched_root.clone(), now));
                 let req = self.alloc_request_id();
-                let active = self.active_tab;
+                let active = self.active_tab_id();
                 if let Some(tab) = self.current_tab_mut() {
                     tab.active_request_id = req;
                 }
@@ -1975,7 +2338,7 @@ impl App {
                 request_id,
                 branch,
             } => {
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+                if let Some(tab) = self.find_tab_mut(tab_id)
                     && tab.active_request_id == request_id
                 {
                     tab.telemetry.git_branch = branch;
@@ -1987,7 +2350,7 @@ impl App {
                 request_id,
                 counts,
             } => {
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+                if let Some(tab) = self.find_tab_mut(tab_id)
                     && tab.active_request_id == request_id
                 {
                     tab.apply_child_counts(&counts);
@@ -1999,7 +2362,7 @@ impl App {
                 request_id,
                 size,
             } => {
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+                if let Some(tab) = self.find_tab_mut(tab_id)
                     && tab.active_request_id == request_id
                 {
                     tab.telemetry.recursive_size = size;
@@ -2446,18 +2809,18 @@ impl App {
                         self.active_transfer = None;
                         self.transfer_cancel = None;
                         self.status_notice = None;
-                        self.update(Message::RefreshActiveTab)
+                        self.refresh_visible_panes()
                     }
                     JobState::Cancelled => {
                         self.active_transfer = None;
                         self.transfer_cancel = None;
-                        self.update(Message::RefreshActiveTab)
+                        self.refresh_visible_panes()
                     }
                     JobState::Failed(msg) => {
                         self.active_transfer = None;
                         self.transfer_cancel = None;
                         self.status_notice = Some(msg.clone());
-                        self.update(Message::RefreshActiveTab)
+                        self.refresh_visible_panes()
                     }
                 }
             }
@@ -2470,7 +2833,7 @@ impl App {
                     if let Some(target) = select_after {
                         self.pending_select_path = Some(target);
                     }
-                    self.update(Message::RefreshActiveTab)
+                    self.refresh_visible_panes()
                 }
                 Err(err) => {
                     self.status_notice = Some(err.to_string());
@@ -2486,7 +2849,7 @@ impl App {
                     } else {
                         self.status_notice = None;
                     }
-                    let active = self.update(Message::RefreshActiveTab);
+                    let active = self.refresh_visible_panes();
                     let trash_tab = self.reload_matching_dir_tabs(std::path::Path::new(
                         fm_core::VIRTUAL_TRASH_PATH,
                     ));
@@ -2502,7 +2865,7 @@ impl App {
                     self.status_notice = None;
                     self.pending_select_path = Some(to.clone());
                     self.push_undo(UndoAction::Rename { from, to });
-                    self.update(Message::RefreshActiveTab)
+                    self.refresh_visible_panes()
                 }
                 Err(err) => {
                     self.status_notice = Some(err.to_string());
@@ -2771,8 +3134,9 @@ impl App {
                 }
                 Task::none()
             }
-            Message::OpenEntryContextMenu(index) => {
+            Message::OpenEntryContextMenu { pane, index } => {
                 self.breadcrumb_menu = None;
+                self.focus_split_pane(pane);
                 let mut side_task = Task::none();
                 let mut target_meta = None;
                 if let Some(tab) = self.current_tab_mut()
@@ -2813,8 +3177,9 @@ impl App {
                 }
                 side_task
             }
-            Message::OpenCanvasContextMenu => {
+            Message::OpenCanvasContextMenu(pane) => {
                 self.breadcrumb_menu = None;
+                self.focus_split_pane(pane);
                 self.context_menu = Some(ContextMenuState {
                     kind: ContextMenuKind::Background,
                     position: self.cursor_position,
@@ -3620,6 +3985,9 @@ impl App {
                 self.resizing_col = None;
                 self.resizing_properties_modal = None;
                 self.dragging_properties_modal = None;
+                if let Some(split) = &mut self.split_view {
+                    split.resizing = None;
+                }
                 if let Some(modal) = &mut self.bulk_rename_modal {
                     modal.dragging_modal = None;
                     modal.resizing_modal = None;
@@ -3631,10 +3999,14 @@ impl App {
                     modal.dragging_modal = None;
                     modal.resizing_modal = None;
                 }
+                let mut tasks = Vec::new();
                 if self.resizing_sidebar.take().is_some() {
-                    return self.persist_config_task();
+                    tasks.push(self.persist_config_task());
                 }
-                Task::none()
+                if self.entry_drag.is_some() {
+                    tasks.push(self.finish_entry_drag());
+                }
+                Task::batch(tasks)
             }
             Message::StepGridCardWidth(delta) => {
                 self.grid_zoom_dirty = false;
@@ -3711,6 +4083,25 @@ impl App {
                         pos.x,
                         self.window_size.width,
                     ));
+                }
+                if let Some(split) = &mut self.split_view
+                    && let Some((start_x, initial_ratio)) = split.resizing
+                {
+                    let sidebar_w = if self.config.sidebar_collapsed {
+                        Spacing::SIDEBAR_COLLAPSED_WIDTH
+                    } else {
+                        self.config.sidebar_width.unwrap_or(Spacing::SIDEBAR_WIDTH)
+                    };
+                    let inspector_w = if self.config.show_inspector {
+                        Spacing::INSPECTOR_WIDTH
+                    } else {
+                        0.0
+                    };
+                    let avail =
+                        (self.window_size.width - sidebar_w - inspector_w - 40.0).max(320.0);
+                    split.ratio = compute_split_ratio(initial_ratio, start_x, pos.x, avail);
+                    split.right_viewport_width = None;
+                    self.canvas_viewport_width = None;
                 }
                 if let Some((start, start_x, start_y)) = self.dragging_properties_modal {
                     let (w, h) = effective_properties_modal_size(self);
@@ -3815,6 +4206,9 @@ impl App {
                 if window_id == self.main_window_id {
                     self.window_size = size;
                     self.canvas_viewport_width = None;
+                    if let Some(split) = &mut self.split_view {
+                        split.right_viewport_width = None;
+                    }
                 }
                 Task::none()
             }
@@ -3822,6 +4216,9 @@ impl App {
                 let fitted = fit_window_size_to_monitor(mon);
                 self.window_size = fitted;
                 self.canvas_viewport_width = None;
+                if let Some(split) = &mut self.split_view {
+                    split.right_viewport_width = None;
+                }
                 let x = ((mon.width - fitted.width) * 0.5).max(8.0);
                 let y = ((mon.height - 48.0 - fitted.height) * 0.5).max(16.0);
                 Task::batch([
@@ -3896,6 +4293,12 @@ impl App {
             Message::WindowUnfocused(window_id) => {
                 if window_id == self.main_window_id {
                     self.current_modifiers = keyboard::Modifiers::empty();
+                    self.entry_drag = None;
+                    self.drag_hover_pane = None;
+                    self.drag_hover_folder = None;
+                    if let Some(split) = &mut self.split_view {
+                        split.resizing = None;
+                    }
                     if self.grid_zoom_dirty {
                         self.grid_zoom_dirty = false;
                         return self.persist_config_task();
@@ -3928,7 +4331,7 @@ impl App {
                     || effective.alt()
                     || matches!(
                         key,
-                        keyboard::Key::Named(Named::Escape | Named::F5 | Named::Tab)
+                        keyboard::Key::Named(Named::Escape | Named::F3 | Named::F5 | Named::Tab)
                     );
                 if is_modifier_key {
                     Some(Message::ModifiersChanged(effective))
@@ -4126,33 +4529,46 @@ impl App {
                 .map(|menu| views::modals::context_menu_overlay(self, menu, palette, strings))
         };
 
-        if let Some(layer) = overlay {
-            stack![main_shell, layer].into()
-        } else {
-            stack![main_shell].into()
+        let drag_overlay: Option<Element<'_, Message>> = self
+            .entry_drag
+            .as_ref()
+            .map(|drag| views::canvas::drag_preview_overlay(self, drag, palette, strings));
+
+        match (overlay, drag_overlay) {
+            (Some(layer), Some(drag_layer)) => stack![main_shell, layer, drag_layer].into(),
+            (Some(layer), None) => stack![main_shell, layer].into(),
+            (None, Some(drag_layer)) => stack![main_shell, drag_layer].into(),
+            (None, None) => stack![main_shell].into(),
         }
     }
 
-    /// Libera todas as abas (ativas e inativas) posicionadas dentro de `mount_path`,
+    /// Libera todas as abas (ativas, inativas e painel dividido) posicionadas dentro de `mount_path`,
     /// movendo-as para `Home` e encerrando leituras/watchers pendentes antes de desmontar/ejetar.
     fn release_tabs_under_mount(&mut self, mount_path: &std::path::Path) -> (bool, Task<Message>) {
-        let affected_ids: Vec<TabId> = self
+        let mut affected_ids: Vec<TabId> = self
             .tabs
             .iter()
             .filter(|tab| tab.current_path.starts_with(mount_path))
             .map(|tab| tab.id)
             .collect();
+        if let Some(split) = &self.split_view
+            && split.right_tab.current_path.starts_with(mount_path)
+        {
+            affected_ids.push(split.right_tab.id);
+        }
         if affected_ids.is_empty() {
             return (false, Task::none());
         }
         let home = self.places.home.clone();
+        let active_id = self.active_tab_id();
         let mut tasks = Vec::with_capacity(affected_ids.len());
         for tab_id in affected_ids {
-            if tab_id == self.active_tab {
+            if tab_id == active_id {
                 tasks.push(self.navigate_active_tab(home.clone()));
             } else {
                 let req = self.alloc_request_id();
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                if let Some(tab) = find_tab_mut_parts(&mut self.tabs, &mut self.split_view, tab_id)
+                {
                     tab.push_navigation(home.clone());
                     prepare_tab_for_load(tab, req);
                 }
@@ -4180,21 +4596,53 @@ impl App {
         push_undo_entry(&mut self.undo_stack, action);
     }
 
-    /// Recarrega todas as abas abertas cujo diretório coincide com `dir` (inclusive abas inativas).
+    /// Recarrega o painel ativo e, no modo de tela dividida, também o painel secundário.
+    fn refresh_visible_panes(&mut self) -> Task<Message> {
+        let mut ids = vec![self.active_tab];
+        if let Some(split) = &self.split_view {
+            ids.push(split.right_tab.id);
+        }
+        let mut tasks = Vec::with_capacity(ids.len());
+        for tab_id in ids {
+            let req = self.alloc_request_id();
+            let target_path = self.find_tab_mut(tab_id).map(|tab| {
+                prepare_tab_for_load(tab, req);
+                tab.current_path.clone()
+            });
+            if let Some(path) = target_path {
+                let cancel = self.reset_tab_cancel(tab_id);
+                tasks.push(spawn_list_task(
+                    Arc::clone(&self.vfs),
+                    tab_id,
+                    path,
+                    req,
+                    cancel,
+                ));
+            }
+        }
+        Task::batch(tasks)
+    }
+
+    /// Recarrega todas as abas abertas (incluindo painel dividido) cujo diretório coincide com `dir`.
     pub(crate) fn reload_matching_dir_tabs(&mut self, dir: &std::path::Path) -> Task<Message> {
-        let matching_ids: Vec<TabId> = self
+        let mut matching_ids: Vec<TabId> = self
             .tabs
             .iter()
             .filter(|tab| tab.current_path == dir)
             .map(|tab| tab.id)
             .collect();
+        if let Some(split) = &self.split_view
+            && split.right_tab.current_path == dir
+        {
+            matching_ids.push(split.right_tab.id);
+        }
         if matching_ids.is_empty() {
             return Task::none();
         }
         let mut tasks = Vec::with_capacity(matching_ids.len());
         for tab_id in matching_ids {
             let req = self.alloc_request_id();
-            let target_path = self.tabs.iter_mut().find(|t| t.id == tab_id).map(|tab| {
+            let target_path = self.find_tab_mut(tab_id).map(|tab| {
                 prepare_tab_for_load(tab, req);
                 tab.current_path.clone()
             });
@@ -4831,7 +5279,7 @@ impl App {
 
     fn navigate_active_tab(&mut self, path: PathBuf) -> Task<Message> {
         let req = self.alloc_request_id();
-        let active = self.active_tab;
+        let active = self.active_tab_id();
         if let Some(tab) = self.current_tab_mut() {
             tab.push_navigation(path.clone());
             prepare_tab_for_load(tab, req);
@@ -4859,11 +5307,23 @@ impl App {
             cancel.cancel();
         }
         self.status_notice = None;
-        self.canvas_scroll_y = 0.0;
+        let is_right = self
+            .split_view
+            .as_ref()
+            .is_some_and(|s| s.right_tab.id == tab_id);
+        let scroll_id = if is_right {
+            if let Some(split) = &mut self.split_view {
+                split.right_scroll_y = 0.0;
+            }
+            secondary_canvas_scroll_id()
+        } else {
+            self.canvas_scroll_y = 0.0;
+            canvas_scroll_id()
+        };
         let cancel = self.reset_tab_cancel(tab_id);
         Task::batch([
             spawn_list_task(Arc::clone(&self.vfs), tab_id, path, request_id, cancel),
-            operation::snap_to(canvas_scroll_id(), RelativeOffset::START),
+            operation::snap_to(scroll_id, RelativeOffset::START),
         ])
     }
 
@@ -5013,26 +5473,45 @@ impl App {
         mode: CopyMode,
         sources: Vec<PathBuf>,
     ) -> Task<Message> {
-        let Some(tab) = self.current_tab() else {
+        let Some(dest_dir) = self.current_tab().map(|t| t.current_path.clone()) else {
             return Task::none();
         };
+        self.start_transfer_with_conflict_check_to(mode, sources, dest_dir)
+    }
+
+    fn start_transfer_with_conflict_check_to(
+        &mut self,
+        mode: CopyMode,
+        sources: Vec<PathBuf>,
+        dest_dir: PathBuf,
+    ) -> Task<Message> {
         if sources.is_empty() {
             return Task::none();
         }
-        let dest_dir = tab.current_path.clone();
 
-        let conflicts = sources
+        let dest_entries: Option<&[FileEntry]> = self
+            .tabs
             .iter()
-            .filter(|src| {
-                src.parent() != Some(&dest_dir)
-                    && src.file_name().is_some_and(|n| {
-                        let target_name = n.to_string_lossy();
-                        tab.raw_entries
-                            .iter()
-                            .any(|e| e.name.as_str() == target_name.as_ref())
-                    })
-            })
-            .count();
+            .chain(self.split_view.iter().map(|s| &s.right_tab))
+            .find(|t| t.current_path == dest_dir)
+            .map(|t| t.raw_entries.as_slice());
+
+        let conflicts = if let Some(entries) = dest_entries {
+            sources
+                .iter()
+                .filter(|src| {
+                    src.parent() != Some(&dest_dir)
+                        && src.file_name().is_some_and(|n| {
+                            let target_name = n.to_string_lossy();
+                            entries
+                                .iter()
+                                .any(|e| e.name.as_str() == target_name.as_ref())
+                        })
+                })
+                .count()
+        } else {
+            0
+        };
 
         if conflicts > 0 {
             self.active_dialog = Some(ActiveDialog::Conflict {
@@ -5045,6 +5524,48 @@ impl App {
         }
 
         self.dispatch_transfer(mode, sources, dest_dir, ConflictPolicy::RenameAuto)
+    }
+
+    pub(crate) fn current_drag_mode(&self) -> CopyMode {
+        if self.current_modifiers.control() {
+            CopyMode::Copy
+        } else {
+            CopyMode::Move
+        }
+    }
+
+    pub(crate) fn current_drag_destination(&self) -> Option<PathBuf> {
+        let drag = self.entry_drag.as_ref()?;
+        let left_dir = self.left_tab().map(|t| t.current_path.as_path());
+        let right_dir = self
+            .split_view
+            .as_ref()
+            .map(|s| s.right_tab.current_path.as_path());
+        resolve_internal_drop_destination(
+            drag,
+            self.drag_hover_folder.as_ref(),
+            self.drag_hover_pane,
+            left_dir,
+            right_dir,
+            self.current_drag_mode(),
+        )
+    }
+
+    fn finish_entry_drag(&mut self) -> Task<Message> {
+        let dest = self.current_drag_destination();
+        let mode = self.current_drag_mode();
+        let drag = self.entry_drag.take();
+        self.drag_hover_pane = None;
+        self.drag_hover_folder = None;
+        self.suppress_click_until = Some(Instant::now() + Duration::from_millis(80));
+
+        let (Some(drag), Some(dest_dir)) = (drag, dest) else {
+            return Task::none();
+        };
+        if drag.paths.is_empty() {
+            return Task::none();
+        }
+        self.start_transfer_with_conflict_check_to(mode, drag.paths, dest_dir)
     }
 
     fn dispatch_transfer(
@@ -5324,57 +5845,68 @@ impl App {
     }
 
     fn queue_visible_thumbnails(&mut self) -> Task<Message> {
-        let Some(tab) = self.current_tab() else {
-            return Task::none();
+        let mut candidates: Vec<(ThumbnailKey, PathBuf, TabId)> = Vec::new();
+        let panes: &[SplitPane] = if self.split_view.is_some() {
+            &[SplitPane::Left, SplitPane::Right]
+        } else {
+            &[SplitPane::Left]
         };
 
-        let mut candidates: Vec<(ThumbnailKey, PathBuf)> = Vec::new();
+        for &pane in panes {
+            let Some(tab) = self.pane_tab(pane) else {
+                continue;
+            };
+            let (scroll_y, viewport_h, _) = self.pane_scroll_metrics(pane);
+            let tab_id = tab.id;
 
-        if tab.view_mode == ViewMode::Grid {
-            let dirs_count = tab
-                .visible_entries
-                .iter()
-                .filter(|e| e.kind.is_dir_like())
-                .count();
-            let files: Vec<&FileEntry> = tab
-                .visible_entries
-                .iter()
-                .filter(|e| !e.kind.is_dir_like())
-                .collect();
+            if tab.view_mode == ViewMode::Grid {
+                let dirs_count = tab
+                    .visible_entries
+                    .iter()
+                    .filter(|e| e.kind.is_dir_like())
+                    .count();
+                let files: Vec<&FileEntry> = tab
+                    .visible_entries
+                    .iter()
+                    .filter(|e| !e.kind.is_dir_like())
+                    .collect();
 
-            if !files.is_empty() {
-                let step = 148.0;
-                let min_row = ((self.canvas_scroll_y - 32.0).max(0.0) / step).floor() as usize;
-                let max_row = ((self.canvas_scroll_y + self.canvas_viewport_height + 280.0) / step)
-                    .ceil() as usize;
+                if !files.is_empty() {
+                    let step = 148.0;
+                    let min_row = ((scroll_y - 32.0).max(0.0) / step).floor() as usize;
+                    let max_row = ((scroll_y + viewport_h + 280.0) / step).ceil() as usize;
 
-                let start_idx = min_row.saturating_sub(dirs_count.div_ceil(2) + 2) * 2;
-                let end_idx = (max_row.saturating_sub(dirs_count / 8) * 8 + 16).min(files.len());
-                let clamped_start = start_idx.min(end_idx);
+                    let start_idx = min_row.saturating_sub(dirs_count.div_ceil(2) + 2) * 2;
+                    let end_idx =
+                        (max_row.saturating_sub(dirs_count / 8) * 8 + 16).min(files.len());
+                    let clamped_start = start_idx.min(end_idx);
 
-                for entry in &files[clamped_start..end_idx] {
-                    if fm_preview::is_image_extension(entry.extension.as_deref()) {
-                        candidates.push((thumbnail_key_for_entry(entry), entry.path.clone()));
+                    for entry in &files[clamped_start..end_idx] {
+                        if fm_preview::is_image_extension(entry.extension.as_deref()) {
+                            candidates.push((
+                                thumbnail_key_for_entry(entry),
+                                entry.path.clone(),
+                                tab_id,
+                            ));
+                        }
                     }
                 }
             }
-        }
 
-        if let Some(selected) = tab.selection.single_selected(&tab.visible_entries)
-            && !selected.kind.is_dir_like()
-            && fm_preview::is_image_extension(selected.extension.as_deref())
-        {
-            candidates.push((thumbnail_key_for_entry(selected), selected.path.clone()));
+            if let Some(selected) = tab.selection.single_selected(&tab.visible_entries)
+                && !selected.kind.is_dir_like()
+                && fm_preview::is_image_extension(selected.extension.as_deref())
+            {
+                candidates.push((
+                    thumbnail_key_for_entry(selected),
+                    selected.path.clone(),
+                    tab_id,
+                ));
+            }
         }
-
-        let cancel = self
-            .tab_cancels
-            .get(&self.active_tab)
-            .cloned()
-            .unwrap_or_default();
 
         let mut tasks = Vec::new();
-        for (key, path) in candidates {
+        for (key, path, tab_id) in candidates {
             if tasks.len() >= 24 {
                 break;
             }
@@ -5385,7 +5917,7 @@ impl App {
                 continue;
             }
             self.in_flight_thumbs.insert(path.clone());
-            let cancel = cancel.clone();
+            let cancel = self.tab_cancels.get(&tab_id).cloned().unwrap_or_default();
             let disk_cache = self.disk_thumbnail_cache.clone();
             tasks.push(Task::perform(
                 async move {
@@ -5445,8 +5977,17 @@ impl App {
             push_icon(SystemIconKey::Drive(drive.kind), SystemIconBucket::Small24);
         }
 
-        if let Some(tab) = self.current_tab() {
-            let strings = self.strings();
+        let panes: &[SplitPane] = if self.split_view.is_some() {
+            &[SplitPane::Left, SplitPane::Right]
+        } else {
+            &[SplitPane::Left]
+        };
+        let strings = self.strings();
+        for &pane in panes {
+            let Some(tab) = self.pane_tab(pane) else {
+                continue;
+            };
+            let (scroll_y, viewport_h, _) = self.pane_scroll_metrics(pane);
             let entry_bucket = if tab.view_mode == ViewMode::Grid {
                 SystemIconBucket::Large64
             } else {
@@ -5458,7 +5999,7 @@ impl App {
                         views::virtualized::clamp_grid_card_width(self.config.grid_card_width);
                     let card_h = views::virtualized::grid_card_height(card_w);
                     let fit_cols = views::virtualized::grid_columns_for_width(
-                        self.effective_canvas_width(),
+                        self.effective_pane_width(pane),
                         card_w,
                     );
                     let bands = views::virtualized::build_tab_grid_bands(
@@ -5468,11 +6009,7 @@ impl App {
                         strings,
                     );
                     let win = views::virtualized::compute_band_window_with_row_height(
-                        &bands,
-                        card_h,
-                        self.canvas_scroll_y,
-                        self.canvas_viewport_height,
-                        280.0,
+                        &bands, card_h, scroll_y, viewport_h, 280.0,
                     );
                     for band in &bands[win.range] {
                         if let views::virtualized::GridBand::Items(chunk) = band {
@@ -5492,8 +6029,8 @@ impl App {
                     let win = views::virtualized::compute_fixed_window(
                         tab.visible_entries.len(),
                         views::virtualized::DETAIL_ROW_STEP,
-                        self.canvas_scroll_y,
-                        self.canvas_viewport_height,
+                        scroll_y,
+                        viewport_h,
                         6,
                     );
                     for entry in &tab.visible_entries[win.range] {
@@ -5518,7 +6055,7 @@ impl App {
         let generation = self.system_icon_generation;
         let cancel = self
             .tab_cancels
-            .get(&self.active_tab)
+            .get(&self.active_tab_id())
             .cloned()
             .unwrap_or_default();
 
@@ -5684,6 +6221,20 @@ impl App {
             keyboard::Key::Named(Named::Tab) if modifiers.control() => {
                 self.update(Message::TabNext(modifiers.shift()))
             }
+            keyboard::Key::Named(Named::Tab)
+                if !modifiers.control() && !modifiers.shift() && !modifiers.alt() =>
+            {
+                if self.split_view.is_some() {
+                    let next = match self.active_pane() {
+                        SplitPane::Left => SplitPane::Right,
+                        SplitPane::Right => SplitPane::Left,
+                    };
+                    self.update(Message::FocusSplitPane(next))
+                } else {
+                    Task::none()
+                }
+            }
+            keyboard::Key::Named(Named::F3) => self.update(Message::ToggleSplitView),
             keyboard::Key::Character("a") if modifiers.control() => self.update(Message::SelectAll),
             keyboard::Key::Character("r") if modifiers.control() => {
                 self.update(Message::RefreshActiveTab)
@@ -5744,7 +6295,12 @@ impl App {
                 self.update(Message::ToggleQuickLook)
             }
             keyboard::Key::Named(Named::Escape) => {
-                if self.context_menu.is_some() {
+                if self.entry_drag.is_some() {
+                    self.entry_drag = None;
+                    self.drag_hover_pane = None;
+                    self.drag_hover_folder = None;
+                    Task::none()
+                } else if self.context_menu.is_some() {
                     self.update(Message::CloseContextMenu)
                 } else if self.breadcrumb_menu.is_some() {
                     self.update(Message::CloseBreadcrumbMenu)
@@ -5764,12 +6320,20 @@ impl App {
                 self.update(Message::ResetGridCardWidth)
             }
             keyboard::Key::Named(Named::PageDown) if !self.quicklook_open => {
-                let page = (self.canvas_viewport_height * 0.85).max(200.0);
-                operation::scroll_by(canvas_scroll_id(), AbsoluteOffset { x: 0.0, y: page })
+                let (_, vh, _) = self.pane_scroll_metrics(self.active_pane());
+                let page = (vh * 0.85).max(200.0);
+                operation::scroll_by(
+                    self.active_canvas_scroll_id(),
+                    AbsoluteOffset { x: 0.0, y: page },
+                )
             }
             keyboard::Key::Named(Named::PageUp) if !self.quicklook_open => {
-                let page = (self.canvas_viewport_height * 0.85).max(200.0);
-                operation::scroll_by(canvas_scroll_id(), AbsoluteOffset { x: 0.0, y: -page })
+                let (_, vh, _) = self.pane_scroll_metrics(self.active_pane());
+                let page = (vh * 0.85).max(200.0);
+                operation::scroll_by(
+                    self.active_canvas_scroll_id(),
+                    AbsoluteOffset { x: 0.0, y: -page },
+                )
             }
             keyboard::Key::Named(Named::ArrowDown) => {
                 self.navigate_selection_arrow(0, 1, modifiers)
@@ -5840,6 +6404,7 @@ impl App {
 
         if let Some(id) = first_new_id {
             self.active_tab = id;
+            self.focus_split_pane(SplitPane::Left);
         }
         self.path_editing = false;
         self.quicklook_open = false;
@@ -5949,8 +6514,9 @@ impl App {
         operation::move_cursor_to_end(path_input_id())
     }
 
-    fn effective_canvas_width(&self) -> f32 {
-        if let Some(measured) = self.canvas_viewport_width {
+    fn effective_pane_width(&self, pane: SplitPane) -> f32 {
+        let (_, _, measured) = self.pane_scroll_metrics(pane);
+        if let Some(measured) = measured {
             return measured.max(200.0);
         }
         let sidebar = if self.config.sidebar_collapsed {
@@ -5963,7 +6529,20 @@ impl App {
         } else {
             0.0
         };
-        (self.window_size.width - sidebar - inspector - 40.0).max(200.0)
+        let total = (self.window_size.width - sidebar - inspector - 40.0).max(200.0);
+        if let Some(split) = &self.split_view {
+            let frac = match pane {
+                SplitPane::Left => split.ratio,
+                SplitPane::Right => 1.0 - split.ratio,
+            };
+            ((total - 10.0) * frac).max(200.0)
+        } else {
+            total
+        }
+    }
+
+    fn effective_canvas_width(&self) -> f32 {
+        self.effective_pane_width(self.active_pane())
     }
 
     fn current_tab_visual_order(&self) -> Vec<usize> {
@@ -6130,18 +6709,20 @@ impl App {
             }
         };
 
-        let vh = self.canvas_viewport_height.max(120.0);
-        if top_y < self.canvas_scroll_y {
+        let (scroll_y, viewport_h, _) = self.pane_scroll_metrics(self.active_pane());
+        let vh = viewport_h.max(120.0);
+        let scroll_id = self.active_canvas_scroll_id();
+        if top_y < scroll_y {
             operation::scroll_to(
-                canvas_scroll_id(),
+                scroll_id,
                 AbsoluteOffset {
                     x: None,
                     y: Some(top_y.max(0.0)),
                 },
             )
-        } else if bottom_y > self.canvas_scroll_y + vh {
+        } else if bottom_y > scroll_y + vh {
             operation::scroll_to(
-                canvas_scroll_id(),
+                scroll_id,
                 AbsoluteOffset {
                     x: None,
                     y: Some((bottom_y - vh).max(0.0)),
@@ -6672,6 +7253,100 @@ pub(crate) fn resolve_open_in_new_tab_targets(
     }
 }
 
+fn find_tab_mut_parts<'a>(
+    tabs: &'a mut [TabState],
+    split_view: &'a mut Option<SplitViewState>,
+    id: TabId,
+) -> Option<&'a mut TabState> {
+    if let Some(split) = split_view
+        && split.right_tab.id == id
+    {
+        return Some(&mut split.right_tab);
+    }
+    tabs.iter_mut().find(|t| t.id == id)
+}
+
+pub(crate) fn compute_split_ratio(
+    initial_ratio: f32,
+    start_x: f32,
+    pos_x: f32,
+    available_width: f32,
+) -> f32 {
+    if available_width <= 1.0 {
+        return initial_ratio.clamp(0.25, 0.75);
+    }
+    let delta = (pos_x - start_x) / available_width;
+    (initial_ratio + delta).clamp(0.25, 0.75)
+}
+
+pub(crate) fn collect_drag_paths(
+    clicked_index: usize,
+    visible_entries: &[FileEntry],
+    selected_ids: &HashSet<EntryId>,
+) -> Option<(Vec<PathBuf>, String)> {
+    let clicked = visible_entries.get(clicked_index)?;
+    let paths: Vec<PathBuf> = if selected_ids.contains(&clicked.id) {
+        visible_entries
+            .iter()
+            .filter(|e| {
+                selected_ids.contains(&e.id)
+                    && !fm_core::is_virtual_trash_path(&e.path)
+                    && !fm_fs::archive::is_inside_archive_path(&e.path)
+            })
+            .map(|e| e.path.clone())
+            .collect()
+    } else {
+        vec![clicked.path.clone()]
+    };
+    if paths.is_empty() {
+        return None;
+    }
+    Some((paths, clicked.name.to_string()))
+}
+
+pub(crate) fn resolve_internal_drop_destination(
+    drag: &InternalEntryDrag,
+    hover_folder: Option<&(SplitPane, PathBuf)>,
+    hover_pane: Option<SplitPane>,
+    left_dir: Option<&std::path::Path>,
+    right_dir: Option<&std::path::Path>,
+    mode: CopyMode,
+) -> Option<PathBuf> {
+    let dest = if let Some((_, folder_path)) = hover_folder {
+        folder_path.clone()
+    } else {
+        match hover_pane? {
+            SplitPane::Left => left_dir?.to_path_buf(),
+            SplitPane::Right => right_dir?.to_path_buf(),
+        }
+    };
+
+    if fm_core::is_virtual_trash_path(&dest) || fm_fs::archive::is_inside_archive_path(&dest) {
+        return None;
+    }
+
+    // Impede soltar uma pasta dentro de si mesma ou de um subdiretório descendente.
+    if drag
+        .paths
+        .iter()
+        .any(|src| dest == *src || dest.starts_with(src))
+    {
+        return None;
+    }
+
+    // Mover para a exata pasta onde todos os itens já estão é no-op; Copiar (Ctrl) é permitido.
+    if mode == CopyMode::Move
+        && drag
+            .paths
+            .iter()
+            .all(|src| src.parent() == Some(dest.as_path()))
+    {
+        return None;
+    }
+
+    Some(dest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -7014,6 +7689,103 @@ mod tests {
                 &sel_file,
             )
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn split_ratio_clamps_within_bounds_and_drop_destination_validates_safety() {
+        use fm_core::CopyMode;
+        use std::path::{Path, PathBuf};
+
+        assert!((super::compute_split_ratio(0.5, 500.0, 600.0, 1000.0) - 0.6).abs() < 1e-4);
+        assert!((super::compute_split_ratio(0.5, 500.0, 1200.0, 1000.0) - 0.75).abs() < 1e-4);
+        assert!((super::compute_split_ratio(0.5, 500.0, 0.0, 1000.0) - 0.25).abs() < 1e-4);
+
+        let drag = super::InternalEntryDrag {
+            paths: vec![PathBuf::from("/tmp/left/docs")],
+            primary_label: "docs".into(),
+        };
+
+        // Arrastar do painel esquerdo para o painel direito (diretório diferente) -> válido
+        assert_eq!(
+            super::resolve_internal_drop_destination(
+                &drag,
+                None,
+                Some(super::SplitPane::Right),
+                Some(Path::new("/tmp/left")),
+                Some(Path::new("/tmp/right")),
+                CopyMode::Move,
+            ),
+            Some(PathBuf::from("/tmp/right"))
+        );
+
+        // Mover para o mesmo diretório -> no-op (None)
+        assert_eq!(
+            super::resolve_internal_drop_destination(
+                &drag,
+                None,
+                Some(super::SplitPane::Left),
+                Some(Path::new("/tmp/left")),
+                Some(Path::new("/tmp/right")),
+                CopyMode::Move,
+            ),
+            None
+        );
+
+        // Copiar (Ctrl) no mesmo diretório -> permitido
+        assert_eq!(
+            super::resolve_internal_drop_destination(
+                &drag,
+                None,
+                Some(super::SplitPane::Left),
+                Some(Path::new("/tmp/left")),
+                Some(Path::new("/tmp/right")),
+                CopyMode::Copy,
+            ),
+            Some(PathBuf::from("/tmp/left"))
+        );
+
+        // Impede soltar pasta dentro dela mesma ou de um subdiretório descendente
+        let self_folder = (super::SplitPane::Left, PathBuf::from("/tmp/left/docs"));
+        assert_eq!(
+            super::resolve_internal_drop_destination(
+                &drag,
+                Some(&self_folder),
+                Some(super::SplitPane::Left),
+                Some(Path::new("/tmp/left")),
+                Some(Path::new("/tmp/right")),
+                CopyMode::Copy,
+            ),
+            None
+        );
+        let child_folder = (
+            super::SplitPane::Right,
+            PathBuf::from("/tmp/left/docs/nested"),
+        );
+        assert_eq!(
+            super::resolve_internal_drop_destination(
+                &drag,
+                Some(&child_folder),
+                Some(super::SplitPane::Right),
+                Some(Path::new("/tmp/left")),
+                Some(Path::new("/tmp/right")),
+                CopyMode::Move,
+            ),
+            None
+        );
+
+        // Soltar sobre uma subpasta válida no painel direito -> resolve para a subpasta
+        let target_folder = (super::SplitPane::Right, PathBuf::from("/tmp/right/inbox"));
+        assert_eq!(
+            super::resolve_internal_drop_destination(
+                &drag,
+                Some(&target_folder),
+                Some(super::SplitPane::Right),
+                Some(Path::new("/tmp/left")),
+                Some(Path::new("/tmp/right")),
+                CopyMode::Move,
+            ),
+            Some(PathBuf::from("/tmp/right/inbox"))
         );
     }
 }

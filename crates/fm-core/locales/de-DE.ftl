@@ -489,3 +489,8 @@ image-mounted = Abbild erfolgreich eingehängt
 drive-ejected = Laufwerk sicher entfernt
 drive-free-label = frei
 drive-click-to-mount = Zum Einhängen klicken
+tip-split-view = Geteilte Ansicht (F3)
+close-split-pane = Geteilte Ansicht schließen (F3)
+drag-move-prefix = Verschieben
+drag-copy-prefix = Kopieren
+drag-ctrl-copy-hint = Strg = Kopieren

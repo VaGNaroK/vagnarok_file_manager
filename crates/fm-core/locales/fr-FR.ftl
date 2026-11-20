@@ -489,3 +489,8 @@ image-mounted = Image disque montée
 drive-ejected = Lecteur retiré en toute sécurité
 drive-free-label = libres
 drive-click-to-mount = Cliquer pour monter
+tip-split-view = Vue scindée (F3)
+close-split-pane = Fermer le panneau scindé (F3)
+drag-move-prefix = Déplacer
+drag-copy-prefix = Copier
+drag-ctrl-copy-hint = Ctrl = Copier

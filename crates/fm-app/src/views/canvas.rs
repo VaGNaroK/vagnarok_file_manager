@@ -13,22 +13,23 @@ use iced::advanced::{Clipboard, Layout, Shell, Widget, overlay};
 use iced::keyboard;
 use iced::mouse;
 use iced::widget::{
-    Space, button, column, container, image, mouse_area, responsive, row, scrollable, space, text,
-    tooltip,
+    Space, button, column, container, image, mouse_area, responsive, row, scrollable, space, stack,
+    text, tooltip,
 };
 use iced::{
     Background, Border, Color, ContentFit, Element, Event, Length, Padding, Point, Rectangle, Size,
     Vector,
 };
 use lucide_icons::iced::{
-    icon_align_center, icon_align_left, icon_arrow_up_down, icon_clipboard_paste, icon_copy,
-    icon_eye, icon_eye_off, icon_filter, icon_folder_tree, icon_info, icon_minus, icon_pencil,
-    icon_plus, icon_rotate_ccw, icon_scissors, icon_shapes, icon_shield_alert, icon_star,
-    icon_terminal, icon_trash_2, icon_x,
+    icon_align_center, icon_align_left, icon_arrow_left, icon_arrow_right, icon_arrow_up,
+    icon_arrow_up_down, icon_clipboard_paste, icon_copy, icon_eye, icon_eye_off, icon_filter,
+    icon_folder_tree, icon_info, icon_minus, icon_pencil, icon_plus, icon_rotate_ccw,
+    icon_scissors, icon_shapes, icon_shield_alert, icon_star, icon_terminal, icon_trash_2, icon_x,
 };
 
 use crate::app::{
-    App, Message, canvas_scroll_id, selected_id_set_contains, thumbnail_key_for_entry,
+    App, InternalEntryDrag, Message, SplitPane, SplitViewState, pane_scroll_id,
+    selected_id_set_contains, thumbnail_key_for_entry,
 };
 use crate::views::modals::format_transfer_summary;
 use crate::views::virtualized::{
@@ -52,58 +53,67 @@ pub fn view<'a>(
             .into();
     };
 
+    let is_split = app.split_view.is_some();
     let mut header_stack = column![action_bar(app, tab, palette, strings)].spacing(14);
-    if app.config.show_hero_card {
+    if !is_split && app.config.show_hero_card {
         header_stack = header_stack.push(hero_card(tab, palette, strings));
     }
     if let Some(job) = &app.active_transfer {
         header_stack = header_stack.push(transfer_banner(job, palette, strings));
     }
 
-    let body: Element<'a, Message> = if tab.is_loading {
-        container(
-            text(strings.loading)
-                .size(13)
-                .font(FONT_MONO)
-                .color(palette.text_secondary),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(Center)
-        .align_y(Center)
-        .into()
-    } else if let Some(err) = &tab.last_error {
-        error_banner(err, tab.can_go_back(), palette, strings)
-    } else if tab.visible_entries.is_empty() {
-        container(
-            text(strings.empty_dir)
-                .size(13)
-                .font(FONT_UI)
-                .color(palette.text_muted),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(Center)
-        .align_y(Center)
-        .into()
+    let workspace: Element<'a, Message> = if let Some(split) = &app.split_view {
+        let left_p = (split.ratio * 1000.0).round().clamp(250.0, 750.0) as u16;
+        let right_p = 1000_u16.saturating_sub(left_p).max(250);
+        let left_pane = container(split_pane_panel(
+            app,
+            SplitPane::Left,
+            app.left_tab(),
+            split.active_pane == SplitPane::Left,
+            palette,
+            strings,
+        ))
+        .width(Length::FillPortion(left_p))
+        .height(Length::Fill);
+
+        let right_pane = container(split_pane_panel(
+            app,
+            SplitPane::Right,
+            Some(&split.right_tab),
+            split.active_pane == SplitPane::Right,
+            palette,
+            strings,
+        ))
+        .width(Length::FillPortion(right_p))
+        .height(Length::Fill);
+
+        row![left_pane, split_divider(split, palette), right_pane]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     } else {
-        match tab.view_mode {
-            ViewMode::Grid => grid_view(app, tab, palette, strings),
-            ViewMode::DetailTable => detail_table_view(app, tab, palette, strings),
-        }
+        let content = pane_body(app, SplitPane::Left, tab, palette, strings);
+        mouse_area(content)
+            .on_enter(Message::PanePointerEnter(SplitPane::Left))
+            .on_exit(Message::PanePointerExit(SplitPane::Left))
+            .on_right_press(Message::OpenCanvasContextMenu(SplitPane::Left))
+            .into()
     };
 
-    let body = mouse_area(body).on_right_press(Message::OpenCanvasContextMenu);
-
+    let outer_padding = if is_split {
+        Padding::from([10, 12])
+    } else {
+        Padding::from([14, 20])
+    };
     let panel: Element<'a, Message> = container(
-        column![header_stack, body]
-            .spacing(16)
+        column![header_stack, workspace]
+            .spacing(if is_split { 10 } else { 16 })
             .width(Length::Fill)
             .height(Length::Fill),
     )
     .width(Length::Fill)
     .height(Length::Fill)
-    .padding(Padding::from([14, 20]))
+    .padding(outer_padding)
     .style(styles::canvas_container(palette))
     .into();
 
@@ -120,6 +130,386 @@ pub fn view<'a>(
         intercept: can_zoom && app.current_modifiers.control(),
         on_wheel: Box::new(Message::CtrlWheelZoom),
     })
+}
+
+fn pane_body<'a>(
+    app: &'a App,
+    pane: SplitPane,
+    tab: &'a TabState,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    if tab.is_loading {
+        mouse_area(
+            container(
+                text(strings.loading)
+                    .size(13)
+                    .font(FONT_MONO)
+                    .color(palette.text_secondary),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Center)
+            .align_y(Center),
+        )
+        .on_press(Message::FocusSplitPane(pane))
+        .into()
+    } else if let Some(err) = &tab.last_error {
+        error_banner(err, tab.can_go_back(), palette, strings)
+    } else if tab.visible_entries.is_empty() {
+        mouse_area(
+            container(
+                text(strings.empty_dir)
+                    .size(13)
+                    .font(FONT_UI)
+                    .color(palette.text_muted),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Center)
+            .align_y(Center),
+        )
+        .on_press(Message::FocusSplitPane(pane))
+        .into()
+    } else {
+        match tab.view_mode {
+            ViewMode::Grid => grid_view(app, pane, tab, palette, strings),
+            ViewMode::DetailTable => detail_table_view(app, pane, tab, palette, strings),
+        }
+    }
+}
+
+fn split_pane_panel<'a>(
+    app: &'a App,
+    pane: SplitPane,
+    tab: Option<&'a TabState>,
+    is_active: bool,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let Some(tab) = tab else {
+        return container(text(strings.no_active_tab))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    };
+
+    let is_pane_drop_target = app.entry_drag.is_some()
+        && app.drag_hover_pane == Some(pane)
+        && app.drag_hover_folder.is_none()
+        && app
+            .current_drag_destination()
+            .is_some_and(|dest| dest == tab.current_path);
+
+    let pane_bg = if is_active {
+        palette.surface_lowest
+    } else {
+        match palette.preset {
+            fm_core::ThemePreset::ObsidianFlow => palette.canvas,
+            fm_core::ThemePreset::AetherLight => palette.surface_low,
+        }
+    };
+    let pane_border_color = if is_pane_drop_target {
+        palette.accent_primary
+    } else if is_active {
+        palette.border_strong
+    } else {
+        palette.border
+    };
+    let pane_border_width = if is_pane_drop_target { 2.0 } else { 1.0 };
+
+    let top_accent = container(Space::new().width(Length::Fill).height(2.0)).style(move |_| {
+        styles::panel_surface(
+            if is_pane_drop_target || is_active {
+                palette.accent_primary
+            } else {
+                Color::TRANSPARENT
+            },
+            Color::TRANSPARENT,
+            0.0,
+        )
+    });
+
+    let header = split_pane_header(pane, tab, is_active, palette, strings);
+    let body = container(pane_body(app, pane, tab, palette, strings))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(Padding::from([6, 8]));
+
+    let inner = container(
+        column![
+            top_accent,
+            header,
+            container(Space::new().width(Length::Fill).height(1))
+                .style(styles::divider_line(palette)),
+            body,
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .clip(true)
+    .style(move |_| container::Style {
+        background: Some(Background::Color(pane_bg)),
+        border: Border {
+            color: pane_border_color,
+            width: pane_border_width,
+            radius: 8.0.into(),
+        },
+        ..container::Style::default()
+    });
+
+    mouse_area(inner)
+        .on_enter(Message::PanePointerEnter(pane))
+        .on_exit(Message::PanePointerExit(pane))
+        .on_right_press(Message::OpenCanvasContextMenu(pane))
+        .into()
+}
+
+fn split_pane_header<'a>(
+    pane: SplitPane,
+    tab: &'a TabState,
+    is_active: bool,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let dot_color = if is_active {
+        palette.accent_primary
+    } else {
+        palette.text_muted
+    };
+    let dot = container(Space::new().width(7).height(7)).style(styles::badge_container(
+        dot_color,
+        dot_color,
+        Color::TRANSPARENT,
+        9999.0,
+    ));
+
+    let path_str = sanitize_single_line(&tab.current_path.to_string_lossy());
+    let title_area = mouse_area(
+        row![
+            dot,
+            text(sanitize_single_line(tab.title.as_str()))
+                .size(12)
+                .font(if is_active { FONT_UI_SEMIBOLD } else { FONT_UI })
+                .color(if is_active {
+                    palette.text_primary
+                } else {
+                    palette.text_secondary
+                })
+                .wrapping(text::Wrapping::None),
+            container(
+                text(path_str)
+                    .size(11)
+                    .font(FONT_MONO)
+                    .color(palette.text_muted)
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(Length::Fill)
+            .clip(true),
+        ]
+        .spacing(8)
+        .align_y(Center)
+        .width(Length::Fill),
+    )
+    .on_press(Message::FocusSplitPane(pane));
+
+    let mut back_btn = button(icon_arrow_left().size(13))
+        .padding([3, 5])
+        .style(styles::ghost_button(palette, 6.0));
+    if tab.can_go_back() {
+        back_btn = back_btn.on_press(Message::SplitNavigateBack(pane));
+    }
+
+    let mut fwd_btn = button(icon_arrow_right().size(13))
+        .padding([3, 5])
+        .style(styles::ghost_button(palette, 6.0));
+    if tab.can_go_forward() {
+        fwd_btn = fwd_btn.on_press(Message::SplitNavigateForward(pane));
+    }
+
+    let mut up_btn = button(icon_arrow_up().size(13))
+        .padding([3, 5])
+        .style(styles::ghost_button(palette, 6.0));
+    if !fm_core::is_virtual_trash_path(&tab.current_path) && tab.current_path.parent().is_some() {
+        up_btn = up_btn.on_press(Message::SplitNavigateUp(pane));
+    }
+
+    let mut controls = row![back_btn, fwd_btn, up_btn].spacing(2).align_y(Center);
+    if pane == SplitPane::Right {
+        controls = controls.push(with_tooltip(
+            button(icon_x().size(13).color(palette.text_muted))
+                .padding([3, 5])
+                .style(styles::ghost_button(palette, 6.0))
+                .on_press(Message::ToggleSplitView),
+            strings.close_split_pane,
+            tooltip::Position::Bottom,
+            palette,
+        ));
+    }
+
+    let header_bg = if is_active {
+        palette.surface_low
+    } else {
+        palette.surface_lowest
+    };
+
+    container(
+        row![title_area, controls]
+            .spacing(6)
+            .align_y(Center)
+            .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .padding([4, 10])
+    .style(move |_| styles::panel_surface(header_bg, Color::TRANSPARENT, 0.0))
+    .into()
+}
+
+fn split_divider<'a>(split: &'a SplitViewState, palette: ThemePalette) -> Element<'a, Message> {
+    let highlighted = split.resizing.is_some() || split.divider_hovered;
+    let line_color = if highlighted {
+        palette.accent_primary
+    } else {
+        palette.border
+    };
+    let line_width = if highlighted { 2.0 } else { 1.0 };
+
+    let full_line = container(
+        container(Space::new().width(line_width).height(Length::Fill))
+            .style(move |_| styles::panel_surface(line_color, Color::TRANSPARENT, 0.0)),
+    )
+    .width(Length::Fixed(10.0))
+    .height(Length::Fill)
+    .align_x(Center);
+
+    let content: Element<'a, Message> =
+        if highlighted {
+            let grip = container(container(Space::new().width(4.0).height(40.0)).style(
+                move |_| styles::panel_surface(palette.accent_primary, Color::TRANSPARENT, 9999.0),
+            ))
+            .width(Length::Fixed(10.0))
+            .height(Length::Fill)
+            .align_x(Center)
+            .align_y(Center);
+            stack![full_line, grip].into()
+        } else {
+            full_line.into()
+        };
+
+    mouse_area(content)
+        .interaction(mouse::Interaction::ResizingHorizontally)
+        .on_enter(Message::SplitDividerHovered(true))
+        .on_exit(Message::SplitDividerHovered(false))
+        .on_press(Message::StartSplitResize)
+        .on_right_press(Message::ResetSplitRatio)
+        .into()
+}
+
+/// Pill flutuante seguindo o cursor durante drag & drop interno entre painéis/pastas.
+pub fn drag_preview_overlay<'a>(
+    app: &'a App,
+    drag: &'a InternalEntryDrag,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let mode = app.current_drag_mode();
+    let dest = app.current_drag_destination();
+    let count = drag.paths.len();
+
+    let item_summary = if count == 1 {
+        truncate_label(&sanitize_single_line(&drag.primary_label), 28)
+    } else {
+        strings.format_items_count(count)
+    };
+    let prefix = match mode {
+        CopyMode::Copy => strings.drag_copy_prefix,
+        CopyMode::Move => strings.drag_move_prefix,
+    };
+
+    let mut content = row![
+        match mode {
+            CopyMode::Copy => icon_copy().size(13).color(palette.accent_primary),
+            CopyMode::Move => icon_arrow_right().size(13).color(palette.accent_primary),
+        },
+        text(format!("{prefix}: {item_summary}"))
+            .size(12)
+            .font(FONT_UI_SEMIBOLD)
+            .color(palette.text_primary)
+            .wrapping(text::Wrapping::None),
+    ]
+    .spacing(6)
+    .align_y(Center);
+
+    if let Some(dest_dir) = dest {
+        let dest_name = dest_dir
+            .file_name()
+            .map(|n| sanitize_single_line(&n.to_string_lossy()))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| sanitize_single_line(&dest_dir.to_string_lossy()));
+        content = content.push(
+            text(format!("→ {}", truncate_label(&dest_name, 22)))
+                .size(12)
+                .font(FONT_MONO_BOLD)
+                .color(palette.accent_primary)
+                .wrapping(text::Wrapping::None),
+        );
+    }
+
+    if mode == CopyMode::Move {
+        content = content.push(
+            container(
+                text(strings.drag_ctrl_copy_hint)
+                    .size(10)
+                    .font(FONT_MONO)
+                    .color(palette.text_secondary),
+            )
+            .padding([2, 6])
+            .style(styles::badge_container(
+                palette.surface_high,
+                palette.text_secondary,
+                palette.border,
+                6.0,
+            )),
+        );
+    }
+
+    let pill = container(content)
+        .padding([6, 12])
+        .style(move |_| container::Style {
+            background: Some(Background::Color(palette.surface_low)),
+            border: Border {
+                color: palette.accent_primary,
+                width: 1.5,
+                radius: 10.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: Color {
+                    a: 0.35,
+                    ..Color::BLACK
+                },
+                offset: Vector::new(0.0, 4.0),
+                blur_radius: 12.0,
+            },
+            ..container::Style::default()
+        });
+
+    let max_x = (app.window_size.width - 280.0).max(8.0);
+    let max_y = (app.window_size.height - 44.0).max(8.0);
+    let x = (app.cursor_position.x + 16.0).clamp(8.0, max_x);
+    let y = (app.cursor_position.y + 18.0).clamp(8.0, max_y);
+
+    container(pill)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(Padding {
+            top: y,
+            right: 0.0,
+            bottom: 0.0,
+            left: x,
+        })
+        .into()
 }
 
 fn error_banner<'a>(
@@ -840,6 +1230,7 @@ fn metric_block<'a>(
 
 fn grid_view<'a>(
     app: &'a App,
+    pane: SplitPane,
     tab: &'a TabState,
     palette: ThemePalette,
     strings: Strings,
@@ -850,14 +1241,14 @@ fn grid_view<'a>(
         ctrl: app.current_modifiers.control(),
         shift: app.current_modifiers.shift(),
     };
-    let scroll_y = app.canvas_scroll_y;
-    let viewport_h = app.canvas_viewport_height;
+    let (scroll_y, viewport_h, _) = app.pane_scroll_metrics(pane);
     let card_width = clamp_grid_card_width(app.config.grid_card_width);
     let card_height = grid_card_height(card_width);
     let box_width = (card_width - 14.0).max(88.0);
     let preview_box = grid_preview_box_size(card_width);
     let line_chars = ((box_width - 14.0) / 7.2).round().clamp(11.0, 32.0) as usize;
     let label_chars = line_chars.saturating_mul(3).max(36);
+    let drag_dest = app.current_drag_destination();
 
     responsive(move |size| {
         let fit_cols = grid_columns_for_width(size.width, card_width);
@@ -886,11 +1277,19 @@ fn grid_view<'a>(
                     let mut r = row![].spacing(GRID_GAP);
                     for &(idx, entry) in chunk {
                         let thumb = app.gpu_thumbnails.get(&thumbnail_key_for_entry(entry));
+                        let is_drop_target = entry.kind.is_dir_like()
+                            && app
+                                .drag_hover_folder
+                                .as_ref()
+                                .is_some_and(|(p, folder)| *p == pane && folder == &entry.path)
+                            && drag_dest.as_ref().is_some_and(|d| d == &entry.path);
                         r = r.push(grid_item_card(
                             app,
+                            pane,
                             idx,
                             entry,
                             selected_id_set_contains(tab, entry.id),
+                            is_drop_target,
                             modifiers,
                             thumb,
                             card_width,
@@ -930,15 +1329,16 @@ fn grid_view<'a>(
         };
 
         let scroll = scrollable(aligned_canvas)
-            .id(canvas_scroll_id())
+            .id(pane_scroll_id(pane))
             .width(Length::Fill)
             .height(Length::Fill)
-            .on_scroll(|vp| Message::CanvasScrolled {
+            .on_scroll(move |vp| Message::CanvasScrolled {
+                pane,
                 offset_y: vp.absolute_offset().y,
                 viewport_height: vp.bounds().height,
                 viewport_width: vp.bounds().width,
             });
-        wrap_marquee(app, scroll.into(), palette)
+        wrap_marquee(app, pane, scroll.into(), palette)
     })
     .into()
 }
@@ -968,9 +1368,11 @@ fn section_title_bar<'a>(
 #[allow(clippy::too_many_arguments)]
 fn grid_item_card<'a>(
     app: &'a App,
+    pane: SplitPane,
     index: usize,
     entry: &'a FileEntry,
     selected: bool,
+    is_drop_target: bool,
     modifiers: SelectionModifiers,
     thumb: Option<&'a image::Handle>,
     card_width: f32,
@@ -1101,12 +1503,47 @@ fn grid_item_card<'a>(
         .height(Length::Shrink)
         .padding([2, 2])
         .style(styles::nemo_grid_item_button(palette))
-        .on_press(Message::SelectEntry { index, modifiers });
+        .on_press(Message::SelectEntry {
+            pane,
+            index,
+            modifiers,
+        });
 
-    let card_area = mouse_area(card_btn).on_right_press(Message::OpenEntryContextMenu(index));
+    let card_inner: Element<'a, Message> = if is_drop_target {
+        container(card_btn)
+            .padding(2)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.14,
+                    ..palette.accent_primary
+                })),
+                border: Border {
+                    color: palette.accent_primary,
+                    width: 2.0,
+                    radius: 8.0.into(),
+                },
+                ..container::Style::default()
+            })
+            .into()
+    } else {
+        card_btn.into()
+    };
+
+    let mut card_area =
+        mouse_area(card_inner).on_right_press(Message::OpenEntryContextMenu { pane, index });
+    if entry.kind.is_dir_like() && app.entry_drag.is_some() {
+        card_area = card_area
+            .on_enter(Message::DragHoverFolderEnter {
+                pane,
+                path: entry.path.clone(),
+            })
+            .on_exit(Message::DragHoverFolderExit(entry.path.clone()));
+    }
+
+    let draggable = wrap_draggable_entry(app, pane, index, card_area.into());
 
     // Mantém a célula virtualizada de tamanho fixo enquanto o botão envolve apenas ícone + rótulo.
-    container(card_area)
+    container(draggable)
         .width(Length::Fixed(card_width))
         .height(Length::Fixed(card_height))
         .align_x(Center)
@@ -1115,6 +1552,7 @@ fn grid_item_card<'a>(
 }
 
 fn sort_header_button<'a>(
+    pane: SplitPane,
     label: &'a str,
     field: SortField,
     active_sort: fm_core::SortSpec,
@@ -1145,7 +1583,7 @@ fn sort_header_button<'a>(
     .width(Length::FillPortion(portion))
     .padding([2, 4])
     .style(styles::ghost_button(palette, 6.0))
-    .on_press(Message::SortByField(field))
+    .on_press(Message::SortByField { pane, field })
     .into()
 }
 
@@ -1180,6 +1618,7 @@ fn single_line_label<'a>(
 
 fn detail_table_view<'a>(
     app: &'a App,
+    pane: SplitPane,
     tab: &'a TabState,
     palette: ThemePalette,
     strings: Strings,
@@ -1188,6 +1627,8 @@ fn detail_table_view<'a>(
         ctrl: app.current_modifiers.control(),
         shift: app.current_modifiers.shift(),
     };
+    let (scroll_y, viewport_h, _) = app.pane_scroll_metrics(pane);
+    let drag_dest = app.current_drag_destination();
     let w = app.table_col_weights;
     let p = [
         portion(w[0]),
@@ -1199,11 +1640,32 @@ fn detail_table_view<'a>(
 
     let sticky_header = container(
         row![
-            sort_header_button(strings.col_name, SortField::Name, tab.sort, p[0], palette),
+            sort_header_button(
+                pane,
+                strings.col_name,
+                SortField::Name,
+                tab.sort,
+                p[0],
+                palette
+            ),
             col_resize_handle(0, palette),
-            sort_header_button(strings.col_size, SortField::Size, tab.sort, p[1], palette),
+            sort_header_button(
+                pane,
+                strings.col_size,
+                SortField::Size,
+                tab.sort,
+                p[1],
+                palette
+            ),
             col_resize_handle(1, palette),
-            sort_header_button(strings.col_type, SortField::Kind, tab.sort, p[2], palette),
+            sort_header_button(
+                pane,
+                strings.col_type,
+                SortField::Kind,
+                tab.sort,
+                p[2],
+                palette
+            ),
             col_resize_handle(2, palette),
             text(strings.col_perms)
                 .size(11)
@@ -1212,6 +1674,7 @@ fn detail_table_view<'a>(
                 .width(Length::FillPortion(p[3])),
             col_resize_handle(3, palette),
             sort_header_button(
+                pane,
                 strings.col_modified,
                 SortField::Modified,
                 tab.sort,
@@ -1229,8 +1692,8 @@ fn detail_table_view<'a>(
     let win = compute_fixed_window(
         tab.visible_entries.len(),
         DETAIL_ROW_STEP,
-        app.canvas_scroll_y,
-        app.canvas_viewport_height,
+        scroll_y,
+        viewport_h,
         6,
     );
 
@@ -1319,17 +1782,40 @@ fn detail_table_view<'a>(
         .width(Length::Fill)
         .align_y(Center);
 
+        let is_drop_target = entry.kind.is_dir_like()
+            && app
+                .drag_hover_folder
+                .as_ref()
+                .is_some_and(|(p, folder)| *p == pane && folder == &entry.path)
+            && drag_dest.as_ref().is_some_and(|d| d == &entry.path);
+
         let row_btn = button(row_content)
             .width(Length::Fill)
             .height(DETAIL_ROW_HEIGHT)
             .padding([6, 12])
-            .style(styles::entry_card_button(palette, selected, 8.0))
+            .style(styles::entry_card_button(
+                palette,
+                selected || is_drop_target,
+                8.0,
+            ))
             .on_press(Message::SelectEntry {
+                pane,
                 index: idx,
                 modifiers,
             });
 
-        rows = rows.push(mouse_area(row_btn).on_right_press(Message::OpenEntryContextMenu(idx)));
+        let mut row_area =
+            mouse_area(row_btn).on_right_press(Message::OpenEntryContextMenu { pane, index: idx });
+        if entry.kind.is_dir_like() && app.entry_drag.is_some() {
+            row_area = row_area
+                .on_enter(Message::DragHoverFolderEnter {
+                    pane,
+                    path: entry.path.clone(),
+                })
+                .on_exit(Message::DragHoverFolderExit(entry.path.clone()));
+        }
+
+        rows = rows.push(wrap_draggable_entry(app, pane, idx, row_area.into()));
     }
 
     if win.bottom_spacer > 0.0 {
@@ -1342,19 +1828,23 @@ fn detail_table_view<'a>(
         .padding(Padding::from([0.0, DETAIL_LIST_SIDE_PADDING]));
 
     let scroll = scrollable(padded_rows)
-        .id(canvas_scroll_id())
+        .id(pane_scroll_id(pane))
         .height(Length::Fill)
-        .on_scroll(|vp| Message::CanvasScrolled {
+        .on_scroll(move |vp| Message::CanvasScrolled {
+            pane,
             offset_y: vp.absolute_offset().y,
             viewport_height: vp.bounds().height,
             viewport_width: vp.bounds().width,
         });
 
-    column![sticky_header, wrap_marquee(app, scroll.into(), palette)]
-        .spacing(6)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    column![
+        sticky_header,
+        wrap_marquee(app, pane, scroll.into(), palette)
+    ]
+    .spacing(6)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 /// Intercepts mouse wheel events before child `scrollable` viewports when
@@ -1534,10 +2024,11 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for CtrlWheelZoom<'_,
     }
 }
 
-fn wrap_marquee<'a>(
+fn wrap_draggable_entry<'a>(
     app: &'a App,
+    pane: SplitPane,
+    index: usize,
     content: Element<'a, Message>,
-    palette: ThemePalette,
 ) -> Element<'a, Message> {
     let enabled = app.active_dialog.is_none()
         && app.context_menu.is_none()
@@ -1545,10 +2036,215 @@ fn wrap_marquee<'a>(
         && !app.quicklook_open
         && !app.prefs_open
         && !app.deep_search_open;
+    Element::new(DraggableEntry {
+        content,
+        pane,
+        index,
+        enabled,
+    })
+}
+
+#[derive(Default)]
+struct DraggableEntryState {
+    press_origin: Option<Point>,
+    dragging: bool,
+}
+
+/// Wrapper leve sobre itens do grid/lista que detecta arraste (>= 8px) sem bloquear cliques ou hover de destinos.
+struct DraggableEntry<'a> {
+    content: Element<'a, Message>,
+    pane: SplitPane,
+    index: usize,
+    enabled: bool,
+}
+
+impl Widget<Message, iced::Theme, iced::Renderer> for DraggableEntry<'_> {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<DraggableEntryState>()
+    }
+
+    fn state(&self) -> tree::State {
+        tree::State::new(DraggableEntryState::default())
+    }
+
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content));
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.content
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        let state = tree.state.downcast_mut::<DraggableEntryState>();
+        let bounds = layout.bounds();
+
+        if self.enabled {
+            match event {
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                    if !shell.is_event_captured()
+                        && let Some(pos) = cursor.position_over(bounds)
+                    {
+                        state.press_origin = Some(pos);
+                        state.dragging = false;
+                    }
+                }
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    if let Some(origin) = state.press_origin
+                        && !state.dragging
+                        && (position.x - origin.x).hypot(position.y - origin.y) >= 8.0
+                    {
+                        state.dragging = true;
+                        shell.publish(Message::StartEntryDrag {
+                            pane: self.pane,
+                            index: self.index,
+                        });
+                    }
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                | Event::Window(iced::window::Event::Unfocused) => {
+                    state.press_origin = None;
+                    state.dragging = false;
+                }
+                _ => {}
+            }
+        } else {
+            state.press_origin = None;
+            state.dragging = false;
+        }
+
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        let state = tree.state.downcast_ref::<DraggableEntryState>();
+        if state.dragging {
+            return mouse::Interaction::Grabbing;
+        }
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &iced::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
+
+fn wrap_marquee<'a>(
+    app: &'a App,
+    pane: SplitPane,
+    content: Element<'a, Message>,
+    palette: ThemePalette,
+) -> Element<'a, Message> {
+    let enabled = app.active_dialog.is_none()
+        && app.context_menu.is_none()
+        && app.breadcrumb_menu.is_none()
+        && app.entry_drag.is_none()
+        && !app.quicklook_open
+        && !app.prefs_open
+        && !app.deep_search_open;
+    let (scroll_y, _, _) = app.pane_scroll_metrics(pane);
     Element::new(MarqueeSelect {
         content,
+        pane,
         enabled,
-        scroll_y: app.canvas_scroll_y,
+        scroll_y,
         accent: palette.accent_primary,
     })
 }
@@ -1574,6 +2270,7 @@ struct MarqueeState {
 /// Wrapper que captura arraste com botão esquerdo em área vazia do canvas para seleção em caixa (marquee).
 struct MarqueeSelect<'a> {
     content: Element<'a, Message>,
+    pane: SplitPane,
     enabled: bool,
     scroll_y: f32,
     accent: Color,
@@ -1792,6 +2489,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for MarqueeSelect<'_> {
                             drag.current_content_y,
                         );
                         shell.publish(Message::MarqueeSelect {
+                            pane: self.pane,
                             rect,
                             viewport_width: bounds.width,
                             additive: drag.additive,
@@ -1804,9 +2502,11 @@ impl Widget<Message, iced::Theme, iced::Renderer> for MarqueeSelect<'_> {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 if let Some(drag) = state.drag.take() {
                     if drag.activated {
-                        shell.publish(Message::MarqueeFinished);
+                        shell.publish(Message::MarqueeFinished(self.pane));
                     } else if !drag.additive {
-                        shell.publish(Message::ClearSelection);
+                        shell.publish(Message::ClearSelection(self.pane));
+                    } else {
+                        shell.publish(Message::FocusSplitPane(self.pane));
                     }
                     shell.request_redraw();
                     shell.capture_event();

@@ -489,3 +489,8 @@ image-mounted = Imagen montada correctamente
 drive-ejected = Unidad expulsada con seguridad
 drive-free-label = libres
 drive-click-to-mount = Haz clic para montar
+tip-split-view = Dividir pantalla (F3)
+close-split-pane = Cerrar panel dividido (F3)
+drag-move-prefix = Mover
+drag-copy-prefix = Copiar
+drag-ctrl-copy-hint = Ctrl = Copiar
