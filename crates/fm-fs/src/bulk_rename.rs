@@ -48,8 +48,8 @@ pub async fn undo_bulk_rename_pairs(
         let existing_paths = HashSet::new();
 
         for (idx, (current_path, original_path)) in undo_pairs.iter().enumerate() {
-            if crate::archive::split_archive_path(current_path).is_some()
-                || crate::archive::split_archive_path(original_path).is_some()
+            if crate::archive::is_inside_archive_path(current_path)
+                || crate::archive::is_inside_archive_path(original_path)
             {
                 return Err(FsError::Io {
                     path: current_path.clone(),
@@ -206,8 +206,8 @@ fn execute_plan_blocking(plan: &BulkRenameExecutionPlan) -> BulkRenameBatchOutco
 }
 
 fn check_archive_or_target_collision(step: &RenameStep) -> Option<String> {
-    if crate::archive::split_archive_path(&step.from).is_some()
-        || crate::archive::split_archive_path(&step.to).is_some()
+    if crate::archive::is_inside_archive_path(&step.from)
+        || crate::archive::is_inside_archive_path(&step.to)
     {
         return Some("arquivos compactados são somente leitura".to_owned());
     }

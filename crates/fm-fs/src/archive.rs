@@ -64,6 +64,12 @@ pub fn is_archive_file(path: &Path) -> bool {
     detect_archive_kind(path).is_some() && path.is_file()
 }
 
+/// Retorna `true` apenas quando `path` aponta para um item virtual **dentro** de um arquivo
+/// compactado (`inner_path` não vazio), e `false` para o próprio arquivo `.zip`/`.7z`/`.rar` em disco.
+pub fn is_inside_archive_path(path: &Path) -> bool {
+    split_archive_path(path).is_some_and(|(_, inner, _)| !inner.is_empty())
+}
+
 /// Divide um caminho possivelmente virtual em `(caminho_arquivo_compactado, prefixo_interno_posix, tipo)`.
 pub fn split_archive_path(path: &Path) -> Option<(PathBuf, String, ArchiveKind)> {
     for ancestor in path.ancestors() {

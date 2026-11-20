@@ -144,7 +144,7 @@ impl PropertiesWindowState {
     }
 
     pub fn is_archive(&self) -> bool {
-        fm_fs::archive::split_archive_path(&self.entry.path).is_some()
+        fm_fs::archive::is_inside_archive_path(&self.entry.path)
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -1320,7 +1320,7 @@ impl App {
                         self.active_sidebar = None;
                         return self.navigate_active_tab(entry.path);
                     }
-                    if fm_fs::archive::split_archive_path(&entry.path).is_some() {
+                    if fm_fs::archive::is_inside_archive_path(&entry.path) {
                         return self.update(Message::ToggleQuickLook);
                     }
                     let path = entry.path;
@@ -2464,7 +2464,7 @@ impl App {
                     let is_dir = entry.kind.is_dir_like();
                     let posix_mode = if !is_dir
                         && !fm_core::is_virtual_trash_path(&entry.path)
-                        && fm_fs::archive::split_archive_path(&entry.path).is_none()
+                        && !fm_fs::archive::is_inside_archive_path(&entry.path)
                     {
                         match entry.permissions {
                             PermissionsMeta::PosixMode(mode) => Some(mode),
@@ -3857,7 +3857,7 @@ impl App {
                 .flatten()
                 .cloned()
         });
-        let is_archive = fm_fs::archive::split_archive_path(&entry.path).is_some();
+        let is_archive = fm_fs::archive::is_inside_archive_path(&entry.path);
         let needs_file_telemetry = !entry.kind.is_dir_like()
             && !is_archive
             && existing_telemetry
@@ -4664,7 +4664,7 @@ impl App {
         let Some(entry) = entry else {
             return Task::none();
         };
-        if entry.kind.is_dir_like() || fm_fs::archive::split_archive_path(&entry.path).is_some() {
+        if entry.kind.is_dir_like() || fm_fs::archive::is_inside_archive_path(&entry.path) {
             return Task::none();
         }
         self.selection_telemetry_request_id += 1;
@@ -4779,7 +4779,7 @@ impl App {
         let cancel = CancellationToken::new();
         self.preview_cancel = Some(cancel.clone());
         let path = entry.path.clone();
-        let is_in_archive = fm_fs::archive::split_archive_path(&path).is_some();
+        let is_in_archive = fm_fs::archive::is_inside_archive_path(&path);
 
         if fm_preview::is_image_extension(entry.extension.as_deref()) {
             let max_px = if self.quicklook_open { 560 } else { 160 };

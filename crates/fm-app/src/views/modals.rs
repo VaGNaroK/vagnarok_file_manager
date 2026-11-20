@@ -2784,7 +2784,7 @@ pub fn context_menu_overlay<'a>(
                 ));
                 if show_open_as_root
                     && !fm_core::is_virtual_trash_path(path)
-                    && fm_fs::archive::split_archive_path(path).is_none()
+                    && !fm_fs::archive::is_inside_archive_path(path)
                 {
                     items = items.push(ctx_item(
                         icon_shield_alert()
@@ -2799,7 +2799,7 @@ pub fn context_menu_overlay<'a>(
                 }
             } else {
                 if !fm_core::is_virtual_trash_path(path)
-                    && fm_fs::archive::split_archive_path(path).is_none()
+                    && !fm_fs::archive::is_inside_archive_path(path)
                 {
                     items = items.push(ctx_item(
                         icon_sliders_horizontal()
@@ -2887,7 +2887,7 @@ pub fn context_menu_overlay<'a>(
                     Message::OpenRenameDialog,
                     palette,
                 ));
-                if fm_fs::archive::split_archive_path(path).is_none() {
+                if !fm_fs::archive::is_inside_archive_path(path) {
                     items = items.push(ctx_item(
                         icon_pencil().size(14).color(palette.accent_primary).into(),
                         strings.br_menu_item,

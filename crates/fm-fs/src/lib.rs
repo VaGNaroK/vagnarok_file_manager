@@ -259,7 +259,7 @@ impl VfsProvider for LocalFs {
     }
 
     async fn create_dir(&self, path: &Path) -> Result<(), FsError> {
-        if archive::split_archive_path(path).is_some() {
+        if archive::is_inside_archive_path(path) {
             return Err(FsError::Io {
                 path: path.to_path_buf(),
                 message: "arquivos compactados são somente leitura".to_owned(),
@@ -277,7 +277,7 @@ impl VfsProvider for LocalFs {
     }
 
     async fn create_file(&self, path: &Path) -> Result<(), FsError> {
-        if archive::split_archive_path(path).is_some() {
+        if archive::is_inside_archive_path(path) {
             return Err(FsError::Io {
                 path: path.to_path_buf(),
                 message: "arquivos compactados são somente leitura".to_owned(),
@@ -300,8 +300,7 @@ impl VfsProvider for LocalFs {
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<(), FsError> {
-        if archive::split_archive_path(from).is_some() || archive::split_archive_path(to).is_some()
-        {
+        if archive::is_inside_archive_path(from) || archive::is_inside_archive_path(to) {
             return Err(FsError::Io {
                 path: from.to_path_buf(),
                 message: "arquivos compactados são somente leitura".to_owned(),
@@ -320,10 +319,7 @@ impl VfsProvider for LocalFs {
     }
 
     async fn move_to_trash(&self, paths: &[PathBuf]) -> Result<(), FsError> {
-        if let Some(arch) = paths
-            .iter()
-            .find(|p| archive::split_archive_path(p).is_some())
-        {
+        if let Some(arch) = paths.iter().find(|p| archive::is_inside_archive_path(p)) {
             return Err(FsError::Io {
                 path: arch.clone(),
                 message: "arquivos compactados são somente leitura".to_owned(),
@@ -364,10 +360,7 @@ impl VfsProvider for LocalFs {
     }
 
     async fn delete_permanent(&self, paths: &[PathBuf]) -> Result<(), FsError> {
-        if let Some(arch) = paths
-            .iter()
-            .find(|p| archive::split_archive_path(p).is_some())
-        {
+        if let Some(arch) = paths.iter().find(|p| archive::is_inside_archive_path(p)) {
             return Err(FsError::Io {
                 path: arch.clone(),
                 message: "arquivos compactados são somente leitura".to_owned(),
@@ -453,7 +446,9 @@ impl VfsProvider for LocalFs {
             if cancel.is_cancelled() {
                 return Err(FsError::Cancelled);
             }
-            if let Some((archive_path, inner_path, kind)) = archive::split_archive_path(&target) {
+            if let Some((archive_path, inner_path, kind)) = archive::split_archive_path(&target)
+                && !inner_path.is_empty()
+            {
                 return archive::read_archive_bytes(
                     &archive_path,
                     &inner_path,
@@ -926,5 +921,50 @@ mod tests {
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         let _ = places;
+    }
+
+    #[test]
+    fn allows_renaming_and_deleting_archive_files_while_protecting_inner_entries() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "vagnarok_arch_ops_perm_{}_{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create temp dir");
+        let zip_path = root.join("sample.7z");
+        std::fs::write(&zip_path, b"not-empty").expect("write archive file");
+        let inner_virtual = zip_path.join("folder/inside.txt");
+
+        assert!(!archive::is_inside_archive_path(&zip_path));
+        assert!(archive::is_inside_archive_path(&inner_virtual));
+
+        let rt = tokio::runtime::Runtime::new().expect("rt");
+        let fs = LocalFs::new();
+        rt.block_on(async {
+            // Entradas virtuais dentro do arquivo compactado continuam somente leitura.
+            assert!(
+                fs.move_to_trash(std::slice::from_ref(&inner_virtual))
+                    .await
+                    .is_err()
+            );
+            assert!(fs.delete_permanent(&[inner_virtual]).await.is_err());
+
+            // O próprio arquivo compactado em disco pode ser renomeado e excluído normalmente.
+            let renamed = root.join("renamed.7z");
+            fs.rename(&zip_path, &renamed)
+                .await
+                .expect("rename archive file");
+            assert!(renamed.exists());
+
+            fs.delete_permanent(std::slice::from_ref(&renamed))
+                .await
+                .expect("delete archive file");
+            assert!(!renamed.exists());
+        });
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
