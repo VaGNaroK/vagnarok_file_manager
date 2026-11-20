@@ -457,6 +457,11 @@ pub enum Message {
     CopySelected,
     CutSelected,
     PasteClipboard,
+    SystemClipboardPasteRead(Option<String>),
+    SystemClipboardPathsResolved {
+        mode: CopyMode,
+        paths: Vec<PathBuf>,
+    },
     CancelTransfer,
     TransferProgress(JobProgress),
     FileOpFinished {
@@ -2388,6 +2393,33 @@ impl App {
             Message::PasteClipboard => {
                 self.context_menu = None;
                 self.start_clipboard_paste()
+            }
+            Message::SystemClipboardPasteRead(raw) => {
+                let Some(text) = raw else {
+                    return Task::none();
+                };
+                let Some((mode, candidates)) = parse_clipboard_transfer_text(&text) else {
+                    return Task::none();
+                };
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            candidates
+                                .into_iter()
+                                .filter(|p| p.exists())
+                                .collect::<Vec<_>>()
+                        })
+                        .await
+                        .unwrap_or_default()
+                    },
+                    move |paths| Message::SystemClipboardPathsResolved { mode, paths },
+                )
+            }
+            Message::SystemClipboardPathsResolved { mode, paths } => {
+                if paths.is_empty() {
+                    return Task::none();
+                }
+                self.start_transfer_with_conflict_check(mode, paths)
             }
             Message::CancelTransfer => {
                 if let Some(cancel) = self.transfer_cancel.take() {
@@ -4968,7 +5000,7 @@ impl App {
 
     fn start_clipboard_paste(&mut self) -> Task<Message> {
         let Some(transfer) = self.clipboard.clone() else {
-            return Task::none();
+            return clipboard::read().map(Message::SystemClipboardPasteRead);
         };
         if transfer.mode == CopyMode::Move {
             // Limpeza definitiva ocorre quando transferência for despachada sem diálogo de conflito.
@@ -6475,6 +6507,53 @@ fn resolve_cli_initial_dir(arg: &std::ffi::OsStr) -> Option<PathBuf> {
     }
 }
 
+fn parse_clipboard_transfer_text(raw: &str) -> Option<(CopyMode, Vec<PathBuf>)> {
+    let mut lines = raw
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .peekable();
+
+    let mode = match lines.peek().copied() {
+        Some("copy") => {
+            lines.next();
+            CopyMode::Copy
+        }
+        Some("cut") => {
+            lines.next();
+            CopyMode::Move
+        }
+        _ => CopyMode::Copy,
+    };
+
+    let mut paths = Vec::new();
+    for line in lines {
+        let candidate = if let Some(rest) = line
+            .strip_prefix("file://localhost/")
+            .map(|r| format!("/{r}"))
+            .or_else(|| line.strip_prefix("file://").map(str::to_owned))
+        {
+            let decoded = percent_decode_uri_path(&rest);
+            #[cfg(target_os = "windows")]
+            let normalized = decoded.strip_prefix('/').unwrap_or(&decoded).to_owned();
+            #[cfg(not(target_os = "windows"))]
+            let normalized = decoded;
+            PathBuf::from(normalized)
+        } else {
+            let p = PathBuf::from(line);
+            if !p.is_absolute() {
+                continue;
+            }
+            p
+        };
+        if !candidate.as_os_str().is_empty() {
+            paths.push(candidate);
+        }
+    }
+
+    (!paths.is_empty()).then_some((mode, paths))
+}
+
 fn percent_decode_uri_path(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -6778,5 +6857,28 @@ mod tests {
         assert!(tab.filter_query.is_empty());
         assert_eq!(tab.visible_entries.len(), 3);
         assert!(!super::clear_tab_filters(&mut tab));
+    }
+
+    #[test]
+    fn parses_system_clipboard_uris_gnome_format_and_absolute_paths() {
+        let gnome_copy = "copy\nfile:///home/user/FilmCraft%20Previews\nfile:///home/user/doc.txt";
+        let (mode, paths) =
+            super::parse_clipboard_transfer_text(gnome_copy).expect("gnome copy parses");
+        assert_eq!(mode, fm_core::CopyMode::Copy);
+        assert_eq!(
+            paths,
+            vec![
+                std::path::PathBuf::from("/home/user/FilmCraft Previews"),
+                std::path::PathBuf::from("/home/user/doc.txt"),
+            ]
+        );
+
+        let gnome_cut = "cut\nfile:///tmp/pasta";
+        let (mode_cut, paths_cut) =
+            super::parse_clipboard_transfer_text(gnome_cut).expect("gnome cut parses");
+        assert_eq!(mode_cut, fm_core::CopyMode::Move);
+        assert_eq!(paths_cut, vec![std::path::PathBuf::from("/tmp/pasta")]);
+
+        assert!(super::parse_clipboard_transfer_text("apenas texto solto").is_none());
     }
 }

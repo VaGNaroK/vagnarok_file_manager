@@ -268,6 +268,7 @@ fn action_bar<'a>(
     );
 
     let is_in_trash = app.is_current_tab_trash();
+    let is_inside_archive = fm_fs::archive::split_archive_path(&tab.current_path).is_some();
     let sel_count = tab.selection.count();
     let mut ops_row = row![].spacing(4).align_y(Center);
     if is_in_trash {
@@ -324,13 +325,60 @@ fn action_bar<'a>(
                 tooltip::Position::Bottom,
                 palette,
             ));
-        if sel_count >= 1 {
-            let rename_tip = if sel_count > 1 {
-                strings.br_title
-            } else {
-                strings.rename
+    }
+
+    if !is_in_trash && !is_inside_archive {
+        let paste_btn: Element<'a, Message> = if let Some(clip) = &app.clipboard {
+            let tip = format!("{} ({})", strings.paste, clip.paths.len());
+            let paste_color = match clip.mode {
+                CopyMode::Copy => palette.accent_primary,
+                CopyMode::Move => palette.status_warning,
             };
-            ops_row = ops_row.push(with_tooltip(
+            with_tooltip(
+                button(
+                    row![
+                        icon_clipboard_paste().size(14).color(paste_color),
+                        text(clip.paths.len().to_string())
+                            .size(11)
+                            .font(FONT_MONO_BOLD)
+                            .color(paste_color),
+                    ]
+                    .spacing(4)
+                    .align_y(Center),
+                )
+                .padding([6, 8])
+                .style(styles::pill_secondary_button(palette))
+                .on_press(Message::PasteClipboard),
+                tip,
+                tooltip::Position::Bottom,
+                palette,
+            )
+        } else {
+            with_tooltip(
+                button(
+                    icon_clipboard_paste()
+                        .size(14)
+                        .color(palette.text_secondary),
+                )
+                .padding([6, 8])
+                .style(styles::pill_secondary_button(palette))
+                .on_press(Message::PasteClipboard),
+                strings.paste,
+                tooltip::Position::Bottom,
+                palette,
+            )
+        };
+        ops_row = ops_row.push(paste_btn);
+    }
+
+    if sel_count > 0 {
+        let rename_tip = if sel_count > 1 {
+            strings.br_title
+        } else {
+            strings.rename
+        };
+        ops_row = ops_row
+            .push(with_tooltip(
                 button(icon_pencil().size(14).color(palette.text_primary))
                     .padding([6, 8])
                     .style(styles::pill_secondary_button(palette))
@@ -338,42 +386,20 @@ fn action_bar<'a>(
                 rename_tip,
                 tooltip::Position::Bottom,
                 palette,
+            ))
+            .push(with_tooltip(
+                button(icon_trash_2().size(14).color(palette.status_error))
+                    .padding([6, 8])
+                    .style(styles::pill_secondary_button(palette))
+                    .on_press(Message::RequestDelete(is_in_trash)),
+                if is_in_trash {
+                    strings.delete_permanent
+                } else {
+                    strings.move_to_trash
+                },
+                tooltip::Position::Bottom,
+                palette,
             ));
-        }
-        ops_row = ops_row.push(with_tooltip(
-            button(icon_trash_2().size(14).color(palette.status_error))
-                .padding([6, 8])
-                .style(styles::pill_secondary_button(palette))
-                .on_press(Message::RequestDelete(is_in_trash)),
-            if is_in_trash {
-                strings.delete_permanent
-            } else {
-                strings.move_to_trash
-            },
-            tooltip::Position::Bottom,
-            palette,
-        ));
-    }
-
-    if let Some(clip) = &app.clipboard {
-        let label = format!("{} ({})", strings.paste, clip.paths.len());
-        let paste_color = match clip.mode {
-            CopyMode::Copy => palette.accent_primary,
-            CopyMode::Move => palette.status_warning,
-        };
-        ops_row = ops_row.push(
-            button(
-                row![
-                    icon_clipboard_paste().size(13).color(paste_color),
-                    text(label).size(12).color(paste_color),
-                ]
-                .spacing(5)
-                .align_y(Center),
-            )
-            .padding([6, 10])
-            .style(styles::pill_secondary_button(palette))
-            .on_press(Message::PasteClipboard),
-        );
     }
 
     let is_fav = app.config.favorites.contains(&tab.current_path);
