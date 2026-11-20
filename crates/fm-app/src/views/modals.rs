@@ -2908,27 +2908,31 @@ pub fn context_menu_overlay<'a>(
                 close_sub_on_hover,
             ));
             offset_y += ROW_STEP;
-            if !is_in_trash {
-                items = items.push(ctx_entry_item(
-                    icon_pencil().size(14).color(palette.text_secondary).into(),
-                    strings.rename,
-                    palette.text_primary,
-                    Message::OpenRenameDialog,
-                    palette,
-                    close_sub_on_hover,
-                ));
-                offset_y += ROW_STEP;
-                if !fm_fs::archive::is_inside_archive_path(path) {
-                    items = items.push(ctx_entry_item(
-                        icon_pencil().size(14).color(palette.accent_primary).into(),
-                        strings.br_menu_item,
-                        palette.text_primary,
-                        Message::OpenBulkRenameDialog,
-                        palette,
-                        close_sub_on_hover,
-                    ));
-                    offset_y += ROW_STEP;
+            let sel_count = app.current_tab().map(|t| t.selection.count()).unwrap_or(0);
+            if !is_in_trash && !fm_fs::archive::is_inside_archive_path(path) {
+                match rename_menu_action(sel_count) {
+                    RenameMenuAction::Bulk => {
+                        items = items.push(ctx_entry_item(
+                            icon_pencil().size(14).color(palette.accent_primary).into(),
+                            strings.br_menu_item,
+                            palette.text_primary,
+                            Message::OpenBulkRenameDialog,
+                            palette,
+                            close_sub_on_hover,
+                        ));
+                    }
+                    RenameMenuAction::Single => {
+                        items = items.push(ctx_entry_item(
+                            icon_pencil().size(14).color(palette.text_secondary).into(),
+                            strings.rename,
+                            palette.text_primary,
+                            Message::OpenRenameDialog,
+                            palette,
+                            close_sub_on_hover,
+                        ));
+                    }
                 }
+                offset_y += ROW_STEP;
             }
             let can_send_to_shortcut = !is_in_trash
                 && !fm_core::is_virtual_trash_path(path)
@@ -2955,7 +2959,6 @@ pub fn context_menu_overlay<'a>(
                     !fm_core::is_virtual_trash_path(&t.current_path)
                         && fm_fs::archive::split_archive_path(&t.current_path).is_none()
                 });
-            let sel_count = app.current_tab().map(|t| t.selection.count()).unwrap_or(0);
             if tab_is_writable_local {
                 items = items.push(ctx_divider(palette));
                 if sel_count <= 1 && !*is_dir && fm_fs::archive::detect_archive_kind(path).is_some()
@@ -3467,7 +3470,7 @@ pub fn context_menu_overlay<'a>(
             if app.is_current_tab_trash() {
                 192.0
             } else if *is_dir {
-                446.0 + root_extra
+                416.0 + root_extra
             } else {
                 let archive_extra = if fm_fs::archive::detect_archive_kind(path).is_some() {
                     60.0
@@ -3475,7 +3478,7 @@ pub fn context_menu_overlay<'a>(
                     0.0
                 };
                 let perm_extra = if posix_mode.is_some() { 59.0 } else { 0.0 };
-                446.0 + archive_extra + perm_extra
+                416.0 + archive_extra + perm_extra
             }
         }
         ContextMenuKind::SidebarPlace {
@@ -3616,6 +3619,20 @@ pub fn context_menu_overlay<'a>(
         stack![backdrop_catcher, main_layer, sub_layer].into()
     } else {
         stack![backdrop_catcher, main_layer].into()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenameMenuAction {
+    Single,
+    Bulk,
+}
+
+fn rename_menu_action(selected_count: usize) -> RenameMenuAction {
+    if selected_count > 1 {
+        RenameMenuAction::Bulk
+    } else {
+        RenameMenuAction::Single
     }
 }
 
@@ -3858,8 +3875,18 @@ fn ctx_divider<'a>(palette: ThemePalette) -> Element<'a, Message> {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_context_menu_origin, compute_submenu_origin};
+    use super::{
+        RenameMenuAction, compute_context_menu_origin, compute_submenu_origin, rename_menu_action,
+    };
     use iced::{Point, Size};
+
+    #[test]
+    fn rename_menu_action_switches_between_single_and_bulk() {
+        assert_eq!(rename_menu_action(0), RenameMenuAction::Single);
+        assert_eq!(rename_menu_action(1), RenameMenuAction::Single);
+        assert_eq!(rename_menu_action(2), RenameMenuAction::Bulk);
+        assert_eq!(rename_menu_action(15), RenameMenuAction::Bulk);
+    }
 
     #[test]
     fn context_menu_flips_above_and_left_near_viewport_edges() {
