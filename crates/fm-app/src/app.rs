@@ -2579,8 +2579,7 @@ impl App {
             }
             Message::OpenDeepSearch => {
                 self.deep_search_open = true;
-                if self.deep_search_query.is_empty()
-                    && let Some(q) = self.current_tab().map(|t| t.filter_query.clone())
+                if let Some(q) = self.current_tab().map(|t| t.filter_query.clone())
                     && !q.trim().is_empty()
                 {
                     self.deep_search_query = q;
@@ -5822,7 +5821,12 @@ impl App {
             self.deep_search_results.clear();
             return Task::none();
         }
-        let Some(root) = self.current_tab().map(|t| t.current_path.clone()) else {
+        let Some((root, include_hidden)) = self.current_tab().map(|t| {
+            (
+                t.current_path.clone(),
+                t.show_hidden || query.starts_with('.'),
+            )
+        }) else {
             return Task::none();
         };
 
@@ -5834,7 +5838,9 @@ impl App {
 
         Task::perform(
             async move {
-                let results = fm_index::deep_search(&root, &query, 100, cancel).await;
+                let results =
+                    fm_index::deep_search_with_hidden(&root, &query, 100, include_hidden, cancel)
+                        .await;
                 (req_id, results)
             },
             |(request_id, results)| Message::DeepSearchResults {

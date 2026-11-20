@@ -3,5 +3,5 @@
 pub mod search;
 pub mod watcher;
 
-pub use search::{SearchHit, deep_search, fuzzy_rank_entries};
+pub use search::{SearchHit, deep_search, deep_search_with_hidden, fuzzy_rank_entries};
 pub use watcher::{WatchEvent, WatchEventKind, start_directory_watcher};

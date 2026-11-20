@@ -346,7 +346,15 @@ pub fn deep_search_modal<'a>(
         .align_y(Center)
         .into()
     } else {
-        let mut list = column![].spacing(4).width(Length::Fill);
+        let mut list = column![]
+            .spacing(4)
+            .width(Length::Fill)
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 12.0,
+                bottom: 0.0,
+                left: 0.0,
+            });
         for hit in &app.deep_search_results {
             let icon = if hit.is_dir {
                 icon_folder().size(15).color(palette.accent_primary)
@@ -355,22 +363,28 @@ pub fn deep_search_modal<'a>(
             };
             let hit_row = row![
                 icon,
-                column![
-                    text(sanitize_single_line(hit.name.as_str()))
-                        .size(13)
-                        .font(FONT_UI_SEMIBOLD)
-                        .color(palette.text_primary),
-                    text(sanitize_single_line(hit.relative_path.as_str()))
-                        .size(11)
-                        .font(FONT_MONO)
-                        .color(palette.text_muted),
-                ]
-                .spacing(1),
-                space::horizontal(),
+                container(
+                    column![
+                        text(sanitize_single_line(hit.name.as_str()))
+                            .size(13)
+                            .font(FONT_UI_SEMIBOLD)
+                            .color(palette.text_primary)
+                            .wrapping(text::Wrapping::None),
+                        text(sanitize_single_line(hit.relative_path.as_str()))
+                            .size(11)
+                            .font(FONT_MONO)
+                            .color(palette.text_muted)
+                            .wrapping(text::Wrapping::None),
+                    ]
+                    .spacing(1),
+                )
+                .width(Length::Fill)
+                .clip(true),
                 text(format!("#{}", hit.score))
                     .size(10)
                     .font(FONT_MONO)
-                    .color(palette.accent_primary),
+                    .color(palette.accent_primary)
+                    .wrapping(text::Wrapping::None),
             ]
             .spacing(10)
             .align_y(Center);
@@ -386,13 +400,26 @@ pub fn deep_search_modal<'a>(
         scrollable(list).height(Length::Fixed(320.0)).into()
     };
 
+    let root_path_display = app
+        .current_tab()
+        .map(|t| sanitize_single_line(&t.current_path.to_string_lossy()))
+        .unwrap_or_default();
+
     let card = container(
         column![
             row![
-                text(strings.deep_search_title)
-                    .size(14)
-                    .font(FONT_UI_SEMIBOLD)
-                    .color(palette.text_primary),
+                column![
+                    text(strings.deep_search_title)
+                        .size(14)
+                        .font(FONT_UI_SEMIBOLD)
+                        .color(palette.text_primary),
+                    text(root_path_display)
+                        .size(11)
+                        .font(FONT_MONO)
+                        .color(palette.text_muted)
+                        .wrapping(text::Wrapping::None),
+                ]
+                .spacing(2),
                 space::horizontal(),
                 button(
                     row![icon_x().size(14), text(strings.close).size(12)]
