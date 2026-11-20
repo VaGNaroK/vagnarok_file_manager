@@ -2718,16 +2718,18 @@ pub fn context_menu_overlay<'a>(
     palette: ThemePalette,
     strings: Strings,
 ) -> Element<'a, Message> {
-    let menu_width = if matches!(
-        &menu.kind,
+    let menu_width = match &menu.kind {
         ContextMenuKind::Entry {
             posix_mode: Some(_),
             ..
+        } => 278.0_f32,
+        ContextMenuKind::Entry { path, .. }
+            if fm_fs::archive::detect_archive_kind(path).is_some() =>
+        {
+            284.0_f32
         }
-    ) {
-        268.0_f32
-    } else {
-        230.0_f32
+        ContextMenuKind::Entry { is_dir: true, .. } | ContextMenuKind::Background => 256.0_f32,
+        _ => 236.0_f32,
     };
     let has_clipboard = app.clipboard.is_some();
     let show_open_as_root = fm_fs::supports_open_as_root();
@@ -3387,34 +3389,44 @@ pub fn context_menu_overlay<'a>(
         }
     }
 
-    let root_extra = if show_open_as_root { 36.0 } else { 0.0 };
+    let root_extra = if show_open_as_root { 30.0 } else { 0.0 };
     let undo_extra = if app.last_bulk_rename_undo.is_some() {
-        36.0
+        30.0
     } else {
         0.0
     };
+    let clipboard_extra = if has_clipboard { 30.0 } else { 0.0 };
     let est_height = match &menu.kind {
         ContextMenuKind::NewMenu => 84.0,
         ContextMenuKind::Entry {
-            is_dir, posix_mode, ..
+            path,
+            is_dir,
+            posix_mode,
+            ..
         } => {
-            if *is_dir {
-                412.0 + root_extra
-            } else if posix_mode.is_some() {
-                464.0
+            if app.is_current_tab_trash() {
+                192.0
+            } else if *is_dir {
+                416.0 + root_extra
             } else {
-                408.0
+                let archive_extra = if fm_fs::archive::detect_archive_kind(path).is_some() {
+                    60.0
+                } else {
+                    0.0
+                };
+                let perm_extra = if posix_mode.is_some() { 59.0 } else { 0.0 };
+                416.0 + archive_extra + perm_extra
             }
         }
         ContextMenuKind::SidebarPlace {
             path, is_favorite, ..
         } => {
             if fm_core::is_virtual_trash_path(path) {
-                196.0
+                186.0
             } else if *is_favorite {
-                196.0 + root_extra
+                186.0 + root_extra
             } else {
-                156.0 + root_extra
+                150.0 + root_extra
             }
         }
         ContextMenuKind::Drive {
@@ -3423,27 +3435,37 @@ pub fn context_menu_overlay<'a>(
             ..
         } => {
             if !*is_mounted {
-                48.0
+                52.0
             } else if *can_unmount {
-                196.0 + root_extra
+                186.0 + root_extra
             } else {
-                156.0 + root_extra
+                150.0 + root_extra
             }
         }
-        ContextMenuKind::Background => 320.0 + root_extra + undo_extra,
-        ContextMenuKind::FilterMenu => 320.0,
-        ContextMenuKind::LanguageMenu => 256.0,
+        ContextMenuKind::Background => 296.0 + clipboard_extra + root_extra + undo_extra,
+        ContextMenuKind::FilterMenu => {
+            let ext_count = app
+                .current_tab()
+                .map(|t| t.available_extensions().len().min(16))
+                .unwrap_or(0);
+            ((ext_count + 2) as f32) * 30.0 + 44.0
+        }
+        ContextMenuKind::LanguageMenu => 246.0,
         ContextMenuKind::PreferencesMenu => 84.0,
     };
-    let max_x = (app.window_size.width - menu_width - 12.0).max(8.0);
-    let max_y = (app.window_size.height - est_height - 12.0).max(8.0);
-    let x = menu.position.x.clamp(8.0, max_x);
-    let y = menu.position.y.clamp(8.0, max_y);
 
-    let card_body: Element<'a, Message> = if matches!(
-        menu.kind,
-        ContextMenuKind::LanguageMenu | ContextMenuKind::FilterMenu | ContextMenuKind::Entry { .. }
-    ) {
+    let max_card_h = (app.window_size.height - 16.0).max(200.0);
+    let rendered_h = est_height.min(max_card_h);
+    let (x, y) = compute_context_menu_origin(
+        menu.position,
+        menu_width + 18.0,
+        rendered_h,
+        app.window_size,
+    );
+
+    // Só ativa barra de rolagem se o menu realmente exceder a altura útil da janela.
+    let needs_scroll = est_height > max_card_h;
+    let card_body: Element<'a, Message> = if needs_scroll {
         scrollable(items.width(Length::Fixed(menu_width)))
             .height(Length::Shrink)
             .into()
@@ -3451,7 +3473,6 @@ pub fn context_menu_overlay<'a>(
         items.width(Length::Fixed(menu_width)).into()
     };
 
-    let max_card_h = (app.window_size.height - 24.0).clamp(240.0, 460.0);
     let card = opaque(
         container(card_body)
             .max_height(max_card_h)
@@ -3476,6 +3497,40 @@ pub fn context_menu_overlay<'a>(
     backdrop.into()
 }
 
+/// Posiciona o menu de contexto no estilo Windows/nativo:
+/// - Abre para baixo do cursor quando couber;
+/// - Quando acionado próximo à borda inferior (ex.: pasta no rodapé), inverte e abre **acima** do cursor;
+/// - Mesmo comportamento horizontal (inverte para a esquerda próximo à borda direita);
+/// - Mantém margem mínima segura dentro da janela.
+fn compute_context_menu_origin(
+    cursor: iced::Point,
+    menu_w: f32,
+    menu_h: f32,
+    window_size: iced::Size,
+) -> (f32, f32) {
+    const MARGIN: f32 = 8.0;
+    let clamped_w = menu_w.min((window_size.width - MARGIN * 2.0).max(160.0));
+    let clamped_h = menu_h.min((window_size.height - MARGIN * 2.0).max(120.0));
+
+    let x = if cursor.x + clamped_w + MARGIN <= window_size.width {
+        cursor.x.max(MARGIN)
+    } else if cursor.x - clamped_w >= MARGIN {
+        cursor.x - clamped_w
+    } else {
+        (window_size.width - clamped_w - MARGIN).max(MARGIN)
+    };
+
+    let y = if cursor.y + clamped_h + MARGIN <= window_size.height {
+        cursor.y.max(MARGIN)
+    } else if cursor.y - clamped_h >= MARGIN {
+        cursor.y - clamped_h
+    } else {
+        (window_size.height - clamped_h - MARGIN).max(MARGIN)
+    };
+
+    (x, y)
+}
+
 fn ctx_item<'a>(
     icon: Element<'a, Message>,
     label: &'a str,
@@ -3484,12 +3539,19 @@ fn ctx_item<'a>(
     palette: ThemePalette,
 ) -> Element<'a, Message> {
     button(
-        row![icon, text(label).size(12).font(FONT_UI).color(label_color)]
-            .spacing(8)
-            .align_y(Center),
+        row![
+            icon,
+            text(label)
+                .size(12)
+                .font(FONT_UI)
+                .color(label_color)
+                .wrapping(text::Wrapping::None)
+        ]
+        .spacing(8)
+        .align_y(Center),
     )
     .width(Length::Fill)
-    .padding([6, 10])
+    .padding([5, 10])
     .style(styles::ghost_button(palette, 6.0))
     .on_press(msg)
     .into()
@@ -3503,12 +3565,19 @@ fn ctx_item_owned<'a>(
     palette: ThemePalette,
 ) -> Element<'a, Message> {
     button(
-        row![icon, text(label).size(12).font(FONT_UI).color(label_color)]
-            .spacing(8)
-            .align_y(Center),
+        row![
+            icon,
+            text(label)
+                .size(12)
+                .font(FONT_UI)
+                .color(label_color)
+                .wrapping(text::Wrapping::None)
+        ]
+        .spacing(8)
+        .align_y(Center),
     )
     .width(Length::Fill)
-    .padding([6, 10])
+    .padding([5, 10])
     .style(styles::ghost_button(palette, 6.0))
     .on_press(msg)
     .into()
@@ -3550,4 +3619,36 @@ fn ctx_divider<'a>(palette: ThemePalette) -> Element<'a, Message> {
     )
     .padding([3, 4])
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_context_menu_origin;
+    use iced::{Point, Size};
+
+    #[test]
+    fn context_menu_flips_above_and_left_near_viewport_edges() {
+        let win = Size::new(1280.0, 800.0);
+        // Área superior esquerda: abre para baixo e para a direita do cursor.
+        let (x, y) = compute_context_menu_origin(Point::new(120.0, 100.0), 280.0, 480.0, win);
+        assert_eq!((x, y), (120.0, 100.0));
+
+        // Item na parte inferior da tela: inverte e abre acima do cursor.
+        let (x_bot, y_bot) =
+            compute_context_menu_origin(Point::new(300.0, 720.0), 280.0, 480.0, win);
+        assert_eq!(x_bot, 300.0);
+        assert_eq!(y_bot, 720.0 - 480.0);
+
+        // Item próximo à borda direita: inverte para a esquerda do cursor.
+        let (x_right, y_right) =
+            compute_context_menu_origin(Point::new(1200.0, 140.0), 280.0, 480.0, win);
+        assert_eq!(x_right, 1200.0 - 280.0);
+        assert_eq!(y_right, 140.0);
+
+        // Janela curta onde não cabe nem acima nem abaixo do cursor: encaixa na margem superior/inferior.
+        let short_win = Size::new(1000.0, 560.0);
+        let (_, y_mid) =
+            compute_context_menu_origin(Point::new(200.0, 300.0), 280.0, 480.0, short_win);
+        assert_eq!(y_mid, 560.0 - 480.0 - 8.0);
+    }
 }
