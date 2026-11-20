@@ -414,15 +414,24 @@ pub fn properties_window_view<'a>(
 ) -> Element<'a, Message> {
     let entry = &props.entry;
     let is_dir = entry.kind.is_dir_like();
+    let is_multi = props.is_multi();
     let is_archive = props.is_archive();
     let dirty = props.is_dirty();
 
     // 1. Cabeçalho arrastável da janela flutuante
-    let header_title = format!(
-        "{}{}",
-        strings.properties_header_prefix,
-        sanitize_single_line(entry.name.as_str())
-    );
+    let header_title = if let Some(multi) = &props.multi {
+        format!(
+            "{}{}",
+            strings.properties_header_prefix,
+            strings.format_items_count(multi.paths.len())
+        )
+    } else {
+        format!(
+            "{}{}",
+            strings.properties_header_prefix,
+            sanitize_single_line(entry.name.as_str())
+        )
+    };
     let drag_header = mouse_area(
         row![
             container(icon_info().size(15).color(palette.accent_primary))
@@ -472,15 +481,20 @@ pub fn properties_window_view<'a>(
         )
     };
 
-    let mut tabs_row = row![
-        tab_item(PropertiesTab::General, strings.prop_tab_general),
-        tab_item(PropertiesTab::Security, strings.prop_tab_security),
-        tab_item(PropertiesTab::History, strings.prop_tab_history),
-        tab_item(PropertiesTab::Metadata, strings.prop_tab_metadata),
-        tab_item(PropertiesTab::Permissions, strings.prop_tab_permissions),
-    ]
-    .spacing(4)
-    .width(Length::Fill);
+    let mut tabs_row = row![tab_item(PropertiesTab::General, strings.prop_tab_general)]
+        .spacing(4)
+        .width(Length::Fill);
+
+    if !is_multi {
+        tabs_row = tabs_row
+            .push(tab_item(PropertiesTab::Security, strings.prop_tab_security))
+            .push(tab_item(PropertiesTab::History, strings.prop_tab_history))
+            .push(tab_item(PropertiesTab::Metadata, strings.prop_tab_metadata))
+            .push(tab_item(
+                PropertiesTab::Permissions,
+                strings.prop_tab_permissions,
+            ));
+    }
 
     if props.supports_open_with() {
         tabs_row = tabs_row.push(tab_item(
@@ -581,10 +595,16 @@ pub fn properties_window_view<'a>(
     .interaction(mouse::Interaction::ResizingDiagonallyDown)
     .on_press(Message::StartPropertiesResize);
 
+    let footer_buttons = if is_multi {
+        row![confirm_btn].spacing(8)
+    } else {
+        row![confirm_btn, cancel_btn, apply_btn].spacing(8)
+    };
+
     let footer = row![
         status_hint,
         space::horizontal(),
-        row![confirm_btn, cancel_btn, apply_btn].spacing(8),
+        footer_buttons,
         resize_grip,
     ]
     .spacing(6)
@@ -642,10 +662,28 @@ fn properties_general_tab<'a>(
     is_dir: bool,
 ) -> Element<'a, Message> {
     let entry = &props.entry;
+    let multi = props.multi.as_ref();
+    let is_multi = multi.is_some();
     let is_archive = props.is_archive();
-    let (hero_icon, _) = entry_icon(entry, palette, 28.0);
+    let hero_icon: Element<'a, Message> = if let Some(m) = multi {
+        if m.file_count == 0 {
+            icon_folder().size(28).color(palette.accent_primary).into()
+        } else if m.dir_count == 0 {
+            icon_file_text()
+                .size(28)
+                .color(palette.accent_primary)
+                .into()
+        } else {
+            icon_check_square()
+                .size(26)
+                .color(palette.accent_primary)
+                .into()
+        }
+    } else {
+        entry_icon(entry, palette, 28.0).0.into()
+    };
 
-    // Caixa Hero (ícone 52x52 + campo editável do nome)
+    // Caixa Hero (ícone 52x52 + nome / resumo de seleção)
     let icon_tile = container(hero_icon)
         .width(Length::Fixed(52.0))
         .height(Length::Fixed(52.0))
@@ -653,7 +691,14 @@ fn properties_general_tab<'a>(
         .align_y(Center)
         .style(move |_| styles::panel_surface(palette.accent_surface, palette.accent_border, 10.0));
 
-    let name_control: Element<'a, Message> = if is_archive {
+    let name_control: Element<'a, Message> = if let Some(m) = multi {
+        text(strings.format_items_count(m.paths.len()))
+            .size(16)
+            .font(FONT_UI_SEMIBOLD)
+            .color(palette.text_primary)
+            .wrapping(text::Wrapping::None)
+            .into()
+    } else if is_archive {
         text(sanitize_single_line(entry.name.as_str()))
             .size(16)
             .font(FONT_UI_SEMIBOLD)
@@ -701,7 +746,21 @@ fn properties_general_tab<'a>(
     .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 12.0));
 
     // Grade de metadados em 2 colunas
-    let kind_desc = strings.describe_entry_kind(entry);
+    let kind_desc = if let Some(m) = multi {
+        if m.dir_count > 0 && m.file_count > 0 {
+            format!(
+                "{}, {}",
+                strings.format_folders_count(m.dir_count),
+                strings.format_files_count(m.file_count)
+            )
+        } else if m.dir_count > 0 {
+            strings.format_folders_count(m.dir_count)
+        } else {
+            strings.format_files_count(m.file_count)
+        }
+    } else {
+        strings.describe_entry_kind(entry)
+    };
     let mime_desc = props
         .telemetry
         .as_ref()
@@ -717,22 +776,34 @@ fn properties_general_tab<'a>(
             }
         });
 
-    let parent_str =
-        sanitize_single_line(&entry.path.parent().unwrap_or(&entry.path).to_string_lossy());
+    let parent_path = multi
+        .map(|m| m.common_parent.as_path())
+        .unwrap_or_else(|| entry.path.parent().unwrap_or(&entry.path));
+    let parent_str = sanitize_single_line(&parent_path.to_string_lossy());
+    let copy_path_target = multi
+        .map(|m| m.common_parent.clone())
+        .unwrap_or_else(|| entry.path.clone());
 
-    let (size_short, size_exact, size_ratio): (String, String, f32) = if is_dir {
+    let uses_recursive_size = is_dir || is_multi;
+    let (size_short, size_exact, size_ratio): (String, String, f32) = if uses_recursive_size {
         if props.size_loading {
             (strings.prop_calculating.to_owned(), String::new(), 0.35)
         } else if let Some(sz) = props.recursive_size {
             let prefix = if sz.truncated { ">" } else { "" };
             let short = format!("{prefix}{}", format_bytes(sz.total_bytes));
             let exact = strings.format_exact_bytes(sz.total_bytes);
-            let ratio = props
-                .volume_space
-                .as_ref()
-                .filter(|vs| vs.total_bytes > 0)
-                .map(|vs| (sz.total_bytes as f64 / vs.total_bytes as f64).clamp(0.02, 1.0) as f32)
-                .unwrap_or_else(|| size_bar_ratio(sz.total_bytes));
+            let ratio = if sz.total_bytes == 0 {
+                0.0
+            } else {
+                props
+                    .volume_space
+                    .as_ref()
+                    .filter(|vs| vs.total_bytes > 0)
+                    .map(|vs| {
+                        (sz.total_bytes as f64 / vs.total_bytes as f64).clamp(0.02, 1.0) as f32
+                    })
+                    .unwrap_or_else(|| size_bar_ratio(sz.total_bytes))
+            };
             (short, exact, ratio)
         } else {
             ("—".to_owned(), String::new(), 0.0)
@@ -765,35 +836,6 @@ fn properties_general_tab<'a>(
     .align_y(Center)
     .width(Length::FillPortion(1));
 
-    let col_system = row![
-        icon_sliders_horizontal().size(16).color(palette.text_muted),
-        container(
-            column![
-                text(strings.prop_system_mime_label)
-                    .size(11)
-                    .font(FONT_UI)
-                    .color(palette.text_muted),
-                text(sanitize_single_line(&mime_desc))
-                    .size(13)
-                    .font(FONT_UI_SEMIBOLD)
-                    .color(palette.text_primary)
-                    .wrapping(text::Wrapping::None),
-            ]
-            .spacing(2),
-        )
-        .width(Length::Fill)
-        .clip(true),
-        button(icon_external_link().size(13))
-            .padding([6, 8])
-            .style(styles::pill_secondary_button(palette))
-            .on_press_maybe(
-                (!is_archive).then(|| Message::PropertiesOpenDefault(entry.path.clone()))
-            ),
-    ]
-    .spacing(10)
-    .align_y(Center)
-    .width(Length::FillPortion(1));
-
     let col_path = row![
         icon_folder().size(16).color(palette.text_muted),
         container(
@@ -815,7 +857,7 @@ fn properties_general_tab<'a>(
         button(icon_copy().size(13))
             .padding([6, 8])
             .style(styles::ghost_button(palette, 6.0))
-            .on_press(Message::CopyPath(entry.path.clone())),
+            .on_press(Message::CopyPath(copy_path_target)),
     ]
     .spacing(10)
     .align_y(Center)
@@ -891,15 +933,7 @@ fn properties_general_tab<'a>(
     .align_y(Center)
     .width(Length::FillPortion(1));
 
-    let mut meta_rows = vec![
-        row![col_kind, col_system]
-            .spacing(20)
-            .align_y(Center)
-            .into(),
-        row![col_path, col_size].spacing(20).align_y(Center).into(),
-    ];
-
-    if is_dir {
+    let make_contents_and_free = || {
         let contents_text = if props.size_loading {
             strings.prop_calculating.to_owned()
         } else if let Some(sz) = props.recursive_size {
@@ -913,7 +947,7 @@ fn properties_general_tab<'a>(
             } else {
                 format!("{prefix}{total_txt}")
             }
-        } else if let Some(cnt) = entry.child_count {
+        } else if !is_multi && let Some(cnt) = entry.child_count {
             strings.format_items_count(cnt as usize)
         } else {
             "—".to_owned()
@@ -976,17 +1010,75 @@ fn properties_general_tab<'a>(
         .align_y(Center)
         .width(Length::FillPortion(1));
 
-        meta_rows.push(
-            row![col_contents, col_free]
+        (col_contents, col_free)
+    };
+
+    let meta_rows: Vec<Element<'a, Message>> = if is_multi {
+        let (col_contents, col_free) = make_contents_and_free();
+        vec![
+            row![col_kind, col_size].spacing(20).align_y(Center).into(),
+            row![col_path, col_free].spacing(20).align_y(Center).into(),
+            row![col_contents, Space::new().width(Length::FillPortion(1))]
                 .spacing(20)
                 .align_y(Center)
                 .into(),
-        );
-    }
+        ]
+    } else {
+        let col_system = row![
+            icon_sliders_horizontal().size(16).color(palette.text_muted),
+            container(
+                column![
+                    text(strings.prop_system_mime_label)
+                        .size(11)
+                        .font(FONT_UI)
+                        .color(palette.text_muted),
+                    text(sanitize_single_line(&mime_desc))
+                        .size(13)
+                        .font(FONT_UI_SEMIBOLD)
+                        .color(palette.text_primary)
+                        .wrapping(text::Wrapping::None),
+                ]
+                .spacing(2),
+            )
+            .width(Length::Fill)
+            .clip(true),
+            button(icon_external_link().size(13))
+                .padding([6, 8])
+                .style(styles::pill_secondary_button(palette))
+                .on_press_maybe(
+                    (!is_archive).then(|| Message::PropertiesOpenDefault(entry.path.clone()))
+                ),
+        ]
+        .spacing(10)
+        .align_y(Center)
+        .width(Length::FillPortion(1));
+
+        let mut rows = vec![
+            row![col_kind, col_system]
+                .spacing(20)
+                .align_y(Center)
+                .into(),
+            row![col_path, col_size].spacing(20).align_y(Center).into(),
+        ];
+        if is_dir {
+            let (col_contents, col_free) = make_contents_and_free();
+            rows.push(
+                row![col_contents, col_free]
+                    .spacing(20)
+                    .align_y(Center)
+                    .into(),
+            );
+        }
+        rows
+    };
 
     let meta_grid = container(column(meta_rows).spacing(14))
         .width(Length::Fill)
         .padding([4, 6]);
+
+    if is_multi {
+        return column![hero_box, meta_grid].spacing(12).into();
+    }
 
     // Linha do tempo de timestamps (3 nós verticais)
     let created_val = entry

@@ -118,9 +118,19 @@ pub struct ExecPickerState {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultiPropertiesSummary {
+    pub paths: Vec<PathBuf>,
+    pub dir_count: usize,
+    pub file_count: usize,
+    pub common_parent: PathBuf,
+}
+
 #[derive(Debug, Clone)]
 pub struct PropertiesWindowState {
+    pub request_id: u64,
     pub entry: FileEntry,
+    pub multi: Option<MultiPropertiesSummary>,
     pub telemetry: Option<SelectedFileTelemetry>,
     pub recursive_size: Option<RecursiveSize>,
     pub volume_space: Option<VolumeSpace>,
@@ -144,8 +154,13 @@ pub struct PropertiesWindowState {
 }
 
 impl PropertiesWindowState {
+    pub fn is_multi(&self) -> bool {
+        self.multi.is_some()
+    }
+
     pub fn supports_open_with(&self) -> bool {
-        !self.entry.kind.is_dir_like()
+        !self.is_multi()
+            && !self.entry.kind.is_dir_like()
             && !self.is_archive()
             && !fm_core::is_virtual_trash_path(&self.entry.path)
     }
@@ -155,7 +170,7 @@ impl PropertiesWindowState {
     }
 
     pub fn is_dirty(&self) -> bool {
-        if self.is_archive() {
+        if self.is_multi() || self.is_archive() {
             return false;
         }
         let trimmed = self.draft_name.trim();
@@ -506,12 +521,12 @@ pub enum Message {
     },
     PropertiesFolderSizeReady {
         window_id: window::Id,
-        path: PathBuf,
+        request_id: u64,
         size: Option<RecursiveSize>,
     },
     PropertiesVolumeSpaceReady {
         window_id: window::Id,
-        path: PathBuf,
+        request_id: u64,
         space: Option<VolumeSpace>,
     },
     PropertiesExtraInfoReady {
@@ -731,6 +746,7 @@ pub struct App {
     pub canvas_viewport_width: Option<f32>,
     pub main_window_id: window::Id,
     pub properties_windows: HashMap<window::Id, PropertiesWindowState>,
+    pub next_properties_request_id: u64,
     pub status_notice: Option<String>,
     pub last_entry_click: Option<(TabId, PathBuf, Instant)>,
     pub last_watcher_reload: Option<(PathBuf, Instant)>,
@@ -873,6 +889,7 @@ impl App {
             canvas_viewport_width: None,
             main_window_id,
             properties_windows: HashMap::new(),
+            next_properties_request_id: 0,
             status_notice: None,
             last_entry_click: None,
             last_watcher_reload: None,
@@ -945,6 +962,13 @@ impl App {
 
     pub fn title(&self, window_id: window::Id) -> String {
         if let Some(props) = self.properties_windows.get(&window_id) {
+            if let Some(multi) = &props.multi {
+                return format!(
+                    "{}{}",
+                    self.strings().properties_header_prefix,
+                    self.strings().format_items_count(multi.paths.len())
+                );
+            }
             return format!(
                 "{}{}",
                 self.strings().properties_header_prefix,
@@ -2890,11 +2914,11 @@ impl App {
             },
             Message::PropertiesFolderSizeReady {
                 window_id,
-                path,
+                request_id,
                 size,
             } => {
                 if let Some(props) = self.properties_windows.get_mut(&window_id)
-                    && props.entry.path == path
+                    && props.request_id == request_id
                 {
                     props.recursive_size = size;
                     props.size_loading = false;
@@ -2903,11 +2927,11 @@ impl App {
             }
             Message::PropertiesVolumeSpaceReady {
                 window_id,
-                path,
+                request_id,
                 space,
             } => {
                 if let Some(props) = self.properties_windows.get_mut(&window_id)
-                    && props.entry.path == path
+                    && props.request_id == request_id
                 {
                     props.volume_space = space;
                 }
@@ -2959,6 +2983,10 @@ impl App {
             }
             Message::PropertiesSelectTab(window_id, tab) => {
                 if let Some(props) = self.properties_windows.get_mut(&window_id) {
+                    if props.is_multi() {
+                        props.active_tab = PropertiesTab::General;
+                        return Task::none();
+                    }
                     props.active_tab = tab;
                 }
                 if tab == PropertiesTab::OpenWith {
@@ -2968,6 +2996,7 @@ impl App {
             }
             Message::PropertiesNameChanged(window_id, val) => {
                 if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && !props.is_multi()
                     && !props.is_archive()
                     && !props.applying
                 {
@@ -2980,6 +3009,7 @@ impl App {
             }
             Message::PropertiesToggleReadonly(window_id) => {
                 if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && !props.is_multi()
                     && !props.is_archive()
                     && !props.applying
                 {
@@ -2996,6 +3026,7 @@ impl App {
             }
             Message::PropertiesToggleHidden(window_id) => {
                 if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && !props.is_multi()
                     && !props.is_archive()
                     && !props.applying
                 {
@@ -3019,6 +3050,7 @@ impl App {
             }
             Message::PropertiesTogglePosixBit(window_id, bit) => {
                 if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && !props.is_multi()
                     && !props.is_archive()
                     && !props.applying
                     && let Some(mode) = &mut props.posix_mode_draft
@@ -3030,6 +3062,7 @@ impl App {
             }
             Message::PropertiesToggleExecutable(window_id) => {
                 if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && !props.is_multi()
                     && !props.is_archive()
                     && !props.applying
                     && !props.entry.kind.is_dir_like()
@@ -3076,7 +3109,7 @@ impl App {
                         }
                     }
                     for props in self.properties_windows.values_mut() {
-                        if props.entry.path == path {
+                        if !props.is_multi() && props.entry.path == path {
                             if let PermissionsMeta::PosixMode(mode) = updated_entry.permissions {
                                 let perms = mode & 0o777;
                                 props.posix_mode_draft = Some(perms);
@@ -4226,10 +4259,25 @@ impl App {
 
     fn open_properties_request(&mut self, path: PathBuf, tab: PropertiesTab) -> Task<Message> {
         self.context_menu = None;
+        if tab == PropertiesTab::General {
+            let selected_entries: Vec<FileEntry> = self
+                .current_tab()
+                .map(|t| {
+                    t.visible_entries
+                        .iter()
+                        .filter(|e| t.selection.selected_ids.contains(&e.id))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+            if selected_entries.len() > 1 && selected_entries.iter().any(|e| e.path == path) {
+                return self.open_multi_properties_window(selected_entries);
+            }
+        }
         if let Some((&existing_id, _)) = self
             .properties_windows
             .iter()
-            .find(|(_, props)| props.entry.path == path)
+            .find(|(_, props)| !props.is_multi() && props.entry.path == path)
         {
             let focus = if existing_id != self.main_window_id {
                 window::gain_focus(existing_id)
@@ -4254,6 +4302,129 @@ impl App {
         })
     }
 
+    fn next_properties_req_id(&mut self) -> u64 {
+        self.next_properties_request_id = self.next_properties_request_id.wrapping_add(1);
+        self.next_properties_request_id
+    }
+
+    /// Abre janela flutuante de Propriedades agregada para múltiplos itens selecionados,
+    /// somando recursivamente o tamanho total e a quantidade de itens em background.
+    fn open_multi_properties_window(&mut self, entries: Vec<FileEntry>) -> Task<Message> {
+        let Some(first) = entries.first().cloned() else {
+            return Task::none();
+        };
+        let dir_count = entries.iter().filter(|e| e.kind.is_dir_like()).count();
+        let file_count = entries.len().saturating_sub(dir_count);
+        let paths: Vec<PathBuf> = entries.iter().map(|e| e.path.clone()).collect();
+        let common_parent = common_parent_dir(&paths).unwrap_or_else(|| {
+            first
+                .path
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| first.path.clone())
+        });
+        let is_archive = paths
+            .iter()
+            .any(|p| fm_fs::archive::is_inside_archive_path(p));
+
+        let initial_volume_space = self.current_tab().and_then(|t| {
+            (t.current_path == common_parent)
+                .then_some(t.telemetry.volume_space.clone())
+                .flatten()
+        });
+
+        let win_id = self.main_window_id;
+        if let Some(mut prev) = self.properties_windows.remove(&win_id)
+            && let Some(prev_cancel) = prev.cancel.take()
+        {
+            prev_cancel.cancel();
+        }
+        let request_id = self.next_properties_req_id();
+        let win_cancel = CancellationToken::new();
+        let mut tasks: Vec<Task<Message>> = Vec::new();
+
+        if !is_archive && initial_volume_space.is_none() {
+            let vfs = Arc::clone(&self.vfs);
+            let vpath = common_parent.clone();
+            tasks.push(Task::perform(
+                async move { vfs.volume_space(&vpath).await.ok().flatten() },
+                move |space| Message::PropertiesVolumeSpaceReady {
+                    window_id: win_id,
+                    request_id,
+                    space,
+                },
+            ));
+        }
+
+        let (recursive_size, size_loading) = if is_archive {
+            let total_bytes: u64 = entries
+                .iter()
+                .filter(|e| !e.kind.is_dir_like())
+                .map(|e| e.size_bytes)
+                .fold(0u64, u64::saturating_add);
+            let hidden_count = entries.iter().filter(|e| e.is_hidden).count() as u64;
+            (
+                Some(RecursiveSize {
+                    total_bytes,
+                    item_count: entries.len() as u64,
+                    hidden_count,
+                    truncated: false,
+                }),
+                false,
+            )
+        } else {
+            let cancel = win_cancel.clone();
+            let calc_paths = paths.clone();
+            let meta_cache = self.metadata_cache.clone();
+            tasks.push(Task::perform(
+                async move {
+                    fm_telemetry::compute_paths_size_cached(calc_paths, meta_cache, cancel).await
+                },
+                move |size| Message::PropertiesFolderSizeReady {
+                    window_id: win_id,
+                    request_id,
+                    size,
+                },
+            ));
+            (None, true)
+        };
+
+        self.properties_windows.insert(
+            win_id,
+            PropertiesWindowState {
+                request_id,
+                entry: first,
+                multi: Some(MultiPropertiesSummary {
+                    paths,
+                    dir_count,
+                    file_count,
+                    common_parent,
+                }),
+                telemetry: None,
+                recursive_size,
+                volume_space: initial_volume_space,
+                size_loading,
+                extra: None,
+                active_tab: PropertiesTab::General,
+                draft_name: String::new(),
+                readonly_draft: false,
+                initial_readonly: false,
+                hidden_draft: false,
+                initial_hidden: false,
+                posix_mode_draft: None,
+                initial_posix_mode: None,
+                applying: false,
+                open_with_loading: false,
+                open_with_catalog: None,
+                open_with_selected_id: None,
+                open_with_custom_command: String::new(),
+                exec_picker: None,
+                cancel: Some(win_cancel),
+            },
+        );
+        Task::batch(tasks)
+    }
+
     /// Opens (or focuses) a floating centered Properties window for `entry`.
     fn open_properties_window(
         &mut self,
@@ -4263,7 +4434,7 @@ impl App {
         if let Some((&existing_id, _)) = self
             .properties_windows
             .iter()
-            .find(|(_, props)| props.entry.path == entry.path)
+            .find(|(_, props)| !props.is_multi() && props.entry.path == entry.path)
         {
             let focus = if existing_id != self.main_window_id {
                 window::gain_focus(existing_id)
@@ -4301,6 +4472,7 @@ impl App {
         {
             prev_cancel.cancel();
         }
+        let request_id = self.next_properties_req_id();
         let win_cancel = CancellationToken::new();
         let mut tasks: Vec<Task<Message>> = Vec::new();
 
@@ -4308,13 +4480,10 @@ impl App {
             let vfs = Arc::clone(&self.vfs);
             let vpath = entry.path.clone();
             tasks.push(Task::perform(
-                async move {
-                    let space = vfs.volume_space(&vpath).await.ok().flatten();
-                    (vpath, space)
-                },
-                move |(path, space)| Message::PropertiesVolumeSpaceReady {
+                async move { vfs.volume_space(&vpath).await.ok().flatten() },
+                move |space| Message::PropertiesVolumeSpaceReady {
                     window_id: win_id,
-                    path,
+                    request_id,
                     space,
                 },
             ));
@@ -4326,17 +4495,12 @@ impl App {
             let meta_cache = self.metadata_cache.clone();
             tasks.push(Task::perform(
                 async move {
-                    let size = fm_telemetry::compute_folder_size_cached(
-                        size_dir.clone(),
-                        meta_cache,
-                        cancel,
-                    )
-                    .await;
-                    (size_dir, size)
+                    fm_telemetry::compute_paths_size_cached(vec![size_dir], meta_cache, cancel)
+                        .await
                 },
-                move |(path, size)| Message::PropertiesFolderSizeReady {
+                move |size| Message::PropertiesFolderSizeReady {
                     window_id: win_id,
-                    path,
+                    request_id,
                     size,
                 },
             ));
@@ -4437,7 +4601,9 @@ impl App {
         self.properties_windows.insert(
             win_id,
             PropertiesWindowState {
+                request_id,
                 entry,
+                multi: None,
                 telemetry,
                 recursive_size: None,
                 volume_space: initial_volume_space,
@@ -6543,6 +6709,29 @@ fn percent_decode_uri_path(input: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Retorna o diretório ancestral comum mais profundo entre os pais de `paths`.
+fn common_parent_dir(paths: &[PathBuf]) -> Option<PathBuf> {
+    let mut parents = paths.iter().filter_map(|p| p.parent());
+    let first = parents.next()?;
+    let mut prefix: Vec<std::path::Component<'_>> = first.components().collect();
+    for parent in parents {
+        let mut matched = 0usize;
+        for (a, b) in prefix.iter().zip(parent.components()) {
+            if *a == b {
+                matched += 1;
+            } else {
+                break;
+            }
+        }
+        prefix.truncate(matched);
+        if prefix.is_empty() {
+            return None;
+        }
+    }
+    let out: PathBuf = prefix.into_iter().collect();
+    (!out.as_os_str().is_empty()).then_some(out)
+}
+
 /// Calcula a largura da barra lateral durante o arraste respeitando o limite mínimo, máximo e largura da janela.
 fn compute_dragged_sidebar_width(
     initial_w: f32,
@@ -6705,6 +6894,28 @@ mod tests {
             Some(&super::UndoAction::Trash {
                 paths: vec![std::path::PathBuf::from("/tmp/item_5")]
             })
+        );
+    }
+
+    #[test]
+    fn common_parent_dir_handles_same_dir_and_nested_selection() {
+        let same = vec![
+            std::path::PathBuf::from("/home/user/Dantes"),
+            std::path::PathBuf::from("/home/user/Videos"),
+            std::path::PathBuf::from("/home/user/bug.mp4"),
+        ];
+        assert_eq!(
+            super::common_parent_dir(&same),
+            Some(std::path::PathBuf::from("/home/user"))
+        );
+
+        let nested = vec![
+            std::path::PathBuf::from("/home/user/projects/a/file1.rs"),
+            std::path::PathBuf::from("/home/user/projects/b/sub/file2.rs"),
+        ];
+        assert_eq!(
+            super::common_parent_dir(&nested),
+            Some(std::path::PathBuf::from("/home/user/projects"))
         );
     }
 }
