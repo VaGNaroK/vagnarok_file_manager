@@ -35,7 +35,7 @@ use crate::views::virtualized::{
     ContentRect, DETAIL_LIST_SIDE_PADDING, DETAIL_ROW_HEIGHT, DETAIL_ROW_STEP, GRID_BAND_SPACING,
     GRID_GAP, GridBand, build_tab_grid_bands, clamp_grid_card_width,
     compute_band_window_with_row_height, compute_fixed_window, compute_grid_layout_metrics,
-    grid_card_height, grid_columns_for_width,
+    grid_card_height, grid_columns_for_width, grid_preview_box_size,
 };
 use crate::views::{render_entry_icon, sanitize_single_line, with_tooltip};
 
@@ -829,8 +829,9 @@ fn grid_view<'a>(
     let card_width = clamp_grid_card_width(app.config.grid_card_width);
     let card_height = grid_card_height(card_width);
     let box_width = (card_width - 14.0).max(88.0);
-    let preview_box = ((box_width - 22.0) * 0.50).round().clamp(40.0, 108.0);
-    let label_chars = ((box_width - 14.0) / 7.2).round().clamp(11.0, 32.0) as usize;
+    let preview_box = grid_preview_box_size(card_width);
+    let line_chars = ((box_width - 14.0) / 7.2).round().clamp(11.0, 32.0) as usize;
+    let label_chars = line_chars.saturating_mul(3).max(36);
 
     responsive(move |size| {
         let fit_cols = grid_columns_for_width(size.width, card_width);
@@ -1003,61 +1004,73 @@ fn grid_item_card<'a>(
     };
 
     let display_name = truncate_label(&sanitize_single_line(&entry.name), label_chars);
+    let name_text = text(display_name)
+        .size(12)
+        .line_height(1.25)
+        .font(FONT_UI_SEMIBOLD)
+        .color(if selected {
+            palette.accent_primary
+        } else {
+            palette.text_primary
+        })
+        .align_x(Center)
+        .wrapping(text::Wrapping::WordOrGlyph);
+
     let name_widget: Element<'a, Message> = if selected {
-        container(
-            text(display_name)
-                .size(12)
-                .font(FONT_UI_SEMIBOLD)
-                .color(palette.accent_primary)
-                .wrapping(text::Wrapping::None),
-        )
-        .padding([2, 8])
-        .height(22)
-        .align_y(Center)
-        .style(styles::badge_container(
-            palette.accent_surface,
-            palette.accent_primary,
-            palette.accent_border,
-            9999.0,
-        ))
-        .into()
+        container(name_text)
+            .padding([2, 6])
+            .max_height(50.0)
+            .clip(true)
+            .align_x(Center)
+            .style(styles::badge_container(
+                palette.accent_surface,
+                palette.accent_primary,
+                palette.accent_border,
+                6.0,
+            ))
+            .into()
     } else {
-        container(
-            text(display_name)
-                .size(12)
-                .font(FONT_UI_SEMIBOLD)
-                .color(palette.text_primary)
-                .wrapping(text::Wrapping::None),
-        )
-        .padding([2, 8])
-        .height(22)
-        .align_y(Center)
-        .into()
+        container(name_text)
+            .padding([2, 4])
+            .max_height(50.0)
+            .clip(true)
+            .align_x(Center)
+            .into()
     };
 
     let box_width = (card_width - 14.0).max(88.0);
 
-    let card_content = column![
-        container(preview_widget)
-            .width(preview_box)
-            .height(preview_box)
-            .align_x(Center)
-            .align_y(Center),
-        name_widget,
-        text(sub_label).size(11).font(FONT_MONO).color(if selected {
-            palette.accent_primary
-        } else {
-            palette.text_secondary
-        }),
-    ]
-    .spacing(3)
+    let card_content = container(
+        column![
+            container(preview_widget)
+                .width(preview_box)
+                .height(preview_box)
+                .align_x(Center)
+                .align_y(Center),
+            name_widget,
+            text(sub_label)
+                .size(11)
+                .font(FONT_MONO)
+                .color(if selected {
+                    palette.accent_primary
+                } else {
+                    palette.text_secondary
+                })
+                .wrapping(text::Wrapping::None),
+        ]
+        .spacing(4)
+        .align_x(Center)
+        .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
     .align_x(Center)
-    .width(Length::Fill);
+    .align_y(Alignment::Start);
 
     let card_btn = button(card_content)
         .width(Length::Fixed(box_width))
         .height(Length::Fixed(card_height))
-        .padding([5, 6])
+        .padding([7, 6])
         .style(styles::entry_card_button(palette, selected, 10.0))
         .on_press(Message::SelectEntry { index, modifiers });
 

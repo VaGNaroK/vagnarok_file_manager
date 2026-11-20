@@ -45,10 +45,15 @@ pub fn clamp_grid_card_width(width: f32) -> f32 {
     }
 }
 
+pub fn grid_preview_box_size(card_width: f32) -> f32 {
+    let box_width = (clamp_grid_card_width(card_width) - 14.0).max(88.0);
+    ((box_width - 22.0) * 0.50).round().clamp(40.0, 108.0)
+}
+
 pub fn grid_card_height(card_width: f32) -> f32 {
-    (clamp_grid_card_width(card_width) * 0.78)
+    (grid_preview_box_size(card_width) + 86.0)
         .round()
-        .clamp(96.0, 196.0)
+        .clamp(126.0, 214.0)
 }
 
 pub fn grid_columns_for_width(available_width: f32, card_width: f32) -> usize {
@@ -537,6 +542,19 @@ mod tests {
         assert_eq!(grid_columns_for_width(900.0, 140.0), 5);
         assert_eq!(grid_columns_for_width(1400.0, 140.0), 8);
         assert_eq!(grid_columns_for_width(900.0, 220.0), 3);
+
+        for width in [
+            GRID_CARD_WIDTH_MIN,
+            GRID_CARD_WIDTH_DEFAULT,
+            GRID_CARD_WIDTH_MAX,
+        ] {
+            let preview = grid_preview_box_size(width);
+            let height = grid_card_height(width);
+            assert!(
+                height - preview >= 86.0,
+                "card height {height} should fit wrapped label + subtitle below {preview}px preview"
+            );
+        }
     }
 
     #[test]
