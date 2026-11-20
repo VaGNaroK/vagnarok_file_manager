@@ -300,6 +300,39 @@ pub fn entry_card_button(
     }
 }
 
+/// Estilo limpo (estilo Nemo) para itens da Grade: sem caixa ao redor do ícone quando selecionado,
+/// delegando o destaque azul sólido apenas ao bloco de texto abaixo do ícone.
+pub fn nemo_grid_item_button(
+    p: ThemePalette,
+    selected: bool,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let background = if selected {
+            None
+        } else {
+            match status {
+                button::Status::Hovered | button::Status::Pressed => {
+                    Some(Background::Color(Color {
+                        a: 0.05,
+                        ..p.text_primary
+                    }))
+                }
+                _ => None,
+            }
+        };
+        button::Style {
+            background,
+            text_color: p.text_primary,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: Radius::from(8.0),
+            },
+            ..Default::default()
+        }
+    }
+}
+
 pub fn search_input_style(
     p: ThemePalette,
 ) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {

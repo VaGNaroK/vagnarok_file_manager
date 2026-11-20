@@ -622,7 +622,6 @@ pub enum Message {
     CopyPath(PathBuf),
     CopyText(String, String),
     StartColumnResize(usize),
-    StartGridResize,
     StartSidebarResize,
     StartPropertiesResize,
     SidebarDividerHovered(bool),
@@ -675,7 +674,6 @@ pub struct App {
     pub selection_telemetry_request_id: u64,
     pub table_col_weights: [f32; 5],
     pub resizing_col: Option<(usize, f32, [f32; 5])>,
-    pub resizing_grid: Option<(f32, f32)>,
     pub resizing_sidebar: Option<(f32, f32)>,
     pub sidebar_divider_hovered: bool,
     pub properties_modal_size: (f32, f32),
@@ -811,7 +809,6 @@ impl App {
             selection_telemetry_request_id: 0,
             table_col_weights: [48.0, 11.0, 9.0, 17.0, 15.0],
             resizing_col: None,
-            resizing_grid: None,
             resizing_sidebar: None,
             sidebar_divider_hovered: false,
             properties_modal_size: (760.0, 560.0),
@@ -3586,13 +3583,6 @@ impl App {
                 }
                 Task::none()
             }
-            Message::StartGridResize => {
-                self.resizing_grid = Some((
-                    self.cursor_position.x,
-                    views::virtualized::clamp_grid_card_width(self.config.grid_card_width),
-                ));
-                Task::none()
-            }
             Message::StartSidebarResize => {
                 let current_w = views::sidebar::effective_sidebar_width(self, self.strings());
                 let start_x = if self.cursor_position.x > 1.0 {
@@ -3636,11 +3626,7 @@ impl App {
                     modal.dragging_modal = None;
                     modal.resizing_modal = None;
                 }
-                let mut should_persist = self.resizing_grid.take().is_some();
                 if self.resizing_sidebar.take().is_some() {
-                    should_persist = true;
-                }
-                if should_persist {
                     return self.persist_config_task();
                 }
                 Task::none()
@@ -3712,10 +3698,6 @@ impl App {
                     let new_left = (initial_weights[idx] + delta_weight).clamp(min_w, max_w);
                     self.table_col_weights[idx] = new_left;
                     self.table_col_weights[idx + 1] = pair_sum - new_left;
-                }
-                if let Some((start_x, initial_w)) = self.resizing_grid {
-                    self.config.grid_card_width =
-                        views::virtualized::clamp_grid_card_width(initial_w + (pos.x - start_x));
                 }
                 if let Some((start_x, initial_w)) = self.resizing_sidebar {
                     self.config.sidebar_width = Some(compute_dragged_sidebar_width(

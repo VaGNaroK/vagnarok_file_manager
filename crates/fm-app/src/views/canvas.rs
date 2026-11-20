@@ -13,8 +13,8 @@ use iced::advanced::{Clipboard, Layout, Shell, Widget, overlay};
 use iced::keyboard;
 use iced::mouse;
 use iced::widget::{
-    Space, button, column, container, image, mouse_area, responsive, row, scrollable, space, stack,
-    text, tooltip,
+    Space, button, column, container, image, mouse_area, responsive, row, scrollable, space, text,
+    tooltip,
 };
 use iced::{
     Background, Border, Color, ContentFit, Element, Event, Length, Padding, Point, Rectangle, Size,
@@ -1035,31 +1035,50 @@ fn grid_item_card<'a>(
         .line_height(1.25)
         .font(FONT_UI_SEMIBOLD)
         .color(if selected {
-            palette.accent_primary
+            palette.on_accent
         } else {
             palette.text_primary
         })
         .align_x(Center)
         .wrapping(text::Wrapping::WordOrGlyph);
 
-    let name_widget: Element<'a, Message> = if selected {
+    let sub_text = text(sub_label)
+        .size(11)
+        .font(FONT_MONO)
+        .color(if selected {
+            Color {
+                a: 0.90,
+                ..palette.on_accent
+            }
+        } else {
+            palette.text_secondary
+        })
+        .wrapping(text::Wrapping::None);
+
+    let label_content = column![
         container(name_text)
-            .padding([2, 6])
-            .max_height(50.0)
+            .max_height(48.0)
             .clip(true)
+            .align_x(Center),
+        sub_text,
+    ]
+    .spacing(2)
+    .align_x(Center);
+
+    let label_block: Element<'a, Message> = if selected {
+        container(label_content)
+            .padding([4, 8])
             .align_x(Center)
             .style(styles::badge_container(
-                palette.accent_surface,
                 palette.accent_primary,
-                palette.accent_border,
+                palette.on_accent,
+                Color::TRANSPARENT,
                 6.0,
             ))
             .into()
     } else {
-        container(name_text)
-            .padding([2, 4])
-            .max_height(50.0)
-            .clip(true)
+        container(label_content)
+            .padding([4, 6])
             .align_x(Center)
             .into()
     };
@@ -1073,16 +1092,7 @@ fn grid_item_card<'a>(
                 .height(preview_box)
                 .align_x(Center)
                 .align_y(Center),
-            name_widget,
-            text(sub_label)
-                .size(11)
-                .font(FONT_MONO)
-                .color(if selected {
-                    palette.accent_primary
-                } else {
-                    palette.text_secondary
-                })
-                .wrapping(text::Wrapping::None),
+            label_block,
         ]
         .spacing(4)
         .align_x(Center)
@@ -1096,51 +1106,14 @@ fn grid_item_card<'a>(
     let card_btn = button(card_content)
         .width(Length::Fixed(box_width))
         .height(Length::Fixed(card_height))
-        .padding([7, 6])
-        .style(styles::entry_card_button(palette, selected, 10.0))
+        .padding([6, 4])
+        .style(styles::nemo_grid_item_button(palette, selected))
         .on_press(Message::SelectEntry { index, modifiers });
 
     let card_area = mouse_area(card_btn).on_right_press(Message::OpenEntryContextMenu(index));
 
-    let grip_visual = container(Space::new().width(3).height(16)).style(move |_| {
-        styles::panel_surface(
-            if selected {
-                palette.accent_border
-            } else {
-                palette.border
-            },
-            Color::TRANSPARENT,
-            9999.0,
-        )
-    });
-    let resize_grip = container(
-        mouse_area(
-            container(grip_visual)
-                .width(10)
-                .height(24)
-                .align_x(Center)
-                .align_y(Center),
-        )
-        .interaction(mouse::Interaction::ResizingHorizontally)
-        .on_press(Message::StartGridResize),
-    )
-    .width(Length::Fixed(box_width))
-    .height(Length::Fixed(card_height))
-    .padding(Padding {
-        top: 0.0,
-        right: 2.0,
-        bottom: 4.0,
-        left: 0.0,
-    })
-    .align_x(Alignment::End)
-    .align_y(Alignment::End);
-
-    let compact_card = stack![card_area, resize_grip]
-        .width(Length::Fixed(box_width))
-        .height(Length::Fixed(card_height));
-
     // Mantém espaçamento lateral livre na célula para permitir clique direito no fundo atrás dos cards.
-    container(compact_card)
+    container(card_area)
         .width(Length::Fixed(card_width))
         .height(Length::Fixed(card_height))
         .align_x(Center)
