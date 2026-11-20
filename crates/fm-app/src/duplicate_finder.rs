@@ -45,10 +45,7 @@ pub enum DuplicateFinderMsg {
     ApplyKeepStrategy(KeepStrategy),
     ToggleGroupExpanded(u64),
     ToggleItemSelected(PathBuf),
-    ListScrolled {
-        offset_y: f32,
-        viewport_height: f32,
-    },
+    ListScrolled { offset_y: f32, viewport_height: f32 },
     RequestMoveToTrash,
     RequestPermanentDelete,
     CancelPermanentDeleteConfirm,
@@ -135,11 +132,14 @@ impl DuplicateFinderState {
     pub fn rebuild_flat_rows(&mut self) {
         self.flat_rows.clear();
         for (group_idx, group) in self.groups.iter().enumerate() {
-            self.flat_rows.push(DuplicateListRow::GroupHeader(group_idx));
+            self.flat_rows
+                .push(DuplicateListRow::GroupHeader(group_idx));
             if !self.collapsed_groups.contains(&group.group_id) {
                 for item_idx in 0..group.items.len() {
-                    self.flat_rows
-                        .push(DuplicateListRow::FileItem { group_idx, item_idx });
+                    self.flat_rows.push(DuplicateListRow::FileItem {
+                        group_idx,
+                        item_idx,
+                    });
                 }
             }
         }
@@ -596,10 +596,9 @@ fn dispatch_revalidated_delete(app: &mut App, permanent: bool) -> Task<Message> 
     modal.confirm_perm_delete = false;
     let vfs = Arc::clone(&app.vfs);
 
-    Task::perform(
-        revalidate_and_delete(vfs, plan, permanent),
-        |outcome| Message::DuplicateFinder(DuplicateFinderMsg::DeleteFinished(outcome)),
-    )
+    Task::perform(revalidate_and_delete(vfs, plan, permanent), |outcome| {
+        Message::DuplicateFinder(DuplicateFinderMsg::DeleteFinished(outcome))
+    })
 }
 
 /// Revalida cada `PathBuf` em disco antes da exclusão (Seção 5.3 do plano):
@@ -757,10 +756,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let root = std::env::temp_dir().join(format!(
-            "vagnarok_dup_reval_{}_{nanos}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("vagnarok_dup_reval_{}_{nanos}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
 
         // Grupo 1: keeper desapareceu externamente -> exclusão da cópia marcada deve ser bloqueada!

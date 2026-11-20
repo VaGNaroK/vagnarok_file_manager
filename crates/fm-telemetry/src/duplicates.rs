@@ -1191,9 +1191,11 @@ mod tests {
         // Executa no nível Padrão para popular o cache em lote.
         let mut std_opts = DuplicateScanOptions::for_root(root.clone());
         std_opts.min_size_bytes = 1;
-        let DuplicateScanEvent::Completed { groups, .. } =
-            collect_scan_result(std_opts.clone(), Some(Arc::clone(&cache)), CancellationToken::new())
-        else {
+        let DuplicateScanEvent::Completed { groups, .. } = collect_scan_result(
+            std_opts.clone(),
+            Some(Arc::clone(&cache)),
+            CancellationToken::new(),
+        ) else {
             panic!("expected completed");
         };
         assert_eq!(groups.len(), 1);
@@ -1213,9 +1215,11 @@ mod tests {
         let mut strict_opts = DuplicateScanOptions::for_root(root.clone());
         strict_opts.min_size_bytes = 1;
         strict_opts.confirm_level = DuplicateConfirmLevel::StrictMd5AndSha256;
-        let DuplicateScanEvent::Completed { groups, .. } =
-            collect_scan_result(strict_opts, Some(Arc::clone(&cache)), CancellationToken::new())
-        else {
+        let DuplicateScanEvent::Completed { groups, .. } = collect_scan_result(
+            strict_opts,
+            Some(Arc::clone(&cache)),
+            CancellationToken::new(),
+        ) else {
             panic!("expected completed");
         };
         assert_eq!(groups.len(), 1);

@@ -4,9 +4,9 @@ use std::time::UNIX_EPOCH;
 
 use fm_core::{
     BulkRenameEvaluation, BulkRenameInput, BulkRenameMediaTags, BulkRenameRules, BulkRenameSort,
-    BulkRenameTargetPolicy, ExtensionMode, FileEntry, InsertPosition, MatchScope,
-    MediaComposeMode, MediaTagKind, NumberPosition, TextCaseMode, build_execution_plan,
-    evaluate_bulk_rename, is_virtual_trash_path,
+    BulkRenameTargetPolicy, ExtensionMode, FileEntry, InsertPosition, MatchScope, MediaComposeMode,
+    MediaTagKind, NumberPosition, TextCaseMode, build_execution_plan, evaluate_bulk_rename,
+    is_virtual_trash_path,
 };
 use fm_fs::BulkRenameBatchOutcome;
 use fm_telemetry::media_tags::{ExtractedMediaTagItem, extract_media_tags_stream};
@@ -141,11 +141,7 @@ impl BulkRenameModalState {
     ) -> Self {
         let mut inputs = Vec::with_capacity(selected_entries.len());
         for entry in selected_entries {
-            let parent_dir = entry
-                .path
-                .parent()
-                .map(PathBuf::from)
-                .unwrap_or_default();
+            let parent_dir = entry.path.parent().map(PathBuf::from).unwrap_or_default();
             let modified_secs = entry
                 .modified_at
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
@@ -629,14 +625,15 @@ pub fn handle_bulk_rename_msg(app: &mut App, msg: BulkRenameMsg) -> Task<Message
 
             if let Some((path, err)) = outcome.failed {
                 let rollback_note = if outcome.rolled_back_temps > 0 {
-                    format!(" ({} temporário(s) restaurado(s))", outcome.rolled_back_temps)
+                    format!(
+                        " ({} temporário(s) restaurado(s))",
+                        outcome.rolled_back_temps
+                    )
                 } else {
                     String::new()
                 };
-                app.status_notice = Some(format!(
-                    "{}: {err}{rollback_note}",
-                    path.to_string_lossy()
-                ));
+                app.status_notice =
+                    Some(format!("{}: {err}{rollback_note}", path.to_string_lossy()));
             } else {
                 app.status_notice = Some(app.strings().format_items_count(outcome.renamed_count));
             }

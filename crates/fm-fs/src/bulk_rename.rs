@@ -21,9 +21,7 @@ pub struct BulkRenameBatchOutcome {
 }
 
 /// Executa o plano de renomeação fora da thread de UI com proteção contra sobrescrita e rollback.
-pub async fn execute_bulk_rename_plan(
-    plan: BulkRenameExecutionPlan,
-) -> BulkRenameBatchOutcome {
+pub async fn execute_bulk_rename_plan(plan: BulkRenameExecutionPlan) -> BulkRenameBatchOutcome {
     tokio::task::spawn_blocking(move || execute_plan_blocking(&plan))
         .await
         .unwrap_or_else(|err| BulkRenameBatchOutcome {

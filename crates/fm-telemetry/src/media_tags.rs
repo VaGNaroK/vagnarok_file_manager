@@ -124,8 +124,19 @@ pub fn extract_media_tags_for_path(
 fn is_exif_candidate_ext(ext: &str) -> bool {
     matches!(
         ext,
-        "jpg" | "jpeg" | "tif" | "tiff" | "webp" | "png" | "heic" | "heif" | "avif" | "dng" | "cr2"
-            | "nef" | "arw"
+        "jpg"
+            | "jpeg"
+            | "tif"
+            | "tiff"
+            | "webp"
+            | "png"
+            | "heic"
+            | "heif"
+            | "avif"
+            | "dng"
+            | "cr2"
+            | "nef"
+            | "arw"
     )
 }
 
@@ -186,9 +197,7 @@ fn exif_ascii_field(exif_data: &exif::Exif, tag: Tag) -> Option<String> {
 /// Converte `"2026:08:14 15:30:22"` para `("2026-08-14", "2026-08-14_15-30-22")`.
 fn normalize_exif_datetime(raw: &str) -> Option<(String, String)> {
     let trimmed = raw.trim();
-    let (date_part, time_part) = trimmed
-        .split_once([' ', 'T'])
-        .unwrap_or((trimmed, ""));
+    let (date_part, time_part) = trimmed.split_once([' ', 'T']).unwrap_or((trimmed, ""));
     let date_norm: String = date_part
         .chars()
         .map(|c| if c == ':' { '-' } else { c })
@@ -227,7 +236,10 @@ fn fill_id3_tags(path: &Path, out: &mut BulkRenameMediaTags) {
     }
 }
 
-fn parse_id3v2_frames<R: Read + Seek>(reader: &mut R, out: &mut BulkRenameMediaTags) -> std::io::Result<()> {
+fn parse_id3v2_frames<R: Read + Seek>(
+    reader: &mut R,
+    out: &mut BulkRenameMediaTags,
+) -> std::io::Result<()> {
     let mut header = [0u8; 10];
     reader.read_exact(&mut header)?;
     if &header[0..3] != b"ID3" {
@@ -310,13 +322,16 @@ fn parse_id3v2_frames<R: Read + Seek>(reader: &mut R, out: &mut BulkRenameMediaT
                 if !cleaned.is_empty() {
                     match frame_id {
                         b"TIT2" => {
-                            out.id3_title.get_or_insert_with(|| CompactString::from(cleaned));
+                            out.id3_title
+                                .get_or_insert_with(|| CompactString::from(cleaned));
                         }
                         b"TPE1" => {
-                            out.id3_artist.get_or_insert_with(|| CompactString::from(cleaned));
+                            out.id3_artist
+                                .get_or_insert_with(|| CompactString::from(cleaned));
                         }
                         b"TALB" => {
-                            out.id3_album.get_or_insert_with(|| CompactString::from(cleaned));
+                            out.id3_album
+                                .get_or_insert_with(|| CompactString::from(cleaned));
                         }
                         b"TRCK" => {
                             if out.id3_track.is_none()
@@ -326,10 +341,14 @@ fn parse_id3v2_frames<R: Read + Seek>(reader: &mut R, out: &mut BulkRenameMediaT
                             }
                         }
                         b"TDRC" | b"TYER" => {
-                            let year_part: String =
-                                cleaned.chars().take_while(char::is_ascii_digit).take(4).collect();
+                            let year_part: String = cleaned
+                                .chars()
+                                .take_while(char::is_ascii_digit)
+                                .take(4)
+                                .collect();
                             if !year_part.is_empty() {
-                                out.id3_year.get_or_insert_with(|| CompactString::from(year_part));
+                                out.id3_year
+                                    .get_or_insert_with(|| CompactString::from(year_part));
                             }
                         }
                         _ => {}
@@ -350,7 +369,10 @@ fn parse_id3v2_frames<R: Read + Seek>(reader: &mut R, out: &mut BulkRenameMediaT
     Ok(())
 }
 
-fn parse_id3v1_tail<R: Read + Seek>(reader: &mut R, out: &mut BulkRenameMediaTags) -> std::io::Result<()> {
+fn parse_id3v1_tail<R: Read + Seek>(
+    reader: &mut R,
+    out: &mut BulkRenameMediaTags,
+) -> std::io::Result<()> {
     let file_len = reader.seek(SeekFrom::End(0))?;
     if file_len < 128 {
         return Ok(());
@@ -463,13 +485,7 @@ fn parse_track_number(raw: &str) -> Option<u32> {
 
 fn sanitize_tag_text(raw: &str) -> String {
     raw.chars()
-        .map(|c| {
-            if c.is_control() {
-                ' '
-            } else {
-                c
-            }
-        })
+        .map(|c| if c.is_control() { ' ' } else { c })
         .collect::<String>()
         .trim()
         .to_owned()
@@ -581,8 +597,7 @@ mod tests {
 
     #[test]
     fn normalizes_exif_datetime_safely() {
-        let (ymd, full) =
-            normalize_exif_datetime("2026:08:14 15:30:22").expect("valid exif date");
+        let (ymd, full) = normalize_exif_datetime("2026:08:14 15:30:22").expect("valid exif date");
         assert_eq!(ymd, "2026-08-14");
         assert_eq!(full, "2026-08-14_15-30-22");
     }

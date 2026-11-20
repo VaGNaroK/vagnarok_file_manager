@@ -464,17 +464,17 @@ pub fn evaluate_bulk_rename(
         let dst_path = input.parent_dir.join(&new_name);
         let new_name_lossy = new_name.to_string_lossy();
 
-        let status = if let Err(err) = validate_file_name(&new_name_lossy, policy.windows_name_rules)
-        {
-            invalid_count += 1;
-            BulkRenameRowStatus::InvalidName(err)
-        } else if new_name == input.original_name {
-            unchanged_count += 1;
-            BulkRenameRowStatus::Unchanged
-        } else {
-            ready_count += 1;
-            BulkRenameRowStatus::Ready
-        };
+        let status =
+            if let Err(err) = validate_file_name(&new_name_lossy, policy.windows_name_rules) {
+                invalid_count += 1;
+                BulkRenameRowStatus::InvalidName(err)
+            } else if new_name == input.original_name {
+                unchanged_count += 1;
+                BulkRenameRowStatus::Unchanged
+            } else {
+                ready_count += 1;
+                BulkRenameRowStatus::Ready
+            };
 
         rows.push(BulkRenamePreviewRow {
             input_index: input_idx,
@@ -1058,7 +1058,11 @@ fn apply_insert_text(stem: &str, text_to_insert: &str, position: InsertPosition)
                 .char_indices()
                 .nth(clamped)
                 .map_or(stem.len(), |(i, _)| i);
-            format!("{}{text_to_insert}{}", &stem[..split_byte], &stem[split_byte..])
+            format!(
+                "{}{text_to_insert}{}",
+                &stem[..split_byte],
+                &stem[split_byte..]
+            )
         }
         InsertPosition::FromEnd(offset) => {
             let char_count = stem.chars().count();
@@ -1067,7 +1071,11 @@ fn apply_insert_text(stem: &str, text_to_insert: &str, position: InsertPosition)
                 .char_indices()
                 .nth(clamped)
                 .map_or(stem.len(), |(i, _)| i);
-            format!("{}{text_to_insert}{}", &stem[..split_byte], &stem[split_byte..])
+            format!(
+                "{}{text_to_insert}{}",
+                &stem[..split_byte],
+                &stem[split_byte..]
+            )
         }
     }
 }
@@ -1325,8 +1333,14 @@ mod tests {
             &HashSet::new(),
             BulkRenameTargetPolicy::host_default(),
         );
-        assert_eq!(eval.rows[0].new_name, OsString::from("img ferias praia.jpg"));
-        assert_eq!(eval.rows[1].new_name, OsString::from("ferias_foto_antiga.jpg"));
+        assert_eq!(
+            eval.rows[0].new_name,
+            OsString::from("img ferias praia.jpg")
+        );
+        assert_eq!(
+            eval.rows[1].new_name,
+            OsString::from("ferias_foto_antiga.jpg")
+        );
 
         // Somente início da palavra (altera "foto", "fotografia" -> "foto..." sem afetar "autofoto")
         let word_inputs = vec![
@@ -1353,10 +1367,7 @@ mod tests {
         );
         // Sublinhado `_` é considerado alfanumérico ou pontuação? Em Rust `'_'` NÃO é alfanumérico,
         // portanto separa palavras amigavelmente em nomes de arquivo como `minha_foto.jpg`.
-        assert_eq!(
-            word_eval.rows[1].new_name,
-            OsString::from("minha_pic.jpg")
-        );
+        assert_eq!(word_eval.rows[1].new_name, OsString::from("minha_pic.jpg"));
     }
 
     #[test]
@@ -1467,7 +1478,10 @@ mod tests {
         // `a.txt` -> `B.txt` e `b.txt` -> `B.txt` colidem; testemos um ciclo real com substituição regex controlada:
         assert_eq!(eval.conflict_count, 2);
 
-        let swap_inputs = [make_input(1, "01.txt", false), make_input(2, "02.txt", false)];
+        let swap_inputs = [
+            make_input(1, "01.txt", false),
+            make_input(2, "02.txt", false),
+        ];
 
         let manual_eval = BulkRenameEvaluation {
             rows: vec![
@@ -1516,8 +1530,8 @@ mod tests {
             invalid_count: 0,
         };
 
-        let plan = build_execution_plan(&manual_eval, &HashSet::new(), 7, policy)
-            .expect("plano válido");
+        let plan =
+            build_execution_plan(&manual_eval, &HashSet::new(), 7, policy).expect("plano válido");
         assert!(plan.direct_steps.is_empty());
         assert_eq!(plan.phase1_temp_steps.len(), 3);
         assert_eq!(plan.phase2_final_steps.len(), 3);

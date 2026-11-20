@@ -391,10 +391,7 @@ fn running_progress_body<'a>(
     strings: Strings,
 ) -> Element<'a, Message> {
     let Some(runtime) = app.archive_jobs.get(&job_id) else {
-        return column![
-            text(strings.loading).size(12).color(palette.text_secondary),
-        ]
-        .into();
+        return column![text(strings.loading).size(12).color(palette.text_secondary),].into();
     };
     let job = &runtime.progress;
     let ratio = if job.bytes_total == 0 {
@@ -432,7 +429,10 @@ fn running_progress_body<'a>(
             format_bytes(job.bytes_total)
         )
     } else {
-        format!("{} ({} / {})", strings.loading, job.items_done, job.items_total)
+        format!(
+            "{} ({} / {})",
+            strings.loading, job.items_done, job.items_total
+        )
     };
 
     let current_display = sanitize_single_line(&job.current_item);

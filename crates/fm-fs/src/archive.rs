@@ -212,12 +212,10 @@ pub fn list_archive_dir(
         }
         ArchiveKind::SevenZ => {
             let file = open_shared_archive(archive_path)?;
-            let archive =
-                SevenZReader::new(BufReader::new(file), SevenZPassword::empty()).map_err(|e| {
-                    FsError::Io {
-                        path: archive_path.to_path_buf(),
-                        message: format!("arquivo 7z inválido ou protegido: {e}"),
-                    }
+            let archive = SevenZReader::new(BufReader::new(file), SevenZPassword::empty())
+                .map_err(|e| FsError::Io {
+                    path: archive_path.to_path_buf(),
+                    message: format!("arquivo 7z inválido ou protegido: {e}"),
                 })?;
             for (idx, entry) in archive.archive().files.iter().enumerate() {
                 if idx.is_multiple_of(256) && cancel.is_cancelled() {
@@ -369,12 +367,10 @@ pub fn read_archive_bytes(
         }
         ArchiveKind::SevenZ => {
             let file = open_shared_archive(archive_path)?;
-            let mut reader =
-                SevenZReader::new(BufReader::new(file), SevenZPassword::empty()).map_err(|e| {
-                    FsError::Io {
-                        path: archive_path.to_path_buf(),
-                        message: format!("arquivo 7z inválido ou protegido: {e}"),
-                    }
+            let mut reader = SevenZReader::new(BufReader::new(file), SevenZPassword::empty())
+                .map_err(|e| FsError::Io {
+                    path: archive_path.to_path_buf(),
+                    message: format!("arquivo 7z inválido ou protegido: {e}"),
                 })?;
             let mut found: Option<Vec<u8>> = None;
             reader

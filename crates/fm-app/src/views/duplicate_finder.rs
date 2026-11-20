@@ -327,11 +327,7 @@ fn config_panel<'a>(
         ]
         .spacing(4)
         .width(Length::FillPortion(2)),
-        column![
-            Space::new().height(16),
-            scan_action_btn,
-        ]
-        .align_x(Center),
+        column![Space::new().height(16), scan_action_btn,].align_x(Center),
     ]
     .spacing(10)
     .align_y(Center);
@@ -480,18 +476,13 @@ fn results_body<'a>(
         } else {
             strings.dup_empty_idle
         };
-        return container(
-            text(msg)
-                .size(13)
-                .font(FONT_UI)
-                .color(palette.text_muted),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(Center)
-        .align_y(Center)
-        .padding(24)
-        .into();
+        return container(text(msg).size(13).font(FONT_UI).color(palette.text_muted))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Center)
+            .align_y(Center)
+            .padding(24)
+            .into();
     }
 
     // Lista 100% virtualizada sobre `flat_rows` com altura fixa por linha (`LIST_ROW_HEIGHT`).
@@ -518,8 +509,7 @@ fn results_body<'a>(
             DuplicateListRow::GroupHeader(group_idx) => {
                 if let Some(group) = modal.groups.get(group_idx) {
                     let collapsed = modal.collapsed_groups.contains(&group.group_id);
-                    list_col =
-                        list_col.push(group_header_row(group, collapsed, palette, strings));
+                    list_col = list_col.push(group_header_row(group, collapsed, palette, strings));
                 }
             }
             DuplicateListRow::FileItem {
@@ -575,8 +565,8 @@ fn scanning_body<'a>(
             let sname = stage_name(p.stage, strings);
             let title = format!("{} ({}/{})", sname, p.stage_index, p.stage_total);
             let (det, r) = if p.total > 0 {
-                let pct = ((p.processed as f32 / p.total as f32).clamp(0.0, 1.0) * 100.0).round()
-                    as u32;
+                let pct =
+                    ((p.processed as f32 / p.total as f32).clamp(0.0, 1.0) * 100.0).round() as u32;
                 (
                     format!("{} / {} ({pct}%)", p.processed, p.total),
                     (p.processed as f32 / p.total as f32).clamp(0.0, 1.0),
@@ -606,9 +596,7 @@ fn scanning_body<'a>(
                     Color::TRANSPARENT,
                     9999.0
                 )),
-            Space::new()
-                .width(Length::FillPortion(remaining))
-                .height(8),
+            Space::new().width(Length::FillPortion(remaining)).height(8),
         ]
         .width(Length::Fill),
     )
@@ -671,9 +659,13 @@ fn group_header_row<'a>(
     };
 
     let (verify_label, verify_color) = match group.verified_level {
-        DuplicateConfirmLevel::QuickPartialMd5 => (strings.dup_verify_partial, palette.status_warning),
+        DuplicateConfirmLevel::QuickPartialMd5 => {
+            (strings.dup_verify_partial, palette.status_warning)
+        }
         DuplicateConfirmLevel::StandardFullMd5 => (strings.dup_verify_md5, palette.status_success),
-        DuplicateConfirmLevel::StrictMd5AndSha256 => (strings.dup_verify_sha256, palette.status_success),
+        DuplicateConfirmLevel::StrictMd5AndSha256 => {
+            (strings.dup_verify_sha256, palette.status_success)
+        }
         DuplicateConfirmLevel::ParanoidMd5AndByteCompare => {
             (strings.dup_verify_byte, palette.status_success)
         }
@@ -863,8 +855,7 @@ fn footer_bar<'a>(
         strings.dup_reclaimable
     );
 
-    let can_trash =
-        total_selected > 0 && !any_all_selected && !modal.scanning && !modal.deleting;
+    let can_trash = total_selected > 0 && !any_all_selected && !modal.scanning && !modal.deleting;
     let can_perm = can_trash && modal.options.confirm_level.allows_permanent_delete();
 
     let actions: Element<'a, Message> = if modal.confirm_perm_delete {

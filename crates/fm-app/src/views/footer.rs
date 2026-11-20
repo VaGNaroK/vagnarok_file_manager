@@ -113,8 +113,12 @@ pub fn view<'a>(
             0
         };
         let label = match job.kind {
-            ArchiveJobKind::Compress { .. } => format!("{}: {} ({pct}%)", strings.arch_compressing, job.title),
-            ArchiveJobKind::Extract { .. } => format!("{}: {} ({pct}%)", strings.arch_extracting, job.title),
+            ArchiveJobKind::Compress { .. } => {
+                format!("{}: {} ({pct}%)", strings.arch_compressing, job.title)
+            }
+            ArchiveJobKind::Extract { .. } => {
+                format!("{}: {} ({pct}%)", strings.arch_extracting, job.title)
+            }
         };
         let pill = container(
             row![
@@ -126,7 +130,10 @@ pub fn view<'a>(
                 button(
                     row![
                         icon_maximize_2().size(11).color(palette.text_primary),
-                        text(strings.arch_restore).size(11).font(FONT_UI).color(palette.text_primary),
+                        text(strings.arch_restore)
+                            .size(11)
+                            .font(FONT_UI)
+                            .color(palette.text_primary),
                     ]
                     .spacing(4)
                     .align_y(Center),
@@ -157,10 +164,15 @@ pub fn view<'a>(
                     .size(11)
                     .font(FONT_MONO)
                     .color(palette.text_secondary),
-                button(text(strings.arch_restore).size(11).font(FONT_UI).color(palette.accent_primary))
-                    .padding([2, 6])
-                    .style(styles::ghost_button(palette, 4.0))
-                    .on_press(Message::Archive(ArchiveUiMsg::RestoreModal)),
+                button(
+                    text(strings.arch_restore)
+                        .size(11)
+                        .font(FONT_UI)
+                        .color(palette.accent_primary)
+                )
+                .padding([2, 6])
+                .style(styles::ghost_button(palette, 4.0))
+                .on_press(Message::Archive(ArchiveUiMsg::RestoreModal)),
                 button(icon_x().size(11).color(palette.text_muted))
                     .padding([2, 4])
                     .style(styles::ghost_button(palette, 4.0))

@@ -1,9 +1,9 @@
 use std::fmt;
 
 use fm_core::{
-    BulkRenameNameError, BulkRenamePreviewRow, BulkRenameRowStatus, BulkRenameSort,
-    ExtensionMode, InsertPosition, MatchScope, MediaComposeMode, MediaTagKind, NumberPosition,
-    Strings, TextCaseMode,
+    BulkRenameNameError, BulkRenamePreviewRow, BulkRenameRowStatus, BulkRenameSort, ExtensionMode,
+    InsertPosition, MatchScope, MediaComposeMode, MediaTagKind, NumberPosition, Strings,
+    TextCaseMode,
 };
 use fm_theme::{FONT_MONO, FONT_UI, FONT_UI_BOLD, FONT_UI_SEMIBOLD, ThemePalette, styles};
 use iced::Alignment::Center;
@@ -12,7 +12,9 @@ use iced::widget::{
     text_input,
 };
 use iced::{Color, Element, Length, Padding, mouse};
-use lucide_icons::iced::{icon_check, icon_pencil, icon_rotate_ccw, icon_sliders_horizontal, icon_x};
+use lucide_icons::iced::{
+    icon_check, icon_pencil, icon_rotate_ccw, icon_sliders_horizontal, icon_x,
+};
 
 use crate::app::{
     App, BulkRenameExtensionKind, BulkRenameInsertKind, BulkRenameModalState, BulkRenameMsg,
@@ -286,9 +288,7 @@ fn replace_card_view<'a>(
         inner = inner.push(
             button(
                 row![
-                    icon_sliders_horizontal()
-                        .size(11)
-                        .color(palette.text_muted),
+                    icon_sliders_horizontal().size(11).color(palette.text_muted),
                     text(format!("{adv_arrow} {}", strings.br_advanced_regex))
                         .size(11)
                         .color(palette.text_muted),
@@ -1105,16 +1105,11 @@ fn preview_row_item<'a>(
         }
     };
 
-    let status_pill = container(
-        text(badge_label)
-            .size(10)
-            .font(FONT_MONO)
-            .color(badge_fg),
-    )
-    .width(Length::Fixed(42.0))
-    .padding([2, 6])
-    .align_x(Center)
-    .style(styles::badge_container(badge_bg, badge_fg, badge_fg, 6.0));
+    let status_pill = container(text(badge_label).size(10).font(FONT_MONO).color(badge_fg))
+        .width(Length::Fixed(42.0))
+        .padding([2, 6])
+        .align_x(Center)
+        .style(styles::badge_container(badge_bg, badge_fg, badge_fg, 6.0));
 
     container(
         row![
@@ -1256,13 +1251,14 @@ fn footer_bar_view<'a>(
 
     row![
         include_folders_chk,
-        container(text(summary_text).size(11).font(FONT_MONO).color(summary_color))
-            .padding([3, 8])
-            .style(move |_| styles::panel_surface(
-                palette.surface_low,
-                palette.border,
-                6.0
-            )),
+        container(
+            text(summary_text)
+                .size(11)
+                .font(FONT_MONO)
+                .color(summary_color)
+        )
+        .padding([3, 8])
+        .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 6.0)),
         space::horizontal(),
         action_row,
         resize_grip,

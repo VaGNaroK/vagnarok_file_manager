@@ -25,8 +25,8 @@ pub use bulk_rename::{
     BulkRenameEvaluation, BulkRenameExecutionPlan, BulkRenameInput, BulkRenameMediaTags,
     BulkRenameNameError, BulkRenamePreviewRow, BulkRenameRowStatus, BulkRenameRules,
     BulkRenameSort, BulkRenameTargetPolicy, ExtensionMode, InsertPosition, MatchScope,
-    MediaComposeMode, MediaTagKind, NumberPosition, RenameStep, TextCaseMode,
-    build_execution_plan, evaluate_bulk_rename,
+    MediaComposeMode, MediaTagKind, NumberPosition, RenameStep, TextCaseMode, build_execution_plan,
+    evaluate_bulk_rename,
 };
 
 pub use domain::{

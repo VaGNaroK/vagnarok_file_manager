@@ -1616,8 +1616,10 @@ impl App {
                                         .position(|e| e.path == target_path)
                                 {
                                     tab.selection.select_single(idx, &tab.visible_entries);
-                                    let single =
-                                        tab.selection.single_selected(&tab.visible_entries).cloned();
+                                    let single = tab
+                                        .selection
+                                        .single_selected(&tab.visible_entries)
+                                        .cloned();
                                     tab.selected_telemetry =
                                         single.as_ref().map(basic_file_telemetry);
                                     pending_selected_entry = single;
@@ -5155,10 +5157,7 @@ impl App {
             keyboard::Key::Character(c) if c.eq_ignore_ascii_case("q") && modifiers.control()
         );
         let compress_modal_visible = self.compress_modal.as_ref().is_some_and(|m| !m.minimized);
-        let dup_modal_visible = self
-            .duplicate_finder
-            .as_ref()
-            .is_some_and(|m| !m.minimized);
+        let dup_modal_visible = self.duplicate_finder.as_ref().is_some_and(|m| !m.minimized);
         if is_ctrl_q {
             if self.bulk_rename_modal.is_some() {
                 return self.update(Message::BulkRename(BulkRenameMsg::Close));

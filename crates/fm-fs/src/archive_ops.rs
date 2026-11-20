@@ -76,14 +76,7 @@ pub async fn run_extract_job(
     progress_tx: UnboundedSender<ArchiveJobProgress>,
 ) -> Result<PathBuf, FsError> {
     tokio::task::spawn_blocking(move || {
-        extract_blocking(
-            job_id,
-            &archive_path,
-            mode,
-            conflict,
-            &cancel,
-            &progress_tx,
-        )
+        extract_blocking(job_id, &archive_path, mode, conflict, &cancel, &progress_tx)
     })
     .await
     .map_err(|err| FsError::Io {
@@ -304,10 +297,20 @@ fn compress_blocking(
         ArchiveFormat::Zip => {
             write_zip_archive(&temp_path, &pack_entries, effective_level, &mut tracker)
         }
-        ArchiveFormat::Tar => write_tar_archive(&temp_path, &pack_entries, false, effective_level, &mut tracker),
-        ArchiveFormat::TarGz => {
-            write_tar_archive(&temp_path, &pack_entries, true, effective_level, &mut tracker)
-        }
+        ArchiveFormat::Tar => write_tar_archive(
+            &temp_path,
+            &pack_entries,
+            false,
+            effective_level,
+            &mut tracker,
+        ),
+        ArchiveFormat::TarGz => write_tar_archive(
+            &temp_path,
+            &pack_entries,
+            true,
+            effective_level,
+            &mut tracker,
+        ),
     };
 
     match write_res {
@@ -389,7 +392,10 @@ fn collect_pack_entries(
         return Ok(());
     }
 
-    let Some(name) = disk_path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+    let Some(name) = disk_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+    else {
         return Ok(());
     };
     let archive_rel = match archive_parent {
@@ -417,13 +423,7 @@ fn collect_pack_entries(
             let Ok(child) = child_res else {
                 continue;
             };
-            collect_pack_entries(
-                &child.path(),
-                Some(&archive_rel),
-                cancel,
-                visited_dirs,
-                out,
-            )?;
+            collect_pack_entries(&child.path(), Some(&archive_rel), cancel, visited_dirs, out)?;
         }
     } else if meta.is_file() {
         out.push(PackEntry {
@@ -444,12 +444,13 @@ fn write_sevenz_archive(
     tracker: &mut ProgressTracker<'_>,
 ) -> Result<(), FsError> {
     let file = File::create(dest_file).map_err(|e| map_io_err(dest_file, e))?;
-    let mut writer = SevenZWriter::new(BufWriter::with_capacity(IO_BUF_BYTES, file)).map_err(|e| {
-        FsError::Io {
-            path: dest_file.to_path_buf(),
-            message: e.to_string(),
-        }
-    })?;
+    let mut writer =
+        SevenZWriter::new(BufWriter::with_capacity(IO_BUF_BYTES, file)).map_err(|e| {
+            FsError::Io {
+                path: dest_file.to_path_buf(),
+                message: e.to_string(),
+            }
+        })?;
 
     let threads = std::thread::available_parallelism()
         .map(|n| u32::try_from(n.get()).unwrap_or(2).clamp(1, 4))
@@ -457,10 +458,8 @@ fn write_sevenz_archive(
 
     let config = match level {
         CompressionLevel::Store => EncoderConfiguration::new(EncoderMethod::COPY),
-        CompressionLevel::Minimum => {
-            EncoderConfiguration::new(EncoderMethod::LZMA2)
-                .with_options(EncoderOptions::Lzma2(Lzma2Options::from_level(1)))
-        }
+        CompressionLevel::Minimum => EncoderConfiguration::new(EncoderMethod::LZMA2)
+            .with_options(EncoderOptions::Lzma2(Lzma2Options::from_level(1))),
         CompressionLevel::Normal => EncoderConfiguration::new(EncoderMethod::LZMA2).with_options(
             EncoderOptions::Lzma2(Lzma2Options::from_level_mt(5, threads, 16 * 1024 * 1024)),
         ),
@@ -611,9 +610,7 @@ fn write_tar_archive(
         };
         let mut builder = TarBuilder::new(GzEncoder::new(buffered, compression));
         write_tar_entries(&mut builder, entries, tracker)?;
-        let gz = builder
-            .into_inner()
-            .map_err(|e| map_io_err(dest_file, e))?;
+        let gz = builder.into_inner().map_err(|e| map_io_err(dest_file, e))?;
         gz.finish().map_err(|e| map_io_err(dest_file, e))?;
     } else {
         let mut builder = TarBuilder::new(buffered);
@@ -759,12 +756,11 @@ fn extract_zip(
     tracker: &mut ProgressTracker<'_>,
 ) -> Result<(), FsError> {
     let file = open_shared_archive(archive_path)?;
-    let mut archive = ZipArchive::new(BufReader::with_capacity(IO_BUF_BYTES, file)).map_err(|e| {
-        FsError::Io {
+    let mut archive =
+        ZipArchive::new(BufReader::with_capacity(IO_BUF_BYTES, file)).map_err(|e| FsError::Io {
             path: archive_path.to_path_buf(),
             message: format!("arquivo ZIP inválido: {e}"),
-        }
-    })?;
+        })?;
 
     tracker.items_total = archive.len();
     let mut total_bytes = 0u64;
@@ -840,9 +836,7 @@ fn extract_tar_stream<R: Read>(
     if let Ok(meta) = fs::metadata(archive_path) {
         tracker.bytes_total = meta.len();
     }
-    let entries = archive
-        .entries()
-        .map_err(|e| map_io_err(archive_path, e))?;
+    let entries = archive.entries().map_err(|e| map_io_err(archive_path, e))?;
 
     for item in entries {
         if tracker.cancel.is_cancelled() {

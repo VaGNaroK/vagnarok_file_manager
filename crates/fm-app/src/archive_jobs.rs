@@ -60,7 +60,11 @@ pub struct CompressModalState {
 }
 
 impl CompressModalState {
-    pub fn from_selection(sources: Vec<PathBuf>, total_source_bytes: u64, dest_dir: PathBuf) -> Self {
+    pub fn from_selection(
+        sources: Vec<PathBuf>,
+        total_source_bytes: u64,
+        dest_dir: PathBuf,
+    ) -> Self {
         let archive_name = suggest_archive_base_name(&sources, &dest_dir);
         Self {
             sources,

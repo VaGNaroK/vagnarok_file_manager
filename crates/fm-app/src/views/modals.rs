@@ -2902,15 +2902,10 @@ pub fn context_menu_overlay<'a>(
                     !fm_core::is_virtual_trash_path(&t.current_path)
                         && fm_fs::archive::split_archive_path(&t.current_path).is_none()
                 });
-            let sel_count = app
-                .current_tab()
-                .map(|t| t.selection.count())
-                .unwrap_or(0);
+            let sel_count = app.current_tab().map(|t| t.selection.count()).unwrap_or(0);
             if tab_is_writable_local {
                 items = items.push(ctx_divider(palette));
-                if sel_count <= 1
-                    && !*is_dir
-                    && fm_fs::archive::detect_archive_kind(path).is_some()
+                if sel_count <= 1 && !*is_dir && fm_fs::archive::detect_archive_kind(path).is_some()
                 {
                     let folder_hint = path
                         .file_name()
@@ -2972,10 +2967,7 @@ pub fn context_menu_overlay<'a>(
                     ));
                 if *is_dir {
                     items = items.push(ctx_item(
-                        icon_search()
-                            .size(14)
-                            .color(palette.accent_primary)
-                            .into(),
+                        icon_search().size(14).color(palette.accent_primary).into(),
                         strings.dup_menu_action,
                         palette.text_primary,
                         Message::DuplicateFinder(DuplicateFinderMsg::OpenForPath(path.clone())),
@@ -3365,10 +3357,7 @@ pub fn context_menu_overlay<'a>(
                     && fm_fs::archive::split_archive_path(&tab.current_path).is_none();
                 if can_scan_dups {
                     items = items.push(ctx_item(
-                        icon_search()
-                            .size(14)
-                            .color(palette.accent_primary)
-                            .into(),
+                        icon_search().size(14).color(palette.accent_primary).into(),
                         strings.dup_menu_action,
                         palette.text_primary,
                         Message::DuplicateFinder(DuplicateFinderMsg::OpenForCurrentDir),
@@ -3453,9 +3442,7 @@ pub fn context_menu_overlay<'a>(
 
     let card_body: Element<'a, Message> = if matches!(
         menu.kind,
-        ContextMenuKind::LanguageMenu
-            | ContextMenuKind::FilterMenu
-            | ContextMenuKind::Entry { .. }
+        ContextMenuKind::LanguageMenu | ContextMenuKind::FilterMenu | ContextMenuKind::Entry { .. }
     ) {
         scrollable(items.width(Length::Fixed(menu_width)))
             .height(Length::Shrink)
