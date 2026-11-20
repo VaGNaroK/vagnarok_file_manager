@@ -468,3 +468,13 @@ shortcuts-created =
         [one] Acceso directo creado correctamente.
        *[other] { $count } accesos directos creados correctamente.
     }
+undo-action = Deshacer (Ctrl+Z)
+undo-trash-action = Deshacer eliminación (Ctrl+Z)
+moved-to-trash-undo-hint = Movido a la Papelera (Ctrl+Z para deshacer)
+undo-nothing-in-trash = Elemento no encontrado en la Papelera para restaurar.
+undo-rename-done = Cambio de nombre deshecho.
+undo-restored-count =
+    { $count ->
+        [one] Restaurado desde la Papelera.
+       *[other] { $count } elementos restaurados desde la Papelera.
+    }

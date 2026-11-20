@@ -468,3 +468,13 @@ shortcuts-created =
         [one] Raccourci créé avec succès.
        *[other] { $count } raccourcis créés avec succès.
     }
+undo-action = Annuler (Ctrl+Z)
+undo-trash-action = Annuler la suppression (Ctrl+Z)
+moved-to-trash-undo-hint = Déplacé vers la Corbeille (Ctrl+Z pour annuler)
+undo-nothing-in-trash = Élément introuvable dans la Corbeille à restaurer.
+undo-rename-done = Renommage annulé.
+undo-restored-count =
+    { $count ->
+        [one] Restauré depuis la Corbeille.
+       *[other] { $count } éléments restaurés depuis la Corbeille.
+    }

@@ -468,3 +468,13 @@ shortcuts-created =
         [one] Collegamento creato con successo.
        *[other] { $count } collegamenti creati con successo.
     }
+undo-action = Annulla (Ctrl+Z)
+undo-trash-action = Annulla eliminazione (Ctrl+Z)
+moved-to-trash-undo-hint = Spostato nel Cestino (Ctrl+Z per annullare)
+undo-nothing-in-trash = Elemento non più presente nel Cestino da ripristinare.
+undo-rename-done = Rinomina annullata.
+undo-restored-count =
+    { $count ->
+        [one] Ripristinato dal Cestino.
+       *[other] { $count } elementi ripristinati dal Cestino.
+    }

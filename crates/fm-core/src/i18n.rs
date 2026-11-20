@@ -435,6 +435,11 @@ pub struct Strings {
     pub ctx_shortcut_here_win: &'static str,
     pub shortcut_desktop_missing: &'static str,
     pub filter_ext_placeholder: &'static str,
+    pub undo_action: &'static str,
+    pub undo_trash_action: &'static str,
+    pub moved_to_trash_undo_hint: &'static str,
+    pub undo_nothing_in_trash: &'static str,
+    pub undo_rename_done: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -523,6 +528,13 @@ impl Strings {
         let mut args = FluentArgs::new();
         args.set("count", count as i64);
         self.format_msg("shortcuts-created", Some(&args))
+    }
+
+    /// Formata mensagem de itens restaurados da Lixeira via Desfazer (`Ctrl+Z`).
+    pub fn format_undo_restored(self, count: usize) -> String {
+        let mut args = FluentArgs::new();
+        args.set("count", count as i64);
+        self.format_msg("undo-restored-count", Some(&args))
     }
 
     /// Formata resumo de seleção múltipla no rodapé (`"3 itens (12.4 KB)"`).
@@ -1039,6 +1051,11 @@ impl Strings {
         let ctx_shortcut_here_win = resolve("ctx-shortcut-here-win");
         let shortcut_desktop_missing = resolve("shortcut-desktop-missing");
         let filter_ext_placeholder = resolve("filter-ext-placeholder");
+        let undo_action = resolve("undo-action");
+        let undo_trash_action = resolve("undo-trash-action");
+        let moved_to_trash_undo_hint = resolve("moved-to-trash-undo-hint");
+        let undo_nothing_in_trash = resolve("undo-nothing-in-trash");
+        let undo_rename_done = resolve("undo-rename-done");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -1443,6 +1460,11 @@ impl Strings {
             ctx_shortcut_here_win,
             shortcut_desktop_missing,
             filter_ext_placeholder,
+            undo_action,
+            undo_trash_action,
+            moved_to_trash_undo_hint,
+            undo_nothing_in_trash,
+            undo_rename_done,
         }
     }
 }
@@ -1617,6 +1639,8 @@ mod tests {
             assert_ne!(strings.format_files_count(3), "");
             assert_ne!(strings.format_shortcuts_created(1), "");
             assert_ne!(strings.format_shortcuts_created(3), "");
+            assert_ne!(strings.format_undo_restored(1), "");
+            assert_ne!(strings.format_undo_restored(3), "");
             assert_ne!(strings.format_selected_multi(2, "4.0 KB"), "");
             assert_ne!(strings.format_exact_bytes(1024), "");
             assert_ne!(strings.format_age(SystemTime::now()), "");

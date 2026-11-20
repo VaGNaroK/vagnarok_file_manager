@@ -468,3 +468,13 @@ shortcuts-created =
         [one] Atalho criado com sucesso.
        *[other] { $count } atalhos criados com sucesso.
     }
+undo-action = Desfazer (Ctrl+Z)
+undo-trash-action = Desfazer exclusão (Ctrl+Z)
+moved-to-trash-undo-hint = Enviado para a Lixeira (Ctrl+Z para desfazer)
+undo-nothing-in-trash = Item não encontrado na Lixeira para restaurar.
+undo-rename-done = Renomeação desfeita.
+undo-restored-count =
+    { $count ->
+        [one] Restaurado da Lixeira.
+       *[other] { $count } itens restaurados da Lixeira.
+    }

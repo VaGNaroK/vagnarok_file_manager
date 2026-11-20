@@ -25,8 +25,8 @@ use lucide_icons::iced::{
 
 use crate::app::{
     ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, PreferencesTab, PropertiesTab,
-    PropertiesWindowState, dialog_input_id, effective_properties_modal_rect, filter_ext_input_id,
-    open_with_props_type_key,
+    PropertiesWindowState, UndoAction, dialog_input_id, effective_properties_modal_rect,
+    filter_ext_input_id, open_with_props_type_key,
 };
 use crate::archive_jobs::ArchiveUiMsg;
 use crate::duplicate_finder::DuplicateFinderMsg;
@@ -3405,7 +3405,23 @@ pub fn context_menu_overlay<'a>(
                 Message::OpenTerminal,
                 palette,
             ));
-            if app.last_bulk_rename_undo.is_some() {
+            if let Some(top_undo) = app.undo_stack.last() {
+                let undo_label = match top_undo {
+                    UndoAction::Trash { .. } => strings.undo_trash_action,
+                    UndoAction::BulkRename { .. } => strings.br_undo_last,
+                    UndoAction::Rename { .. } => strings.undo_action,
+                };
+                items = items.push(ctx_item(
+                    icon_rotate_ccw()
+                        .size(14)
+                        .color(palette.accent_primary)
+                        .into(),
+                    undo_label,
+                    palette.text_primary,
+                    Message::UndoLastAction,
+                    palette,
+                ));
+            } else if app.last_bulk_rename_undo.is_some() {
                 items = items.push(ctx_item(
                     icon_rotate_ccw()
                         .size(14)
@@ -3453,7 +3469,7 @@ pub fn context_menu_overlay<'a>(
     }
 
     let root_extra = if show_open_as_root { 30.0 } else { 0.0 };
-    let undo_extra = if app.last_bulk_rename_undo.is_some() {
+    let undo_extra = if !app.undo_stack.is_empty() || app.last_bulk_rename_undo.is_some() {
         30.0
     } else {
         0.0

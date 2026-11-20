@@ -157,7 +157,7 @@ pub(crate) fn purge_matching_trash_items(targets: &[PathBuf]) -> Result<Vec<Path
     Ok(targets.to_vec())
 }
 
-/// Restaura para o local original os itens selecionados na Lixeira.
+/// Restaura para o local original os itens selecionados na Lixeira ou informados pelo caminho original (`Ctrl+Z`).
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn restore_trash_items(paths: &[PathBuf]) -> Result<usize, FsError> {
     let items = list_all_trash_items().map_err(|err| FsError::Io {
@@ -165,18 +165,7 @@ pub(crate) fn restore_trash_items(paths: &[PathBuf]) -> Result<usize, FsError> {
         message: format!("falha ao listar lixeira: {err}"),
     })?;
 
-    let mut matched = Vec::new();
-    for item in items {
-        let exact = paths.iter().any(|p| trash_item_matches_exact(&item, p));
-        let orig_match = !exact
-            && paths
-                .iter()
-                .any(|p| !is_potential_trash_target(p) && p == &item.original_path());
-        if exact || orig_match {
-            matched.push(item);
-        }
-    }
-
+    let matched = select_trash_items_for_restore(items, paths);
     let count = matched.len();
     if count == 0 {
         return Ok(0);
@@ -187,6 +176,83 @@ pub(crate) fn restore_trash_items(paths: &[PathBuf]) -> Result<usize, FsError> {
         message: format!("falha ao restaurar da lixeira: {err}"),
     })?;
     Ok(count)
+}
+
+/// Seleciona os `TrashItem` a restaurar:
+/// - Para caminhos dentro da Lixeira, exige correspondência exata por ID/backing path;
+/// - Para caminhos originais (`Ctrl+Z`), escolhe **apenas a entrada mais recente** (`time_deleted`)
+///   por alvo, evitando colisões quando um arquivo/pasta com o mesmo nome já foi apagado antes.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn select_trash_items_for_restore(
+    items: Vec<trash::TrashItem>,
+    paths: &[PathBuf],
+) -> Vec<trash::TrashItem> {
+    let mut used = vec![false; items.len()];
+    let mut chosen_indices = Vec::new();
+
+    for target in paths {
+        if is_potential_trash_target(target) {
+            if let Some(idx) = items
+                .iter()
+                .enumerate()
+                .find(|(idx, item)| !used[*idx] && trash_item_matches_exact(item, target))
+                .map(|(idx, _)| idx)
+            {
+                used[idx] = true;
+                chosen_indices.push(idx);
+            }
+            continue;
+        }
+
+        let canonical_target = target.parent().and_then(|parent| {
+            let leaf = target.file_name()?;
+            std::fs::canonicalize(parent).ok().map(|p| p.join(leaf))
+        });
+
+        let best = items
+            .iter()
+            .enumerate()
+            .filter(|(idx, item)| {
+                if used[*idx] {
+                    return false;
+                }
+                let orig = item.original_path();
+                paths_match_original(&orig, target)
+                    || canonical_target
+                        .as_ref()
+                        .is_some_and(|canon| paths_match_original(&orig, canon))
+            })
+            .max_by_key(|(_, item)| item.time_deleted)
+            .map(|(idx, _)| idx);
+
+        if let Some(idx) = best {
+            used[idx] = true;
+            chosen_indices.push(idx);
+        }
+    }
+
+    let mut slots: Vec<Option<trash::TrashItem>> = items.into_iter().map(Some).collect();
+    chosen_indices
+        .into_iter()
+        .filter_map(|idx| slots[idx].take())
+        .collect()
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn paths_match_original(item_original: &Path, target: &Path) -> bool {
+    if item_original == target {
+        return true;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        item_original
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&target.to_string_lossy())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
@@ -832,6 +898,48 @@ mod tests {
 
         assert!(!trash_item_matches_exact(&item_a, selected));
         assert!(trash_item_matches_exact(&item_b, selected));
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn restore_selection_picks_newest_duplicate_for_original_path_undo() {
+        let older = trash::TrashItem {
+            id: std::ffi::OsString::from(if cfg!(target_os = "linux") {
+                "/home/user/.local/share/Trash/info/pasta.trashinfo"
+            } else {
+                r"C:\$Recycle.Bin\S-1-5-21\$ROLD"
+            }),
+            name: std::ffi::OsString::from("pasta"),
+            original_parent: PathBuf::from(if cfg!(target_os = "linux") {
+                "/home/user/Docs"
+            } else {
+                r"C:\Users\Docs"
+            }),
+            time_deleted: 1_700_000_100,
+        };
+        let newer = trash::TrashItem {
+            id: std::ffi::OsString::from(if cfg!(target_os = "linux") {
+                "/home/user/.local/share/Trash/info/pasta.2.trashinfo"
+            } else {
+                r"C:\$Recycle.Bin\S-1-5-21\$RNEW"
+            }),
+            name: std::ffi::OsString::from("pasta"),
+            original_parent: PathBuf::from(if cfg!(target_os = "linux") {
+                "/home/user/Docs"
+            } else {
+                r"C:\Users\Docs"
+            }),
+            time_deleted: 1_700_000_500,
+        };
+        let target = PathBuf::from(if cfg!(target_os = "linux") {
+            "/home/user/Docs/pasta"
+        } else {
+            r"c:\users\docs\PASTA"
+        });
+
+        let selected = select_trash_items_for_restore(vec![older, newer.clone()], &[target]);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, newer.id);
     }
 
     #[test]

@@ -188,6 +188,16 @@ pub enum ActiveDialog {
     },
 }
 
+pub const MAX_UNDO_HISTORY: usize = 32;
+
+/// Ação reversível registrada na pilha de Desfazer (`Ctrl+Z`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UndoAction {
+    Trash { paths: Vec<PathBuf> },
+    Rename { from: PathBuf, to: PathBuf },
+    BulkRename { pairs: Vec<(PathBuf, PathBuf)> },
+}
+
 pub fn canvas_scroll_id() -> Id {
     Id::new("fm_canvas_scroll")
 }
@@ -413,6 +423,24 @@ pub enum Message {
         result: Result<(), FsError>,
         select_after: Option<PathBuf>,
     },
+    MoveToTrashFinished {
+        paths: Vec<PathBuf>,
+        result: Result<(), FsError>,
+    },
+    RenameOpFinished {
+        from: PathBuf,
+        to: PathBuf,
+        result: Result<(), FsError>,
+    },
+    UndoLastAction,
+    UndoTrashFinished {
+        paths: Vec<PathBuf>,
+        result: Result<usize, FsError>,
+    },
+    UndoRenameFinished {
+        restored_path: PathBuf,
+        result: Result<(), FsError>,
+    },
     ColumnPreviewLoaded {
         request_id: u64,
         path: PathBuf,
@@ -446,6 +474,7 @@ pub enum Message {
     RestoreFromTrash,
     TrashActionFinished {
         notice: String,
+        clear_trash_undo: bool,
         result: Result<(), FsError>,
     },
     ConfigSaved(Option<String>),
@@ -635,6 +664,7 @@ pub struct App {
     pub active_dialog: Option<ActiveDialog>,
     pub bulk_rename_modal: Option<BulkRenameModalState>,
     pub last_bulk_rename_undo: Option<Vec<(PathBuf, PathBuf)>>,
+    pub undo_stack: Vec<UndoAction>,
     pub compress_modal: Option<CompressModalState>,
     pub archive_jobs: BTreeMap<u64, ArchiveJobRuntime>,
     pub duplicate_finder: Option<DuplicateFinderState>,
@@ -776,6 +806,7 @@ impl App {
             active_dialog: None,
             bulk_rename_modal: None,
             last_bulk_rename_undo: None,
+            undo_stack: Vec::new(),
             compress_modal: None,
             archive_jobs: BTreeMap::new(),
             duplicate_finder: None,
@@ -2302,6 +2333,127 @@ impl App {
                     Task::none()
                 }
             },
+            Message::MoveToTrashFinished { paths, result } => match result {
+                Ok(()) => {
+                    if !paths.is_empty() {
+                        self.push_undo(UndoAction::Trash { paths });
+                        self.status_notice =
+                            Some(self.strings().moved_to_trash_undo_hint.to_owned());
+                    } else {
+                        self.status_notice = None;
+                    }
+                    let active = self.update(Message::RefreshActiveTab);
+                    let trash_tab = self.reload_matching_dir_tabs(std::path::Path::new(
+                        fm_core::VIRTUAL_TRASH_PATH,
+                    ));
+                    Task::batch([active, trash_tab])
+                }
+                Err(err) => {
+                    self.status_notice = Some(err.to_string());
+                    Task::none()
+                }
+            },
+            Message::RenameOpFinished { from, to, result } => match result {
+                Ok(()) => {
+                    self.status_notice = None;
+                    self.pending_select_path = Some(to.clone());
+                    self.push_undo(UndoAction::Rename { from, to });
+                    self.update(Message::RefreshActiveTab)
+                }
+                Err(err) => {
+                    self.status_notice = Some(err.to_string());
+                    Task::none()
+                }
+            },
+            Message::UndoLastAction => {
+                self.context_menu = None;
+                let action = self.undo_stack.pop().or_else(|| {
+                    self.last_bulk_rename_undo
+                        .take()
+                        .map(|pairs| UndoAction::BulkRename { pairs })
+                });
+                let Some(action) = action else {
+                    return Task::none();
+                };
+                match action {
+                    UndoAction::Trash { paths } => {
+                        let vfs = Arc::clone(&self.vfs);
+                        let req_paths = paths.clone();
+                        Task::perform(
+                            async move { vfs.restore_from_trash(&req_paths).await },
+                            move |result| Message::UndoTrashFinished { paths, result },
+                        )
+                    }
+                    UndoAction::Rename { from, to } => {
+                        let vfs = Arc::clone(&self.vfs);
+                        let src = to.clone();
+                        let dst = from.clone();
+                        Task::perform(async move { vfs.rename(&src, &dst).await }, move |result| {
+                            Message::UndoRenameFinished {
+                                restored_path: from,
+                                result,
+                            }
+                        })
+                    }
+                    UndoAction::BulkRename { pairs } => {
+                        self.last_bulk_rename_undo = None;
+                        let batch_id = self.next_job_id;
+                        self.next_job_id = self.next_job_id.wrapping_add(1).max(1);
+                        self.pending_select_paths =
+                            pairs.iter().map(|(_, old)| old.clone()).collect();
+                        Task::perform(
+                            fm_fs::undo_bulk_rename_pairs(
+                                pairs,
+                                batch_id,
+                                fm_core::BulkRenameTargetPolicy::host_default(),
+                            ),
+                            Message::UndoBulkRenameFinished,
+                        )
+                    }
+                }
+            }
+            Message::UndoTrashFinished { paths, result } => match result {
+                Ok(0) => {
+                    self.status_notice = Some(self.strings().undo_nothing_in_trash.to_owned());
+                    Task::none()
+                }
+                Ok(count) => {
+                    self.status_notice = Some(self.strings().format_undo_restored(count));
+                    self.pending_select_paths = paths.clone();
+                    let mut dirs: HashSet<PathBuf> = paths
+                        .iter()
+                        .filter_map(|p| p.parent().map(std::path::Path::to_path_buf))
+                        .collect();
+                    dirs.insert(PathBuf::from(fm_core::VIRTUAL_TRASH_PATH));
+                    let tasks: Vec<Task<Message>> = dirs
+                        .into_iter()
+                        .map(|dir| self.reload_matching_dir_tabs(&dir))
+                        .collect();
+                    Task::batch(tasks)
+                }
+                Err(err) => {
+                    self.status_notice = Some(err.to_string());
+                    Task::none()
+                }
+            },
+            Message::UndoRenameFinished {
+                restored_path,
+                result,
+            } => match result {
+                Ok(()) => {
+                    self.status_notice = Some(self.strings().undo_rename_done.to_owned());
+                    self.pending_select_path = Some(restored_path.clone());
+                    if let Some(parent) = restored_path.parent() {
+                        self.reload_matching_dir_tabs(parent)
+                    } else {
+                        self.update(Message::RefreshActiveTab)
+                    }
+                }
+                Err(err) => {
+                    self.status_notice = Some(err.to_string());
+                    Task::none()
+                }
+            },
             Message::ColumnPreviewLoaded {
                 request_id,
                 path,
@@ -2425,13 +2577,22 @@ impl App {
                     async move { vfs.restore_from_trash(&paths).await.map(|_| ()) },
                     move |result| Message::TrashActionFinished {
                         notice: ok_msg.clone(),
+                        clear_trash_undo: false,
                         result,
                     },
                 )
             }
-            Message::TrashActionFinished { notice, result } => {
+            Message::TrashActionFinished {
+                notice,
+                clear_trash_undo,
+                result,
+            } => {
                 match result {
                     Ok(()) => {
+                        if clear_trash_undo {
+                            self.undo_stack
+                                .retain(|a| !matches!(a, UndoAction::Trash { .. }));
+                        }
                         self.status_notice = Some(notice);
                         return self.update(Message::RefreshActiveTab);
                     }
@@ -3865,6 +4026,11 @@ impl App {
         id
     }
 
+    /// Registra uma ação reversível na pilha de Desfazer (`Ctrl+Z`), respeitando `MAX_UNDO_HISTORY`.
+    pub(crate) fn push_undo(&mut self, action: UndoAction) {
+        push_undo_entry(&mut self.undo_stack, action);
+    }
+
     /// Recarrega todas as abas abertas cujo diretório coincide com `dir` (inclusive abas inativas).
     pub(crate) fn reload_matching_dir_tabs(&mut self, dir: &std::path::Path) -> Task<Message> {
         let matching_ids: Vec<TabId> = self
@@ -4498,32 +4664,42 @@ impl App {
                 if src == dst {
                     return Task::none();
                 }
-                let select_target = dst.clone();
+                let from_undo = src.clone();
+                let to_undo = dst.clone();
                 Task::perform(async move { vfs.rename(&src, &dst).await }, move |result| {
-                    Message::FileOpFinished {
+                    Message::RenameOpFinished {
+                        from: from_undo,
+                        to: to_undo,
                         result,
-                        select_after: Some(select_target),
                     }
                 })
             }
-            ActiveDialog::ConfirmDelete { paths, permanent } => Task::perform(
-                async move {
-                    if permanent {
-                        vfs.delete_permanent(&paths).await
-                    } else {
-                        vfs.move_to_trash(&paths).await
-                    }
-                },
-                |result| Message::FileOpFinished {
-                    result,
-                    select_after: None,
-                },
-            ),
+            ActiveDialog::ConfirmDelete { paths, permanent } => {
+                if permanent {
+                    Task::perform(
+                        async move { vfs.delete_permanent(&paths).await },
+                        |result| Message::FileOpFinished {
+                            result,
+                            select_after: None,
+                        },
+                    )
+                } else {
+                    let trashed_paths = paths.clone();
+                    Task::perform(
+                        async move { vfs.move_to_trash(&paths).await },
+                        move |result| Message::MoveToTrashFinished {
+                            paths: trashed_paths,
+                            result,
+                        },
+                    )
+                }
+            }
             ActiveDialog::ConfirmEmptyTrash => {
                 let notice = self.strings().trash_emptied.to_owned();
                 Task::perform(async move { vfs.empty_trash().await }, move |result| {
                     Message::TrashActionFinished {
                         notice: notice.clone(),
+                        clear_trash_undo: true,
                         result,
                     }
                 })
@@ -5372,6 +5548,11 @@ impl App {
             keyboard::Key::Character("v") if modifiers.control() => {
                 self.update(Message::PasteClipboard)
             }
+            keyboard::Key::Character("z")
+                if modifiers.control() && !modifiers.shift() && !modifiers.alt() =>
+            {
+                self.update(Message::UndoLastAction)
+            }
             keyboard::Key::Character("n") if modifiers.control() && modifiers.shift() => {
                 self.update(Message::OpenCreateDialog(true))
             }
@@ -5760,6 +5941,14 @@ fn apply_tab_filter(tab: &mut TabState) {
     tab.selection
         .selected_ids
         .retain(|id| valid_ids.contains(id));
+}
+
+fn push_undo_entry(stack: &mut Vec<UndoAction>, action: UndoAction) {
+    stack.push(action);
+    if stack.len() > MAX_UNDO_HISTORY {
+        let excess = stack.len() - MAX_UNDO_HISTORY;
+        stack.drain(0..excess);
+    }
 }
 
 fn spawn_list_task(
@@ -6207,6 +6396,35 @@ mod tests {
         assert_eq!(
             super::clamp_properties_modal_pos(-20.0, 500.0, 760.0, 560.0, win),
             (8.0, 132.0)
+        );
+    }
+
+    #[test]
+    fn undo_stack_caps_history_and_preserves_lifo_order() {
+        let mut stack = Vec::new();
+        for idx in 0..(super::MAX_UNDO_HISTORY + 5) {
+            super::push_undo_entry(
+                &mut stack,
+                super::UndoAction::Trash {
+                    paths: vec![std::path::PathBuf::from(format!("/tmp/item_{idx}"))],
+                },
+            );
+        }
+        assert_eq!(stack.len(), super::MAX_UNDO_HISTORY);
+        assert_eq!(
+            stack.pop(),
+            Some(super::UndoAction::Trash {
+                paths: vec![std::path::PathBuf::from(format!(
+                    "/tmp/item_{}",
+                    super::MAX_UNDO_HISTORY + 4
+                ))]
+            })
+        );
+        assert_eq!(
+            stack.first(),
+            Some(&super::UndoAction::Trash {
+                paths: vec![std::path::PathBuf::from("/tmp/item_5")]
+            })
         );
     }
 }

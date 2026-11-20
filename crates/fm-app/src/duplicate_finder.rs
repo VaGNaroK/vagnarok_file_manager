@@ -66,6 +66,7 @@ pub struct DuplicateDeleteOutcome {
     pub protected_groups: usize,
     pub error: Option<String>,
     pub affected_dirs: Vec<PathBuf>,
+    pub was_trash: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -665,6 +666,7 @@ async fn revalidate_and_delete(
             protected_groups,
             error: None,
             affected_dirs: Vec::new(),
+            was_trash: !permanent,
         };
     }
 
@@ -681,6 +683,7 @@ async fn revalidate_and_delete(
             protected_groups,
             error: None,
             affected_dirs: affected_dirs_set.into_iter().collect(),
+            was_trash: !permanent,
         },
         Err(err) => DuplicateDeleteOutcome {
             deleted_paths: Vec::new(),
@@ -688,6 +691,7 @@ async fn revalidate_and_delete(
             protected_groups,
             error: Some(err.to_string()),
             affected_dirs: affected_dirs_set.into_iter().collect(),
+            was_trash: !permanent,
         },
     }
 }
@@ -718,6 +722,12 @@ fn handle_delete_finished(app: &mut App, outcome: DuplicateDeleteOutcome) -> Tas
             modal.groups.retain(|group| group.items.len() >= 2);
             modal.rebuild_flat_rows();
         }
+    }
+
+    if outcome.was_trash && !outcome.deleted_paths.is_empty() {
+        app.push_undo(crate::app::UndoAction::Trash {
+            paths: outcome.deleted_paths.clone(),
+        });
     }
 
     if let Some(err) = outcome.error {

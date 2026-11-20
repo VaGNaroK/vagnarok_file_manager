@@ -468,3 +468,13 @@ shortcuts-created =
         [one] Shortcut created.
        *[other] { $count } shortcuts created.
     }
+undo-action = Undo (Ctrl+Z)
+undo-trash-action = Undo delete (Ctrl+Z)
+moved-to-trash-undo-hint = Moved to Trash (Ctrl+Z to undo)
+undo-nothing-in-trash = Item no longer in Trash to restore.
+undo-rename-done = Rename undone.
+undo-restored-count =
+    { $count ->
+        [one] Restored from Trash.
+       *[other] Restored { $count } items from Trash.
+    }

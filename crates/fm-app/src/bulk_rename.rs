@@ -617,7 +617,10 @@ pub fn handle_bulk_rename_msg(app: &mut App, msg: BulkRenameMsg) -> Task<Message
             }
 
             if !outcome.undo_pairs.is_empty() {
-                app.last_bulk_rename_undo = Some(outcome.undo_pairs);
+                app.last_bulk_rename_undo = Some(outcome.undo_pairs.clone());
+                app.push_undo(crate::app::UndoAction::BulkRename {
+                    pairs: outcome.undo_pairs,
+                });
             }
             if !outcome.resulting_paths.is_empty() {
                 app.pending_select_paths = outcome.resulting_paths;
@@ -648,6 +651,13 @@ pub fn undo_last_bulk_rename(app: &mut App) -> Task<Message> {
     let Some(pairs) = app.last_bulk_rename_undo.take() else {
         return Task::none();
     };
+    if let Some(pos) = app
+        .undo_stack
+        .iter()
+        .rposition(|a| matches!(a, crate::app::UndoAction::BulkRename { .. }))
+    {
+        app.undo_stack.remove(pos);
+    }
     let batch_id = app.next_job_id;
     app.next_job_id = app.next_job_id.wrapping_add(1).max(1);
     app.pending_select_paths = pairs.iter().map(|(_, old)| old.clone()).collect();

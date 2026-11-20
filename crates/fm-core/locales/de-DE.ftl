@@ -468,3 +468,13 @@ shortcuts-created =
         [one] Verknüpfung erstellt.
        *[other] { $count } Verknüpfungen erstellt.
     }
+undo-action = Rückgängig (Strg+Z)
+undo-trash-action = Löschen rückgängig machen (Strg+Z)
+moved-to-trash-undo-hint = In den Papierkorb verschoben (Strg+Z zum Rückgängigmachen)
+undo-nothing-in-trash = Element nicht mehr im Papierkorb zum Wiederherstellen.
+undo-rename-done = Umbenennung rückgängig gemacht.
+undo-restored-count =
+    { $count ->
+        [one] Aus dem Papierkorb wiederhergestellt.
+       *[other] { $count } Elemente aus dem Papierkorb wiederhergestellt.
+    }
