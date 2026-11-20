@@ -315,6 +315,20 @@ pub fn nemo_grid_item_button(p: ThemePalette) -> impl Fn(&Theme, button::Status)
     }
 }
 
+/// Cor de destaque para seleção de texto em `text_input`, com contraste nítido nos temas claro e escuro.
+pub fn text_selection_color(p: ThemePalette) -> Color {
+    match p.preset {
+        fm_core::ThemePreset::ObsidianFlow => Color {
+            a: 0.75,
+            ..p.accent_primary
+        },
+        fm_core::ThemePreset::AetherLight => Color {
+            a: 0.38,
+            ..p.accent_primary
+        },
+    }
+}
+
 pub fn search_input_style(
     p: ThemePalette,
 ) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {
@@ -338,7 +352,7 @@ pub fn search_input_style(
             icon: p.text_muted,
             placeholder: p.text_muted,
             value: p.text_primary,
-            selection: p.accent_surface,
+            selection: text_selection_color(p),
         }
     }
 }

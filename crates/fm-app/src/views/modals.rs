@@ -725,7 +725,7 @@ fn properties_general_tab<'a>(
                     icon: palette.text_muted,
                     placeholder: palette.text_muted,
                     value: palette.text_primary,
-                    selection: palette.accent_surface,
+                    selection: styles::text_selection_color(palette),
                 }
             })
             .on_input(move |val| Message::PropertiesNameChanged(win_id, val))
