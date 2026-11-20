@@ -1055,8 +1055,11 @@ fn grid_item_card<'a>(
         })
         .wrapping(text::Wrapping::None);
 
+    let box_width = (card_width - 14.0).max(88.0);
+
     let label_content = column![
         container(name_text)
+            .max_width(box_width - 12.0)
             .max_height(48.0)
             .clip(true)
             .align_x(Center),
@@ -1083,41 +1086,31 @@ fn grid_item_card<'a>(
             .into()
     };
 
-    let box_width = (card_width - 14.0).max(88.0);
-
-    let card_content = container(
-        column![
-            container(preview_widget)
-                .width(preview_box)
-                .height(preview_box)
-                .align_x(Center)
-                .align_y(Center),
-            label_block,
-        ]
-        .spacing(4)
-        .align_x(Center)
-        .width(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Center)
-    .align_y(Alignment::Start);
+    let card_content = column![
+        container(preview_widget)
+            .height(preview_box)
+            .align_x(Center)
+            .align_y(Alignment::End),
+        label_block,
+    ]
+    .spacing(5)
+    .align_x(Center);
 
     let card_btn = button(card_content)
-        .width(Length::Fixed(box_width))
-        .height(Length::Fixed(card_height))
-        .padding([6, 4])
-        .style(styles::nemo_grid_item_button(palette, selected))
+        .width(Length::Shrink)
+        .height(Length::Shrink)
+        .padding([2, 2])
+        .style(styles::nemo_grid_item_button(palette))
         .on_press(Message::SelectEntry { index, modifiers });
 
     let card_area = mouse_area(card_btn).on_right_press(Message::OpenEntryContextMenu(index));
 
-    // Mantém espaçamento lateral livre na célula para permitir clique direito no fundo atrás dos cards.
+    // Mantém a célula virtualizada de tamanho fixo enquanto o botão envolve apenas ícone + rótulo.
     container(card_area)
         .width(Length::Fixed(card_width))
         .height(Length::Fixed(card_height))
         .align_x(Center)
-        .align_y(Center)
+        .align_y(Alignment::Start)
         .into()
 }
 
