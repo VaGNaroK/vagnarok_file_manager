@@ -30,6 +30,27 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-17 | **Alpha 6 (`v0.1.0-alpha.6`), Seleção em Caixa, Alinhamento Grid, Correções Flatpak & Ícones do Sistema** | Seleção em caixa (marquee), alinhamento do Grid esquerda→direita por padrão + alternância, preservação de scroll no menu de contexto, filtro de bind-mounts no Flatpak, divisor/scrollbar da barra lateral e ícones híbridos do sistema hospedeiro | 58 unitários |
 | 2026-11-19 | **Alpha 7 (`v0.1.0-alpha.7`), Abrir Com, Renomeação em Lote, 7z/RAR, Compactação Minimizável & Buscador de Duplicados MD5** | Recurso **Abrir com...** + persistência por tipo, modal de **Propriedades** arrastável/redimensionável com bloqueio de cliques ao fundo, **Renomeação em Lote** visual (EXIF/ID3/Regex/Desfazer), extração (`.zip`, `.tar`, `.tar.gz`, `.7z`, `.rar`), janela **Compactar como...** minimizável em segundo plano, **Buscador de Arquivos Duplicados (MD5 em 4 níveis)** virtualizado/minimizável, lixeira virtual unificada e permissão executável rápida | 103 unitários |
 | 2026-11-20 | **Alpha 8 (`v0.1.0-alpha.8`), Montagem de ISO/IMG, Desfazer (`Ctrl+Z`), Atalhos (`Enviar para... ▸`), Seleção `Shift+Setas` & Polimento Flatpak** | Montagem nativa de `.iso`/`.img` abrindo em nova aba, ejeção segura e hotplug automático de mídias removíveis (Linux/Flatpak/Windows), pilha de **Desfazer (`Ctrl+Z`)** para Lixeira e renomeações, submenu cascata **Enviar para... ▸** (symlinks Linux / `.lnk` Windows), seleção contínua por teclado (`Shift+Setas` e `Shift+Home/End`), caixa de filtro customizado por extensão, menu de contexto inteligente sem barra de rolagem forçada e correções Flatpak/arquivos compactados | 116 unitários |
+| 2026-11-20 | **Alpha 9 (`v0.1.0-alpha.9`), Extração com Senha (ZIP/7z/RAR), Propriedades Multi-Seleção, UX de Unidades & Contraste `AetherLight`** | Modal de senha e descriptografia 100% Rust para `.zip` (WinZip AES + ZipCrypto), `.7z` (AES-256) e `.rar` (RAR4/RAR5), soma recursiva de tamanho e itens em **Propriedades** com seleção múltipla, barra lateral de **Unidades** sem duplicação disco/partição com ordenação inteligente e tooltips de hardware, texto mais escuro (WCAG AA+) no tema `AetherLight`, remoção de Colunas Miller (mantendo Grade e Tabela) e reset de filtro de extensão com `Esc` | 125 unitários |
+
+---
+
+## [0.1.0-alpha.9] — 2026-11-20
+
+### Adicionado
+- **Extração de arquivos protegidos por senha (`.zip`, `.7z`, `.rar`) com modal dedicada**:
+  - Habilitada feature `aes-crypto` em `zip` (suporte completo a **WinZip AES-128/192/256** e **ZipCrypto** tradicional), além de passagem de senha e tratamento completo em **7-Zip (`sevenz-rust2` AES-256)** e **RAR (`unrar-rs` RAR4/RAR5, volume único e multi-volume)**.
+  - Nova janela modal centralizada **"Arquivo protegido por senha"** com campo mascarado, botão para mostrar/ocultar senha, submissão por `Enter`, cancelamento por `Esc`, feedback imediato de senha incorreta e limpeza de subpasta vazia recém-criada em caso de cancelamento ou erro de senha.
+  - Listagem virtual de `.zip` protegidos por senha agora usa `by_index_data` para exibir os nomes internos sem ocultar o conteúdo.
+- **Propriedades agregadas para seleção múltipla**:
+  - Ao selecionar 2 ou mais pastas/arquivos e abrir **Propriedades**, o modal exibe o resumo da seleção (`X pastas, Y arquivos`), o diretório pai comum e calcula recursivamente em background (`compute_paths_size_cached`, cancelável e com cache `redb`) o **tamanho total somado**, a barra de proporção no volume e a contagem total de itens.
+- **Melhorias na seção Unidades da barra lateral**:
+  - Deduplicação de disco-pai quando há partições filhas no `lsblk` (eliminando entradas duplicadas como `sdc` + `sdc1`), herdando o modelo físico do disco (`MODEL`).
+  - Ordenação inteligente (`Root (/)` / `C:` primeiro → mídias removíveis/ISOs montadas → partições montadas → desmontadas), layout limpo em 2 linhas com desambiguação seletiva do dispositivo em nomes parecidos (`JOGOS`/`Jogos`, `Download`/`Downloads`) e tooltip rico com modelo do disco, dispositivo, sistema de arquivos e espaço.
+
+### Melhorado e Corrigido
+- **Contraste de texto no tema claro (`AetherLight`)**: escurecidos `text_secondary` (`#64748B` → `#334155`) e `text_muted` (`#94A3B8` → `#475569`) em `fm-theme`, garantindo leitura nítida e conformidade WCAG AA+ em toda a interface e modais (validado por teste unitário de contraste).
+- **Reset de filtro por extensão com `Esc`**: pressionar `Esc` no canvas agora limpa tanto a busca quanto o filtro de extensão ativo e zera a caixa **Filtrar**, retornando à visualização completa de diretórios e arquivos.
+- **Modos de visualização simplificados**: removida a visualização **Colunas (Miller)**, mantendo **Grade** e **Tabela de Detalhes**, com migração automática (`#[serde(alias = "Columns")]`) para configurações antigas salvas em `config.toml`.
 
 ---
 

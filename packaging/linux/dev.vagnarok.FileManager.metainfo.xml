@@ -17,10 +17,10 @@
   <description>
     <p>
       Vagnarok File Manager is a native GPU-accelerated desktop file manager built
-      100% in Rust with Iced and wgpu, featuring virtualized Grid, Detail Table, and
-      Miller Columns views, live directory watching, fuzzy deep search, Git telemetry,
-      ArchiveVfs navigation (.zip/.tar/.tar.gz), floating Properties windows, and
-      multi-language Project Fluent localization.
+      100% in Rust with Iced and wgpu, featuring virtualized Grid and Detail Table
+      views, live directory watching, fuzzy deep search, Git telemetry,
+      ArchiveVfs navigation and password-protected extraction (.zip/.7z/.rar/.tar/.tar.gz),
+      floating Properties windows, and multi-language Project Fluent localization.
     </p>
   </description>
   <launchable type="desktop-id">dev.vagnarok.FileManager.desktop</launchable>
@@ -29,6 +29,11 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.1.0-alpha.9" date="2026-11-20">
+      <description>
+        <p>Adds interactive password prompt modal and pure-Rust decryption for password-protected .zip (WinZip AES and ZipCrypto), .7z (AES-256), and .rar archives; aggregates recursive total size and item counts in multi-selection Properties; improves Drives sidebar with parent-disk deduplication, smart sorting, two-line disambiguated subtitles, and hardware model tooltips; darkens AetherLight secondary and muted text tokens to WCAG AA+; simplifies view modes to Grid and Detail Table; and resets extension filters cleanly on Escape.</p>
+      </description>
+    </release>
     <release version="0.1.0-alpha.8" date="2026-11-20">
       <description>
         <p>Adds native .iso/.img disk image mounting (opening in a new tab), safe eject and automatic drive hotplug on Linux/Flatpak/Windows, Ctrl+Z undo stack for Trash restore and renames, cascading Send to shortcut submenu (POSIX symlinks on Linux and native COM .lnk on Windows), Shift+Arrows and Shift+Home/End keyboard range selection, custom extension filter input box, smart context menu flipping, and Flatpak trash/default-app fixes.</p>
