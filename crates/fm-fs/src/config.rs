@@ -105,6 +105,9 @@ mod tests {
             favorites: vec![PathBuf::from("/tmp/work")],
             open_with_defaults,
             open_with_custom_apps: std::collections::BTreeMap::new(),
+            check_updates_on_startup: false,
+            dismissed_update_tag: Some("v1.0.0".to_owned()),
+            last_update_check_unix: Some(1_700_000_000),
         };
 
         save_config_to(&path, &cfg).expect("save config ok");
@@ -112,6 +115,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(loaded.theme, ThemePreset::ObsidianFlow);
+        assert!(!loaded.check_updates_on_startup);
+        assert_eq!(loaded.dismissed_update_tag.as_deref(), Some("v1.0.0"));
+        assert_eq!(loaded.last_update_check_unix, Some(1_700_000_000));
         assert_eq!(loaded.language, Language::EsEs);
         assert!(loaded.language_customized);
         assert!(!loaded.show_hero_card);

@@ -55,6 +55,11 @@ pub fn view<'a>(
 
     let is_split = app.split_view.is_some();
     let mut header_stack = column![action_bar(app, tab, palette, strings)].spacing(14);
+    if !app.update_banner_dismissed_session
+        && let Some(update) = app.visible_update()
+    {
+        header_stack = header_stack.push(update_banner(update, palette, strings));
+    }
     if !is_split && app.config.show_hero_card {
         header_stack = header_stack.push(hero_card(tab, palette, strings));
     }
@@ -509,6 +514,53 @@ pub fn drag_preview_overlay<'a>(
             bottom: 0.0,
             left: x,
         })
+        .into()
+}
+
+fn update_banner<'a>(
+    update: &'a fm_core::UpdateInfo,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let content = row![
+        icon_arrow_up().size(14).color(palette.accent_primary),
+        text(format!(
+            "{} {}",
+            strings.update_available_banner, update.tag_name
+        ))
+        .size(12)
+        .font(FONT_UI_SEMIBOLD)
+        .color(palette.text_primary),
+        space::horizontal(),
+        button(
+            text(strings.update_ignore_btn)
+                .size(11)
+                .font(FONT_UI)
+                .color(palette.text_secondary),
+        )
+        .padding([4, 10])
+        .style(styles::ghost_button(palette, 6.0))
+        .on_press(Message::DismissUpdateVersion(update.tag_name.clone())),
+        button(
+            text(strings.update_download_btn)
+                .size(12)
+                .font(FONT_UI_SEMIBOLD),
+        )
+        .padding([5, 12])
+        .style(styles::pill_primary_button(palette))
+        .on_press(Message::OpenUpdateReleasePage(update.release_url.clone())),
+        button(icon_x().size(13).color(palette.text_muted))
+            .padding([4, 6])
+            .style(styles::ghost_button(palette, 6.0))
+            .on_press(Message::DismissUpdateSession),
+    ]
+    .spacing(8)
+    .align_y(Center);
+
+    container(content)
+        .width(Length::Fill)
+        .padding([8, 14])
+        .style(move |_| styles::panel_surface(palette.accent_surface, palette.accent_border, 10.0))
         .into()
 }
 

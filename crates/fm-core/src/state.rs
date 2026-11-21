@@ -546,6 +546,12 @@ pub struct AppConfig {
     pub open_with_defaults: BTreeMap<String, OpenWithAssociation>,
     #[serde(default)]
     pub open_with_custom_apps: BTreeMap<String, Vec<OpenWithAssociation>>,
+    #[serde(default = "default_true")]
+    pub check_updates_on_startup: bool,
+    #[serde(default)]
+    pub dismissed_update_tag: Option<String>,
+    #[serde(default)]
+    pub last_update_check_unix: Option<u64>,
 }
 
 impl Default for AppConfig {
@@ -569,6 +575,9 @@ impl Default for AppConfig {
             favorites: Vec::new(),
             open_with_defaults: BTreeMap::new(),
             open_with_custom_apps: BTreeMap::new(),
+            check_updates_on_startup: true,
+            dismissed_update_tag: None,
+            last_update_check_unix: None,
         }
     }
 }

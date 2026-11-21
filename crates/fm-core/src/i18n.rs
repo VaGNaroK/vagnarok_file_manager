@@ -456,6 +456,16 @@ pub struct Strings {
     pub drag_move_prefix: &'static str,
     pub drag_copy_prefix: &'static str,
     pub drag_ctrl_copy_hint: &'static str,
+    pub update_available_banner: &'static str,
+    pub update_download_btn: &'static str,
+    pub update_ignore_btn: &'static str,
+    pub update_check_btn: &'static str,
+    pub update_checking: &'static str,
+    pub update_up_to_date: &'static str,
+    pub update_check_failed: &'static str,
+    pub update_auto_check_label: &'static str,
+    pub update_open_releases: &'static str,
+    pub tip_update_available: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -1088,6 +1098,16 @@ impl Strings {
         let drag_move_prefix = resolve("drag-move-prefix");
         let drag_copy_prefix = resolve("drag-copy-prefix");
         let drag_ctrl_copy_hint = resolve("drag-ctrl-copy-hint");
+        let update_available_banner = resolve("update-available-banner");
+        let update_download_btn = resolve("update-download-btn");
+        let update_ignore_btn = resolve("update-ignore-btn");
+        let update_check_btn = resolve("update-check-btn");
+        let update_checking = resolve("update-checking");
+        let update_up_to_date = resolve("update-up-to-date");
+        let update_check_failed = resolve("update-check-failed");
+        let update_auto_check_label = resolve("update-auto-check-label");
+        let update_open_releases = resolve("update-open-releases");
+        let tip_update_available = resolve("tip-update-available");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -1513,6 +1533,16 @@ impl Strings {
             drag_move_prefix,
             drag_copy_prefix,
             drag_ctrl_copy_hint,
+            update_available_banner,
+            update_download_btn,
+            update_ignore_btn,
+            update_check_btn,
+            update_checking,
+            update_up_to_date,
+            update_check_failed,
+            update_auto_check_label,
+            update_open_releases,
+            tip_update_available,
         }
     }
 }

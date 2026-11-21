@@ -8,6 +8,7 @@ pub mod domain;
 pub mod duplicates;
 pub mod i18n;
 pub mod state;
+pub mod version;
 pub mod vfs;
 
 pub use archive_job::{
@@ -45,5 +46,10 @@ pub use state::{
     AppConfig, DIR_FILTER_SENTINEL, IconThemeMode, Language, SelectionModifiers, SelectionState,
     TabId, TabState, ThemePreset, WindowDecorationsMode, format_extension_filter_badge,
     matches_extension_filter, normalize_extension_filter_input,
+};
+pub use version::{
+    GITHUB_OWNER, GITHUB_RELEASES_API_URL, GITHUB_RELEASES_FALLBACK_URL,
+    GITHUB_RELEASES_PAGE_PREFIX, GITHUB_REPO, ReleaseCandidate, SemVer, UPDATE_CHECK_COOLDOWN_SECS,
+    UpdateInfo, is_trusted_release_url, select_newer_stable_release, should_auto_check_updates,
 };
 pub use vfs::{FsError, VfsProvider};

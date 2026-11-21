@@ -494,3 +494,13 @@ close-split-pane = Close split pane (F3)
 drag-move-prefix = Move
 drag-copy-prefix = Copy
 drag-ctrl-copy-hint = Ctrl = Copy
+update-available-banner = New stable version available:
+update-download-btn = Download update
+update-ignore-btn = Ignore this version
+update-check-btn = Check for updates
+update-checking = Checking for updates...
+update-up-to-date = You are already on the latest stable version.
+update-check-failed = Could not check for updates right now.
+update-auto-check-label = Check for stable updates on startup
+update-open-releases = Open release page
+tip-update-available = New stable version available — click to open the release page

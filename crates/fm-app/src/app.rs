@@ -9,8 +9,8 @@ use fm_core::{
     EntryExtraInfo, EntryId, FileEntry, FolderSummary, FsError, IconThemeMode, JobProgress,
     JobState, Language, OpenWithAssociation, OpenWithCatalog, PermissionsMeta, RecursiveSize,
     SelectedFileTelemetry, SelectionModifiers, SortDirection, SortField, Strings, SystemIconBucket,
-    SystemIconKey, SystemPlaceKind, TabId, TabState, ThemePreset, UserPlaces, VfsProvider,
-    ViewMode, VolumeSpace, WindowDecorationsMode,
+    SystemIconKey, SystemPlaceKind, TabId, TabState, ThemePreset, UpdateInfo, UserPlaces,
+    VfsProvider, ViewMode, VolumeSpace, WindowDecorationsMode, should_auto_check_updates,
 };
 use fm_fs::LocalFs;
 use fm_index::SearchHit;
@@ -37,6 +37,7 @@ pub use crate::bulk_rename::{
     effective_bulk_rename_modal_rect,
 };
 use crate::duplicate_finder::{DuplicateFinderMsg, DuplicateFinderState};
+use crate::updater::UpdateCheckState;
 use crate::views;
 
 pub fn search_input_id() -> Id {
@@ -292,6 +293,13 @@ pub fn entry_mtime_nanos(modified_at: Option<std::time::SystemTime>) -> u128 {
     modified_at
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
         .unwrap_or(0)
 }
 
@@ -767,6 +775,17 @@ pub enum Message {
         modifiers: keyboard::Modifiers,
     },
     MetaCacheReady(Option<Arc<DiskMetadataCache>>),
+    CheckForUpdates {
+        manual: bool,
+    },
+    UpdateCheckFinished {
+        manual: bool,
+        result: Result<Option<UpdateInfo>, String>,
+    },
+    OpenUpdateReleasePage(String),
+    DismissUpdateSession,
+    DismissUpdateVersion(String),
+    ToggleAutoCheckUpdates,
 }
 
 pub struct App {
@@ -860,6 +879,9 @@ pub struct App {
     pub drag_hover_pane: Option<SplitPane>,
     pub drag_hover_folder: Option<(SplitPane, PathBuf)>,
     pub suppress_click_until: Option<Instant>,
+    pub update_state: UpdateCheckState,
+    pub update_banner_dismissed_session: bool,
+    pub update_check_cancel: Option<CancellationToken>,
 }
 
 impl App {
@@ -1001,6 +1023,9 @@ impl App {
             drag_hover_pane: None,
             drag_hover_folder: None,
             suppress_click_until: None,
+            update_state: UpdateCheckState::Idle,
+            update_banner_dismissed_session: false,
+            update_check_cancel: None,
         };
 
         let auto_theme_task = if !app.config.theme_customized {
@@ -1049,6 +1074,21 @@ impl App {
             .then(window::monitor_size)
             .map(Message::MonitorSizeReady);
 
+        let auto_update_task = if should_auto_check_updates(
+            app.config.check_updates_on_startup,
+            app.config.last_update_check_unix,
+            now_unix_secs(),
+        ) {
+            Task::perform(
+                async {
+                    tokio::time::sleep(Duration::from_millis(2500)).await;
+                },
+                |()| Message::CheckForUpdates { manual: false },
+            )
+        } else {
+            Task::none()
+        };
+
         (
             app,
             Task::batch([
@@ -1062,6 +1102,7 @@ impl App {
                 load1,
                 load2,
                 sys_icons_task,
+                auto_update_task,
             ]),
         )
     }
@@ -1189,6 +1230,17 @@ impl App {
 
     pub fn current_tab(&self) -> Option<&TabState> {
         self.pane_tab(self.active_pane())
+    }
+
+    /// Retorna informações da nova versão estável disponível quando não ignorada pelo usuário.
+    pub fn visible_update(&self) -> Option<&UpdateInfo> {
+        let UpdateCheckState::Available(info) = &self.update_state else {
+            return None;
+        };
+        if self.config.dismissed_update_tag.as_deref() == Some(info.tag_name.as_str()) {
+            return None;
+        }
+        Some(info)
     }
 
     pub fn is_current_tab_trash(&self) -> bool {
@@ -4376,6 +4428,74 @@ impl App {
             Message::MetaCacheReady(cache) => {
                 self.metadata_cache = cache;
                 Task::none()
+            }
+            Message::CheckForUpdates { manual } => {
+                if let Some(prev) = self.update_check_cancel.take() {
+                    prev.cancel();
+                }
+                let cancel = CancellationToken::new();
+                self.update_check_cancel = Some(cancel.clone());
+                if manual {
+                    self.update_state = UpdateCheckState::Checking;
+                }
+                let current_version = env!("CARGO_PKG_VERSION").to_owned();
+                Task::perform(
+                    async move {
+                        crate::updater::fetch_latest_stable_release(current_version, cancel).await
+                    },
+                    move |result| Message::UpdateCheckFinished { manual, result },
+                )
+            }
+            Message::UpdateCheckFinished { manual, result } => {
+                self.update_check_cancel = None;
+                match result {
+                    Ok(Some(info)) => {
+                        self.config.last_update_check_unix = Some(now_unix_secs());
+                        if manual {
+                            self.update_banner_dismissed_session = false;
+                            if self.config.dismissed_update_tag.as_deref()
+                                == Some(info.tag_name.as_str())
+                            {
+                                self.config.dismissed_update_tag = None;
+                            }
+                        }
+                        self.update_state = UpdateCheckState::Available(info);
+                        self.persist_config_task()
+                    }
+                    Ok(None) => {
+                        self.config.last_update_check_unix = Some(now_unix_secs());
+                        self.update_state = UpdateCheckState::UpToDate;
+                        self.persist_config_task()
+                    }
+                    Err(err) => {
+                        tracing::debug!("Update check failed: {err}");
+                        if manual {
+                            self.update_state = UpdateCheckState::Error(err);
+                        } else if matches!(self.update_state, UpdateCheckState::Checking) {
+                            self.update_state = UpdateCheckState::Idle;
+                        }
+                        Task::none()
+                    }
+                }
+            }
+            Message::OpenUpdateReleasePage(url) => {
+                if let Err(err) = crate::updater::open_release_page_async(url) {
+                    self.status_notice = Some(err);
+                }
+                Task::none()
+            }
+            Message::DismissUpdateSession => {
+                self.update_banner_dismissed_session = true;
+                Task::none()
+            }
+            Message::DismissUpdateVersion(tag) => {
+                self.update_banner_dismissed_session = true;
+                self.config.dismissed_update_tag = Some(tag);
+                self.persist_config_task()
+            }
+            Message::ToggleAutoCheckUpdates => {
+                self.config.check_updates_on_startup = !self.config.check_updates_on_startup;
+                self.persist_config_task()
             }
             Message::WindowResized { window_id, size } => {
                 if window_id == self.main_window_id {

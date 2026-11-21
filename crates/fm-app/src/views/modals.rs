@@ -2499,6 +2499,25 @@ pub fn preferences_modal<'a>(
                     .on_press(Message::ToggleWindowDecorations)
                     .into(),
             ),
+            pref_row(
+                strings.update_auto_check_label,
+                button(
+                    text(if app.config.check_updates_on_startup {
+                        "ON"
+                    } else {
+                        "OFF"
+                    })
+                    .size(12)
+                    .font(FONT_MONO_BOLD),
+                )
+                .padding([5, 12])
+                .style(styles::tab_button(
+                    palette,
+                    app.config.check_updates_on_startup,
+                ))
+                .on_press(Message::ToggleAutoCheckUpdates)
+                .into(),
+            ),
             Space::new().height(2),
             text(cfg_path_hint)
                 .size(10)
@@ -2507,7 +2526,7 @@ pub fn preferences_modal<'a>(
         ]
         .spacing(10)
         .into(),
-        PreferencesTab::About => about_tab_view(palette, strings),
+        PreferencesTab::About => about_tab_view(app, palette, strings),
     };
 
     let card = container(
@@ -2598,8 +2617,12 @@ fn modal_tab_button<'a>(
     .into()
 }
 
-/// Renders the About tab inside the Preferences modal with version, developer status, and GPLv3 details.
-fn about_tab_view<'a>(palette: ThemePalette, strings: Strings) -> Element<'a, Message> {
+/// Renders the About tab inside the Preferences modal with version, update status, and GPLv3 details.
+fn about_tab_view<'a>(
+    app: &'a App,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
     let version_tag = concat!("v", env!("CARGO_PKG_VERSION"));
     let copy_payload = format!(
         "Vagnarok File Manager {version_tag} ({} / {}) · GNU GPL v3.0 (GPL-3.0-or-later)",
@@ -2696,7 +2719,88 @@ fn about_tab_view<'a>(palette: ThemePalette, strings: Strings) -> Element<'a, Me
     .padding(14)
     .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0));
 
+    let is_checking = matches!(app.update_state, crate::updater::UpdateCheckState::Checking);
+    let update_status_row: Element<'a, Message> = match &app.update_state {
+        crate::updater::UpdateCheckState::Idle => text(strings.update_auto_check_label)
+            .size(11)
+            .font(FONT_UI)
+            .color(palette.text_muted)
+            .into(),
+        crate::updater::UpdateCheckState::Checking => text(strings.update_checking)
+            .size(12)
+            .font(FONT_MONO)
+            .color(palette.text_secondary)
+            .into(),
+        crate::updater::UpdateCheckState::UpToDate => row![
+            icon_check().size(14).color(palette.status_success),
+            text(strings.update_up_to_date)
+                .size(12)
+                .font(FONT_UI)
+                .color(palette.status_success),
+        ]
+        .spacing(6)
+        .align_y(Center)
+        .into(),
+        crate::updater::UpdateCheckState::Available(info) => row![
+            text(format!(
+                "{} {}",
+                strings.update_available_banner, info.tag_name
+            ))
+            .size(12)
+            .font(FONT_UI_SEMIBOLD)
+            .color(palette.accent_primary),
+            space::horizontal(),
+            button(
+                row![
+                    icon_external_link().size(13),
+                    text(strings.update_open_releases)
+                        .size(12)
+                        .font(FONT_UI_SEMIBOLD),
+                ]
+                .spacing(6)
+                .align_y(Center),
+            )
+            .padding([5, 12])
+            .style(styles::pill_primary_button(palette))
+            .on_press(Message::OpenUpdateReleasePage(info.release_url.clone())),
+        ]
+        .spacing(8)
+        .align_y(Center)
+        .into(),
+        crate::updater::UpdateCheckState::Error(_) => text(strings.update_check_failed)
+            .size(12)
+            .font(FONT_UI)
+            .color(palette.status_warning)
+            .into(),
+    };
+
+    let update_card = container(update_status_row)
+        .width(Length::Fill)
+        .padding([10, 14])
+        .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0));
+
+    let mut check_btn = button(
+        row![
+            icon_rotate_ccw().size(13),
+            text(if is_checking {
+                strings.update_checking
+            } else {
+                strings.update_check_btn
+            })
+            .size(12)
+            .font(FONT_UI_SEMIBOLD),
+        ]
+        .spacing(6)
+        .align_y(Center),
+    )
+    .padding([6, 14])
+    .style(styles::pill_secondary_button(palette));
+    if !is_checking {
+        check_btn = check_btn.on_press(Message::CheckForUpdates { manual: true });
+    }
+
     let actions = row![
+        check_btn,
         space::horizontal(),
         button(
             row![icon_copy().size(13), text(strings.about_copy_info).size(12)]
@@ -2707,9 +2811,10 @@ fn about_tab_view<'a>(palette: ThemePalette, strings: Strings) -> Element<'a, Me
         .style(styles::pill_secondary_button(palette))
         .on_press(Message::CopyText(copy_payload, copied_notice)),
     ]
+    .spacing(8)
     .align_y(Center);
 
-    column![hero, meta_card, actions]
+    column![hero, meta_card, update_card, actions]
         .spacing(12)
         .width(Length::Fill)
         .into()

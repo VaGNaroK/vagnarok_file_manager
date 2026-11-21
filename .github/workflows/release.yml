@@ -70,7 +70,12 @@ jobs:
               sys.exit(1)
 
           base_ver, pre = m.group(1), m.group(2)
-          numeric_version = f"{base_ver}.0"
+          pre_num = 0
+          if pre:
+              pre_match = re.search(r"(\d+)$", pre)
+              if pre_match:
+                  pre_num = min(int(pre_match.group(1)), 65535)
+          numeric_version = f"{base_ver}.{pre_num}"
           is_prerelease = "true" if pre else "false"
 
           os.makedirs("release-meta", exist_ok=True)

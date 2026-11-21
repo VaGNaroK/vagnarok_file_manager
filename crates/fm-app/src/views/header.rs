@@ -109,7 +109,31 @@ fn tab_strip_row<'a>(
         palette,
     );
 
-    let mut right_controls = row![lang_btn, theme_btn].spacing(4).align_y(Center);
+    let mut right_controls = row![].spacing(4).align_y(Center);
+    if let Some(update) = app.visible_update() {
+        let update_pill = with_tooltip(
+            button(
+                row![
+                    icon_arrow_up().size(12).color(palette.on_accent),
+                    text(update.tag_name.as_str())
+                        .size(11)
+                        .font(FONT_MONO)
+                        .color(palette.on_accent)
+                        .wrapping(text::Wrapping::None),
+                ]
+                .spacing(4)
+                .align_y(Center),
+            )
+            .padding([3, 9])
+            .style(styles::pill_primary_button(palette))
+            .on_press(Message::OpenUpdateReleasePage(update.release_url.clone())),
+            strings.tip_update_available,
+            tooltip::Position::Bottom,
+            palette,
+        );
+        right_controls = right_controls.push(update_pill);
+    }
+    right_controls = right_controls.push(lang_btn).push(theme_btn);
 
     let show_csd = app.config.window_decorations == WindowDecorationsMode::IntegratedCsd;
     if show_csd {

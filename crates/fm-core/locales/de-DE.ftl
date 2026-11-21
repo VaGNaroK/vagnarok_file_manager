@@ -494,3 +494,13 @@ close-split-pane = Geteilte Ansicht schließen (F3)
 drag-move-prefix = Verschieben
 drag-copy-prefix = Kopieren
 drag-ctrl-copy-hint = Strg = Kopieren
+update-available-banner = Neue stabile Version verfügbar:
+update-download-btn = Update herunterladen
+update-ignore-btn = Diese Version ignorieren
+update-check-btn = Nach Updates suchen
+update-checking = Suche nach Updates...
+update-up-to-date = Sie verwenden bereits die neueste stabile Version.
+update-check-failed = Updates konnten derzeit nicht geprüft werden.
+update-auto-check-label = Beim Start nach stabilen Updates suchen
+update-open-releases = Release-Seite öffnen
+tip-update-available = Neue stabile Version verfügbar — klicken, um die Release-Seite zu öffnen
