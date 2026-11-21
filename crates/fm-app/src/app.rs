@@ -2701,9 +2701,7 @@ impl App {
                 else {
                     return Task::none();
                 };
-                if mode == CopyMode::Move {
-                    self.clipboard = None;
-                }
+                self.clipboard = None;
                 self.dispatch_transfer(mode, sources, dest_dir, policy)
             }
             Message::OpenDeepSearch => {
@@ -5791,15 +5789,11 @@ impl App {
         let Some(transfer) = self.clipboard.clone() else {
             return clipboard::read().map(Message::SystemClipboardPasteRead);
         };
-        if transfer.mode == CopyMode::Move {
-            // Limpeza definitiva ocorre quando transferência for despachada sem diálogo de conflito.
-            let task = self.start_transfer_with_conflict_check(transfer.mode, transfer.paths);
-            if !matches!(self.active_dialog, Some(ActiveDialog::Conflict { .. })) {
-                self.clipboard = None;
-            }
-            return task;
+        let task = self.start_transfer_with_conflict_check(transfer.mode, transfer.paths);
+        if !matches!(self.active_dialog, Some(ActiveDialog::Conflict { .. })) {
+            self.clipboard = None;
         }
-        self.start_transfer_with_conflict_check(transfer.mode, transfer.paths)
+        task
     }
 
     fn flush_dropped_files(&mut self) -> Task<Message> {
@@ -6663,6 +6657,7 @@ impl App {
                 } else if self.quicklook_open {
                     self.update(Message::CloseQuickLook)
                 } else {
+                    self.clipboard = None;
                     self.clear_active_canvas_filters()
                 }
             }
