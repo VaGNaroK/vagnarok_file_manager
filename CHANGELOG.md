@@ -31,6 +31,42 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-19 | **Alpha 7 (`v0.1.0-alpha.7`), Abrir Com, Renomeação em Lote, 7z/RAR, Compactação Minimizável & Buscador de Duplicados MD5** | Recurso **Abrir com...** + persistência por tipo, modal de **Propriedades** arrastável/redimensionável com bloqueio de cliques ao fundo, **Renomeação em Lote** visual (EXIF/ID3/Regex/Desfazer), extração (`.zip`, `.tar`, `.tar.gz`, `.7z`, `.rar`), janela **Compactar como...** minimizável em segundo plano, **Buscador de Arquivos Duplicados (MD5 em 4 níveis)** virtualizado/minimizável, lixeira virtual unificada e permissão executável rápida | 103 unitários |
 | 2026-11-20 | **Alpha 8 (`v0.1.0-alpha.8`), Montagem de ISO/IMG, Desfazer (`Ctrl+Z`), Atalhos (`Enviar para... ▸`), Seleção `Shift+Setas` & Polimento Flatpak** | Montagem nativa de `.iso`/`.img` abrindo em nova aba, ejeção segura e hotplug automático de mídias removíveis (Linux/Flatpak/Windows), pilha de **Desfazer (`Ctrl+Z`)** para Lixeira e renomeações, submenu cascata **Enviar para... ▸** (symlinks Linux / `.lnk` Windows), seleção contínua por teclado (`Shift+Setas` e `Shift+Home/End`), caixa de filtro customizado por extensão, menu de contexto inteligente sem barra de rolagem forçada e correções Flatpak/arquivos compactados | 116 unitários |
 | 2026-11-20 | **Alpha 9 (`v0.1.0-alpha.9`), Extração com Senha (ZIP/7z/RAR), Propriedades Multi-Seleção, UX de Unidades & Contraste `AetherLight`** | Modal de senha e descriptografia 100% Rust para `.zip` (WinZip AES + ZipCrypto), `.7z` (AES-256) e `.rar` (RAR4/RAR5), soma recursiva de tamanho e itens em **Propriedades** com seleção múltipla, barra lateral de **Unidades** sem duplicação disco/partição com ordenação inteligente e tooltips de hardware, texto mais escuro (WCAG AA+) no tema `AetherLight`, remoção de Colunas Miller (mantendo Grade e Tabela) e reset de filtro de extensão com `Esc` | 125 unitários |
+| 2026-11-20 | **Alpha 10 (`v0.1.0-alpha.10`), Dual-Pane Split View, Arquivos Recentes (`recent://`), Verificador de Atualizações Estáveis, Performance NVMe & UX Estilo Nemo** | Tela dividida (**Dual-Pane Split View** `F3`) com navegação independente e drag & drop interno, visão virtual de **Arquivos Recentes (`recent://`)** com controle em Preferências, **verificador de atualizações estáveis** via GitHub Releases, **otimização de cópia em NVMe** (buffers de 4 MiB, throttling de progresso a 30 Hz e suspensão de reloads do watcher), menu de contexto em caixas de texto, busca profunda BFS precisa e seleção/rótulos multi-linha estilo Nemo no Grid | 136 unitários |
+
+---
+
+## [0.1.0-alpha.10] — 2026-11-20
+
+### Adicionado
+- **Modo de Tela Dividida (`Dual-Pane Split View`, atalho `F3`)**:
+  - Botão de divisão na barra superior (`F3`) que divide o canvas em dois painéis independentes (esquerdo e direito), cada um com cabeçalho próprio, histórico (`Voltar`, `Avançar`, `Subir`), scroll virtualizado independente e divisor central redimensionável (com clique direito para resetar em `50% / 50%`).
+  - **Drag & Drop interno entre painéis e subpastas**: arrastar itens selecionados entre o painel esquerdo e o direito (ou sobre subpastas) move por padrão ou copia ao segurar `Ctrl`, com pill visual flutuante indicando a operação e o destino.
+- **Arquivos Recentes (`recent://`) e opção de privacidade em Preferências**:
+  - Novo atalho **"Recentes"** no Acesso Rápido da barra lateral (abaixo de *Início*), listando até 100 arquivos abertos recentemente em ordem MRU com caminhos reais em disco (suportando miniaturas, QuickLook `Espaço`, Inspector `Alt+I`, Abrir Com e Propriedades).
+  - Ações contextuais dedicadas em `recent://`: **"Abrir local do arquivo"** (navega até a pasta pai e seleciona o item), **"Remover dos recentes"** e botão **"Limpar recentes"** na barra de ações e nos menus de contexto.
+  - Opção **"Mostrar arquivos recentes"** (`ON` / `OFF`) e botão **"Limpar recentes"** em **Preferências → Geral**: ao desativar (`OFF`), oculta o item da barra lateral, limpa o histórico, interrompe o registro e redireciona abas abertas em `recent://` para `Início`.
+- **Verificador de Atualizações Estáveis (GitHub Releases)**:
+  - Verificação assíncrona em background (2,5 s após iniciar, com intervalo de 24 h) e botão manual **"Verificar atualizações"** em **Preferências → Sobre**, comparando SemVer estrito e **ignorando pré-lançamentos (`alpha`/`beta`/`rc`) e drafts**.
+  - Banner discreto no topo do canvas quando uma nova versão estável está disponível, com botão **"Baixar atualização"** (abrindo a página oficial da release no navegador), opção de ignorar a versão e chave `ON`/`OFF` em **Preferências → Geral**.
+  - Hardening de upgrade nos instaladores Windows (`Inno Setup` com `CloseApplications=yes`, `UsePreviousAppDir=yes` e `VersionInfoVersion`) e Linux (`.deb`, Flatpak e AppImage).
+- **Menu de contexto em todas as caixas de texto (`Recortar`, `Copiar`, `Colar`, `Selecionar tudo`)**:
+  - Clique com o botão direito em qualquer `text_input` do aplicativo (Busca rápida, Busca profunda, Barra de endereço `Ctrl+L`, Renomear, Nova pasta/arquivo e Propriedades) abre menu contextual nativo preservando a seleção UTF-8 e o cursor.
+- **Abertura de múltiplas pastas selecionadas em novas abas**:
+  - Ao selecionar várias pastas e clicar em **"Abrir em nova aba (N)"** no menu de contexto, todas as pastas selecionadas são abertas em abas separadas de uma só vez.
+- **Botão `Colar` sempre acessível na barra de ações com fallback da área de transferência do SO**:
+  - Permite colar arquivos copiados tanto internamente quanto de gerenciadores externos do sistema (`x-special/gnome-copied-files`, `text/uri-list` e caminhos absolutos), limpando o badge numérico imediatamente após colar ou ao pressionar `Esc`.
+
+### Melhorado e Corrigido
+- **Performance de cópia/movimentação em SSDs NVMe (`CopyEngine` + UI + Watcher)**:
+  - Coalescência e throttling de eventos `JobProgress` no worker (~30 Hz), eliminando o gargalo de milhares de redesenhos por segundo na thread de UI do Iced.
+  - Buffer de streaming ampliado de `256 KiB` para `4 MiB` no fallback de cópia e remoção de `stat` duplo por arquivo.
+  - Suspensão de recarregamentos repetidos do watcher de diretório e de varreduras recursivas de tamanho (`compute_folder_size_cached`) enquanto uma transferência está ativa.
+- **Busca Profunda (`Ctrl+K`) com travessia BFS e filtro inteligente**:
+  - Substituída a travessia em profundidade (DFS) por **busca em largura (BFS)** priorizando pastas mais rasas antes de subárvores profundas.
+  - Ignora caches ocultos pesados (`.cache`, `.local`, `.cargo`, `.rustup`, `node_modules`, `target`) quando `show_hidden` está desativado e pontua exclusivamente pelo nome do arquivo/pasta (evitando falsos positivos pelo caminho do diretório pai).
+- **Visual e seleção do Grid no estilo Nemo + contraste de seleção de texto**:
+  - Rótulos de arquivos e pastas no modo Grade quebram em até 2 linhas com hitbox restrita ao ícone e ao texto (sem card ou caixa de hover ao redor), facilitando a seleção em caixa (marquee) entre itens.
+  - Aumentado o contraste do destaque de texto selecionado (`selection_bg`) em `text_input` nos temas escuro (`ObsidianFlow`) e claro (`AetherLight`).
 
 ---
 
