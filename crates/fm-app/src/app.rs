@@ -63,6 +63,30 @@ pub fn archive_password_input_id() -> Id {
     Id::new("fm_archive_password_input")
 }
 
+pub fn properties_name_input_id(window_id: window::Id) -> Id {
+    Id::from(format!("fm_properties_name_input_{window_id:?}"))
+}
+
+/// Alvo de um campo de texto que suporta menu de contexto (Recortar/Copiar/Colar).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TextInputTarget {
+    DialogInput,
+    PropertiesName(window::Id),
+    SearchBar,
+    DeepSearchInput,
+    PathDraft,
+}
+
+/// Estado do menu de contexto aberto sobre um `text_input`.
+#[derive(Debug, Clone)]
+pub struct TextInputMenuState {
+    pub window_id: window::Id,
+    pub target: TextInputTarget,
+    pub position: Point,
+    pub selection: Option<(usize, usize)>,
+    pub cursor_index: usize,
+}
+
 #[derive(Debug, Clone)]
 pub enum ContextMenuKind {
     Entry {
@@ -678,6 +702,24 @@ pub enum Message {
     },
     OpenCanvasContextMenu(SplitPane),
     CloseContextMenu,
+    OpenTextInputContextMenu {
+        window_id: window::Id,
+        target: TextInputTarget,
+        position: Point,
+        selection: Option<(usize, usize)>,
+        cursor_index: usize,
+    },
+    CloseTextInputContextMenu,
+    TextInputContextCut,
+    TextInputContextCopy,
+    TextInputContextPaste,
+    TextInputContextPasteRead {
+        target: TextInputTarget,
+        selection: Option<(usize, usize)>,
+        cursor_index: usize,
+        text: Option<String>,
+    },
+    TextInputContextSelectAll,
     ContextMenuSetSendToOpen(bool),
     CreateShortcutInDir {
         dest_dir: Option<PathBuf>,
@@ -798,6 +840,7 @@ pub struct App {
     pub cursor_position: Point,
     pub window_size: Size,
     pub context_menu: Option<ContextMenuState>,
+    pub text_input_menu: Option<TextInputMenuState>,
     pub filter_ext_draft: String,
     pub pending_dropped_paths: Vec<PathBuf>,
     pub drop_batch_id: u64,
@@ -938,6 +981,7 @@ impl App {
             cursor_position: Point::new(240.0, 140.0),
             window_size: initial_size,
             context_menu: None,
+            text_input_menu: None,
             filter_ext_draft: String::new(),
             pending_dropped_paths: Vec::new(),
             drop_batch_id: 0,
@@ -1160,6 +1204,39 @@ impl App {
 
     pub fn current_tab_mut(&mut self) -> Option<&mut TabState> {
         self.pane_tab_mut(self.active_pane())
+    }
+
+    pub fn text_input_value(&self, target: &TextInputTarget) -> String {
+        match target {
+            TextInputTarget::DialogInput => match &self.active_dialog {
+                Some(ActiveDialog::CreateItem { name, .. })
+                | Some(ActiveDialog::Rename { name, .. }) => name.clone(),
+                _ => String::new(),
+            },
+            TextInputTarget::PropertiesName(win_id) => self
+                .properties_windows
+                .get(win_id)
+                .map(|p| p.draft_name.clone())
+                .unwrap_or_default(),
+            TextInputTarget::SearchBar => self
+                .current_tab()
+                .map(|t| t.filter_query.clone())
+                .unwrap_or_default(),
+            TextInputTarget::DeepSearchInput => self.deep_search_query.clone(),
+            TextInputTarget::PathDraft => self.path_draft.clone(),
+        }
+    }
+
+    fn set_text_input_value(&mut self, target: &TextInputTarget, val: String) -> Task<Message> {
+        match target {
+            TextInputTarget::DialogInput => self.update(Message::DialogInputChanged(val)),
+            TextInputTarget::PropertiesName(win_id) => {
+                self.update(Message::PropertiesNameChanged(*win_id, val))
+            }
+            TextInputTarget::SearchBar => self.update(Message::FilterChanged(val)),
+            TextInputTarget::DeepSearchInput => self.update(Message::DeepSearchQueryChanged(val)),
+            TextInputTarget::PathDraft => self.update(Message::PathDraftChanged(val)),
+        }
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -3191,6 +3268,105 @@ impl App {
                 self.filter_ext_draft.clear();
                 Task::none()
             }
+            Message::OpenTextInputContextMenu {
+                window_id,
+                target,
+                position,
+                selection,
+                cursor_index,
+            } => {
+                self.context_menu = None;
+                self.text_input_menu = Some(TextInputMenuState {
+                    window_id,
+                    target,
+                    position,
+                    selection,
+                    cursor_index,
+                });
+                Task::none()
+            }
+            Message::CloseTextInputContextMenu => {
+                self.text_input_menu = None;
+                Task::none()
+            }
+            Message::TextInputContextCopy => {
+                let Some(menu) = self.text_input_menu.take() else {
+                    return Task::none();
+                };
+                let value = self.text_input_value(&menu.target);
+                let input_id = text_input_id_for_target(&menu.target);
+                let mut tasks = vec![operation::focus(input_id.clone())];
+                if let Some((start, end)) = menu.selection {
+                    tasks.push(operation::select_range(input_id, start, end));
+                }
+                if let Some(copied) = extract_text_input_copy(&value, menu.selection) {
+                    tasks.push(clipboard::write(copied));
+                }
+                Task::batch(tasks)
+            }
+            Message::TextInputContextCut => {
+                let Some(menu) = self.text_input_menu.take() else {
+                    return Task::none();
+                };
+                let value = self.text_input_value(&menu.target);
+                let input_id = text_input_id_for_target(&menu.target);
+                let Some((cut_text, remaining, next_cursor)) =
+                    apply_text_input_cut(&value, menu.selection)
+                else {
+                    return operation::focus(input_id);
+                };
+                let side = self.set_text_input_value(&menu.target, remaining);
+                Task::batch([
+                    clipboard::write(cut_text),
+                    side,
+                    operation::focus(input_id.clone()),
+                    operation::move_cursor_to(input_id, next_cursor),
+                ])
+            }
+            Message::TextInputContextPaste => {
+                let Some(menu) = self.text_input_menu.take() else {
+                    return Task::none();
+                };
+                let target = menu.target;
+                let selection = menu.selection;
+                let cursor_index = menu.cursor_index;
+                clipboard::read().map(move |text| Message::TextInputContextPasteRead {
+                    target: target.clone(),
+                    selection,
+                    cursor_index,
+                    text,
+                })
+            }
+            Message::TextInputContextPasteRead {
+                target,
+                selection,
+                cursor_index,
+                text,
+            } => {
+                let input_id = text_input_id_for_target(&target);
+                let Some(pasted) = text else {
+                    return operation::focus(input_id);
+                };
+                let current = self.text_input_value(&target);
+                let (next_val, next_cursor) =
+                    apply_text_input_paste(&current, selection, cursor_index, &pasted);
+                let side = self.set_text_input_value(&target, next_val);
+                Task::batch([
+                    side,
+                    operation::focus(input_id.clone()),
+                    operation::move_cursor_to(input_id, next_cursor),
+                ])
+            }
+            Message::TextInputContextSelectAll => {
+                let Some(menu) = self.text_input_menu.take() else {
+                    return Task::none();
+                };
+                let input_id = text_input_id_for_target(&menu.target);
+                Task::batch([
+                    operation::focus(input_id.clone()),
+                    operation::select_all(input_id),
+                ])
+            }
             Message::ContextMenuSetSendToOpen(open) => {
                 if let Some(menu) = self.context_menu.as_mut() {
                     menu.send_to_open = open;
@@ -4290,6 +4466,13 @@ impl App {
                 Task::none()
             }
             Message::WindowUnfocused(window_id) => {
+                if self
+                    .text_input_menu
+                    .as_ref()
+                    .is_some_and(|m| m.window_id == window_id)
+                {
+                    self.text_input_menu = None;
+                }
                 if window_id == self.main_window_id {
                     self.current_modifiers = keyboard::Modifiers::empty();
                     self.entry_drag = None;
@@ -4396,7 +4579,23 @@ impl App {
         if window_id != self.main_window_id
             && let Some(props) = self.properties_windows.get(&window_id)
         {
-            return views::modals::properties_window_view(self, window_id, props, palette, strings);
+            let props_view =
+                views::modals::properties_window_view(self, window_id, props, palette, strings);
+            if let Some(menu) = self
+                .text_input_menu
+                .as_ref()
+                .filter(|m| m.window_id == window_id)
+            {
+                let menu_layer = views::modals::text_input_context_menu_overlay(
+                    self,
+                    menu,
+                    Size::new(760.0, 560.0),
+                    palette,
+                    strings,
+                );
+                return stack![props_view, menu_layer].into();
+            }
+            return props_view;
         }
         let tab = self.current_tab();
 
@@ -4501,7 +4700,12 @@ impl App {
                 self, modal, palette, strings,
             ))
         } else if let Some(dialog) = &self.active_dialog {
-            Some(views::modals::dialog_modal(dialog, palette, strings))
+            Some(views::modals::dialog_modal(
+                dialog,
+                self.main_window_id,
+                palette,
+                strings,
+            ))
         } else if let Some(props) = self.properties_windows.get(&self.main_window_id) {
             Some(views::modals::properties_modal_overlay(
                 self,
@@ -4533,12 +4737,31 @@ impl App {
             .as_ref()
             .map(|drag| views::canvas::drag_preview_overlay(self, drag, palette, strings));
 
-        match (overlay, drag_overlay) {
-            (Some(layer), Some(drag_layer)) => stack![main_shell, layer, drag_layer].into(),
-            (Some(layer), None) => stack![main_shell, layer].into(),
-            (None, Some(drag_layer)) => stack![main_shell, drag_layer].into(),
-            (None, None) => stack![main_shell].into(),
+        let text_menu_overlay: Option<Element<'_, Message>> = self
+            .text_input_menu
+            .as_ref()
+            .filter(|m| m.window_id == self.main_window_id)
+            .map(|menu| {
+                views::modals::text_input_context_menu_overlay(
+                    self,
+                    menu,
+                    self.window_size,
+                    palette,
+                    strings,
+                )
+            });
+
+        let mut layers: Vec<Element<'_, Message>> = vec![main_shell.into()];
+        if let Some(layer) = overlay {
+            layers.push(layer);
         }
+        if let Some(drag_layer) = drag_overlay {
+            layers.push(drag_layer);
+        }
+        if let Some(text_menu) = text_menu_overlay {
+            layers.push(text_menu);
+        }
+        iced::widget::Stack::with_children(layers).into()
     }
 
     /// Libera todas as abas (ativas, inativas e painel dividido) posicionadas dentro de `mount_path`,
@@ -6159,6 +6382,13 @@ impl App {
             return self.update(Message::WindowClose);
         }
 
+        if self.text_input_menu.is_some()
+            && matches!(key.as_ref(), keyboard::Key::Named(Named::Escape))
+        {
+            self.text_input_menu = None;
+            return Task::none();
+        }
+
         if self.properties_windows.contains_key(&window_id) {
             if matches!(key.as_ref(), keyboard::Key::Named(Named::Escape)) {
                 return self.update(Message::ClosePropertiesWindow(window_id));
@@ -7353,6 +7583,87 @@ pub(crate) fn resolve_internal_drop_destination(
     Some(dest)
 }
 
+fn text_input_id_for_target(target: &TextInputTarget) -> Id {
+    match target {
+        TextInputTarget::DialogInput => dialog_input_id(),
+        TextInputTarget::PropertiesName(win_id) => properties_name_input_id(*win_id),
+        TextInputTarget::SearchBar => search_input_id(),
+        TextInputTarget::DeepSearchInput => deep_search_input_id(),
+        TextInputTarget::PathDraft => path_input_id(),
+    }
+}
+
+pub(crate) fn extract_text_input_copy(
+    text: &str,
+    selection: Option<(usize, usize)>,
+) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return None;
+    }
+    if let Some((start, end)) = selection {
+        let s = start.min(chars.len());
+        let e = end.min(chars.len());
+        if s < e {
+            return Some(chars[s..e].iter().collect());
+        }
+    }
+    Some(text.to_owned())
+}
+
+pub(crate) fn apply_text_input_cut(
+    text: &str,
+    selection: Option<(usize, usize)>,
+) -> Option<(String, String, usize)> {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return None;
+    }
+    let (start, end) = match selection {
+        Some((s, e)) if s < e => (s.min(chars.len()), e.min(chars.len())),
+        _ => (0, chars.len()),
+    };
+    if start >= end {
+        return None;
+    }
+    let cut: String = chars[start..end].iter().collect();
+    let mut remaining = String::with_capacity(text.len().saturating_sub(cut.len()));
+    for &c in &chars[..start] {
+        remaining.push(c);
+    }
+    for &c in &chars[end..] {
+        remaining.push(c);
+    }
+    Some((cut, remaining, start))
+}
+
+pub(crate) fn apply_text_input_paste(
+    text: &str,
+    selection: Option<(usize, usize)>,
+    cursor_index: usize,
+    pasted: &str,
+) -> (String, usize) {
+    let sanitized: String = pasted.chars().filter(|&c| c != '\r' && c != '\n').collect();
+    let chars: Vec<char> = text.chars().collect();
+    let (start, end) = match selection {
+        Some((s, e)) if s < e => (s.min(chars.len()), e.min(chars.len())),
+        _ => {
+            let pos = cursor_index.min(chars.len());
+            (pos, pos)
+        }
+    };
+    let pasted_len = sanitized.chars().count();
+    let mut out = String::with_capacity(text.len() + sanitized.len());
+    for &c in &chars[..start] {
+        out.push(c);
+    }
+    out.push_str(&sanitized);
+    for &c in &chars[end..] {
+        out.push(c);
+    }
+    (out, start + pasted_len)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -7792,6 +8103,42 @@ mod tests {
                 CopyMode::Move,
             ),
             Some(PathBuf::from("/tmp/right/inbox"))
+        );
+    }
+
+    #[test]
+    fn text_input_context_copy_cut_and_paste_preserve_utf8_selection() {
+        // Cópia de seleção parcial (sem a extensão) e com acentos UTF-8
+        assert_eq!(
+            super::extract_text_input_copy("cabello1.jpg", Some((0, 8))),
+            Some("cabello1".to_owned())
+        );
+        assert_eq!(
+            super::extract_text_input_copy("ação_final.png", Some((0, 4))),
+            Some("ação".to_owned())
+        );
+        // Sem seleção explícita -> copia o nome completo
+        assert_eq!(
+            super::extract_text_input_copy("cabello1.jpg", None),
+            Some("cabello1.jpg".to_owned())
+        );
+
+        // Recortar seleção parcial
+        assert_eq!(
+            super::apply_text_input_cut("cabello1.jpg", Some((0, 8))),
+            Some(("cabello1".to_owned(), ".jpg".to_owned(), 0))
+        );
+
+        // Colar substituindo seleção e removendo quebras de linha
+        assert_eq!(
+            super::apply_text_input_paste("cabello1.jpg", Some((0, 8)), 8, "foto_nova\n"),
+            ("foto_nova.jpg".to_owned(), 9)
+        );
+
+        // Colar na posição do cursor sem seleção
+        assert_eq!(
+            super::apply_text_input_paste("cabello.jpg", None, 7, "_v2"),
+            ("cabello_v2.jpg".to_owned(), 10)
         );
     }
 }

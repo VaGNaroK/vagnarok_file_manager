@@ -10,8 +10,10 @@ use iced::widget::{
 use iced::{ContentFit, Element, Length, Padding};
 use lucide_icons::iced::{icon_file_text, icon_folder, icon_search, icon_x};
 
-use crate::app::{App, Message, deep_search_input_id, thumbnail_key_for_entry};
-use crate::views::{modal_overlay_backdrop, render_entry_icon, sanitize_single_line};
+use crate::app::{App, Message, TextInputTarget, deep_search_input_id, thumbnail_key_for_entry};
+use crate::views::{
+    modal_overlay_backdrop, render_entry_icon, sanitize_single_line, wrap_text_input_context_menu,
+};
 
 pub fn drawer<'a>(
     app: &'a App,
@@ -308,12 +310,18 @@ pub fn deep_search_modal<'a>(
     let query_row = container(
         row![
             icon_search().size(15).color(palette.accent_primary),
-            text_input(strings.search_placeholder, &app.deep_search_query)
-                .id(deep_search_input_id())
-                .on_input(Message::DeepSearchQueryChanged)
-                .size(13)
-                .padding([6, 8])
-                .style(styles::search_input_style(palette)),
+            wrap_text_input_context_menu(
+                text_input(strings.search_placeholder, &app.deep_search_query)
+                    .id(deep_search_input_id())
+                    .on_input(Message::DeepSearchQueryChanged)
+                    .size(13)
+                    .padding([6, 8])
+                    .style(styles::search_input_style(palette))
+                    .into(),
+                app.main_window_id,
+                TextInputTarget::DeepSearchInput,
+                app.deep_search_query.clone(),
+            ),
         ]
         .spacing(8)
         .align_y(Center),

@@ -13,14 +13,22 @@ use fm_core::{
     DriveInfo, FileEntry, IconThemeMode, SystemIconBucket, SystemIconKey, SystemPlaceKind,
 };
 use fm_theme::{FONT_UI, ThemePalette, styles};
-use iced::widget::{Text, container, image, opaque, text, tooltip};
-use iced::{Alignment::Center, Color, ContentFit, Element, Length, Padding};
+use iced::advanced::layout;
+use iced::advanced::renderer;
+use iced::advanced::widget::{Operation, Tree, tree};
+use iced::advanced::{Clipboard, Layout, Shell, Widget, overlay};
+use iced::mouse;
+use iced::widget::{Text, container, image, opaque, text, text_input, tooltip};
+use iced::{
+    Alignment::Center, Color, ContentFit, Element, Event, Length, Padding, Rectangle, Size, Vector,
+    window,
+};
 use lucide_icons::iced::{
     icon_file_archive, icon_file_code, icon_file_json, icon_file_text, icon_folder, icon_image,
     icon_terminal,
 };
 
-use crate::app::{App, Message};
+use crate::app::{App, Message, TextInputTarget};
 
 /// Renderiza um ícone do sistema hospedeiro (quando ativo e já em cache na GPU) ou usa o fallback vetorial.
 pub fn render_system_or_fallback<'a>(
@@ -221,6 +229,180 @@ pub fn modal_overlay_backdrop_at<'a, M: 'a>(
             })
             .style(move |_| styles::modal_backdrop()(&iced::Theme::Light)),
     )
+}
+
+/// Envolve um `text_input` para abrir menu de contexto (Recortar/Copiar/Colar/Selecionar tudo)
+/// com botão direito preservando exatamente a seleção e a posição do cursor internas do widget.
+pub fn wrap_text_input_context_menu<'a>(
+    input: Element<'a, Message>,
+    window_id: window::Id,
+    target: TextInputTarget,
+    current_value: String,
+) -> Element<'a, Message> {
+    Element::new(ContextMenuTextInput {
+        content: input,
+        window_id,
+        target,
+        current_value,
+    })
+}
+
+struct ContextMenuTextInput<'a> {
+    content: Element<'a, Message>,
+    window_id: window::Id,
+    target: TextInputTarget,
+    current_value: String,
+}
+
+impl Widget<Message, iced::Theme, iced::Renderer> for ContextMenuTextInput<'_> {
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content));
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.content
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) = event
+            && !shell.is_event_captured()
+            && let Some(pos) = cursor.position_over(layout.bounds())
+        {
+            type Paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph;
+            let value = text_input::Value::new(&self.current_value);
+            let (selection, cursor_index) =
+                if tree.children[0].tag == tree::Tag::of::<text_input::State<Paragraph>>() {
+                    let state = tree.children[0]
+                        .state
+                        .downcast_ref::<text_input::State<Paragraph>>();
+                    match state.cursor().state(&value) {
+                        text_input::cursor::State::Selection { start, end } => {
+                            (Some((start.min(end), start.max(end))), end)
+                        }
+                        text_input::cursor::State::Index(idx) => (None, idx),
+                    }
+                } else {
+                    (None, value.len())
+                };
+
+            shell.publish(Message::OpenTextInputContextMenu {
+                window_id: self.window_id,
+                target: self.target.clone(),
+                position: pos,
+                selection,
+                cursor_index,
+            });
+            shell.capture_event();
+            return;
+        }
+
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &iced::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
 }
 
 #[cfg(test)]

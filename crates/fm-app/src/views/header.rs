@@ -11,8 +11,8 @@ use lucide_icons::iced::{
     icon_square, icon_sun, icon_x,
 };
 
-use crate::app::{App, Message, path_input_id, search_input_id};
-use crate::views::{sanitize_single_line, with_tooltip};
+use crate::app::{App, Message, TextInputTarget, path_input_id, search_input_id};
+use crate::views::{sanitize_single_line, with_tooltip, wrap_text_input_context_menu};
 
 pub fn view<'a>(
     app: &'a App,
@@ -214,13 +214,19 @@ fn navigation_row<'a>(
     let search_box = container(
         row![
             icon_search().size(14).color(palette.text_muted),
-            text_input(strings.search_placeholder, query)
-                .id(search_input_id())
-                .on_input(Message::FilterChanged)
-                .on_submit(Message::OpenDeepSearch)
-                .size(12)
-                .padding([4, 6])
-                .style(styles::search_input_style(palette)),
+            wrap_text_input_context_menu(
+                text_input(strings.search_placeholder, query)
+                    .id(search_input_id())
+                    .on_input(Message::FilterChanged)
+                    .on_submit(Message::OpenDeepSearch)
+                    .size(12)
+                    .padding([4, 6])
+                    .style(styles::search_input_style(palette))
+                    .into(),
+                app.main_window_id,
+                TextInputTarget::SearchBar,
+                query.to_owned(),
+            ),
             deep_btn,
             container(
                 text("Ctrl+K")
@@ -313,7 +319,7 @@ fn unified_breadcrumb<'a>(
 ) -> Element<'a, Message> {
     if app.path_editing {
         let placeholder = app.places.home.to_string_lossy().into_owned();
-        return container(
+        return container(wrap_text_input_context_menu(
             text_input(&placeholder, &app.path_draft)
                 .id(path_input_id())
                 .on_input(Message::PathDraftChanged)
@@ -321,8 +327,12 @@ fn unified_breadcrumb<'a>(
                 .size(12)
                 .font(FONT_MONO)
                 .padding([4, 10])
-                .style(styles::search_input_style(palette)),
-        )
+                .style(styles::search_input_style(palette))
+                .into(),
+            app.main_window_id,
+            TextInputTarget::PathDraft,
+            app.path_draft.clone(),
+        ))
         .width(Length::Fixed(360.0))
         .into();
     }

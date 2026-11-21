@@ -26,18 +26,20 @@ use lucide_icons::iced::{
 
 use crate::app::{
     ActiveDialog, App, ContextMenuKind, ContextMenuState, Message, PreferencesTab, PropertiesTab,
-    PropertiesWindowState, UndoAction, dialog_input_id, effective_properties_modal_rect,
-    filter_ext_input_id, open_with_props_type_key, resolve_open_in_new_tab_targets,
+    PropertiesWindowState, TextInputMenuState, TextInputTarget, UndoAction, dialog_input_id,
+    effective_properties_modal_rect, filter_ext_input_id, open_with_props_type_key,
+    properties_name_input_id, resolve_open_in_new_tab_targets,
 };
 use crate::archive_jobs::ArchiveUiMsg;
 use crate::duplicate_finder::DuplicateFinderMsg;
 use crate::views::{
     entry_icon, modal_overlay_backdrop, modal_overlay_backdrop_at, sanitize_single_line,
-    with_tooltip,
+    with_tooltip, wrap_text_input_context_menu,
 };
 
 pub fn dialog_modal<'a>(
     dialog: &'a ActiveDialog,
+    window_id: window::Id,
     palette: ThemePalette,
     strings: Strings,
 ) -> Element<'a, Message> {
@@ -64,15 +66,19 @@ pub fn dialog_modal<'a>(
             .style(styles::tab_button(palette, !*is_dir))
             .on_press(Message::DialogSetCreateIsDir(false));
 
-            let input = container(
+            let input = container(wrap_text_input_context_menu(
                 text_input(strings.name_label, name)
                     .id(dialog_input_id())
                     .on_input(Message::DialogInputChanged)
                     .on_submit(Message::SubmitDialog)
                     .size(13)
                     .padding([6, 10])
-                    .style(styles::search_input_style(palette)),
-            )
+                    .style(styles::search_input_style(palette))
+                    .into(),
+                window_id,
+                TextInputTarget::DialogInput,
+                name.clone(),
+            ))
             .padding([2, 6])
             .style(move |_| styles::panel_surface(palette.surface_low, palette.accent_border, 8.0));
 
@@ -115,15 +121,19 @@ pub fn dialog_modal<'a>(
             .into()
         }
         ActiveDialog::Rename { src: _, name } => {
-            let input = container(
+            let input = container(wrap_text_input_context_menu(
                 text_input(strings.name_label, name)
                     .id(dialog_input_id())
                     .on_input(Message::DialogInputChanged)
                     .on_submit(Message::SubmitDialog)
                     .size(13)
                     .padding([6, 10])
-                    .style(styles::search_input_style(palette)),
-            )
+                    .style(styles::search_input_style(palette))
+                    .into(),
+                window_id,
+                TextInputTarget::DialogInput,
+                name.clone(),
+            ))
             .padding([2, 6])
             .style(move |_| styles::panel_surface(palette.surface_low, palette.accent_border, 8.0));
 
@@ -706,34 +716,40 @@ fn properties_general_tab<'a>(
             .wrapping(text::Wrapping::None)
             .into()
     } else {
-        text_input("", &props.draft_name)
-            .size(15)
-            .padding([8, 12])
-            .style(move |_, status| {
-                let border_color = match status {
-                    text_input::Status::Focused { .. } => palette.accent_primary,
-                    text_input::Status::Hovered => palette.border_strong,
-                    _ => Color::TRANSPARENT,
-                };
-                text_input::Style {
-                    background: Background::Color(palette.surface_lowest),
-                    border: Border {
-                        color: border_color,
-                        width: 1.0,
-                        radius: Radius::from(8.0),
-                    },
-                    icon: palette.text_muted,
-                    placeholder: palette.text_muted,
-                    value: palette.text_primary,
-                    selection: styles::text_selection_color(palette),
-                }
-            })
-            .on_input(move |val| Message::PropertiesNameChanged(win_id, val))
-            .on_submit(Message::PropertiesApply {
-                window_id: win_id,
-                close_after: true,
-            })
-            .into()
+        wrap_text_input_context_menu(
+            text_input("", &props.draft_name)
+                .id(properties_name_input_id(win_id))
+                .size(15)
+                .padding([8, 12])
+                .style(move |_, status| {
+                    let border_color = match status {
+                        text_input::Status::Focused { .. } => palette.accent_primary,
+                        text_input::Status::Hovered => palette.border_strong,
+                        _ => Color::TRANSPARENT,
+                    };
+                    text_input::Style {
+                        background: Background::Color(palette.surface_lowest),
+                        border: Border {
+                            color: border_color,
+                            width: 1.0,
+                            radius: Radius::from(8.0),
+                        },
+                        icon: palette.text_muted,
+                        placeholder: palette.text_muted,
+                        value: palette.text_primary,
+                        selection: styles::text_selection_color(palette),
+                    }
+                })
+                .on_input(move |val| Message::PropertiesNameChanged(win_id, val))
+                .on_submit(Message::PropertiesApply {
+                    window_id: win_id,
+                    close_after: true,
+                })
+                .into(),
+            win_id,
+            TextInputTarget::PropertiesName(win_id),
+            props.draft_name.clone(),
+        )
     };
 
     let hero_box = container(
@@ -3839,6 +3855,124 @@ pub fn context_menu_overlay<'a>(
     } else {
         stack![backdrop_catcher, main_layer].into()
     }
+}
+
+/// Menu de contexto para campos de texto (`text_input`): Recortar, Copiar, Colar e Selecionar tudo.
+pub fn text_input_context_menu_overlay<'a>(
+    app: &'a App,
+    menu: &'a TextInputMenuState,
+    viewport_size: iced::Size,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let has_text = !app.text_input_value(&menu.target).is_empty();
+    let has_selection = menu.selection.is_some_and(|(s, e)| s < e);
+    let mut items = column![].spacing(2).width(Length::Fixed(196.0));
+
+    let disabled_color = palette.text_muted;
+    let cut_btn: Element<'a, Message> = if has_selection || has_text {
+        ctx_item(
+            icon_scissors()
+                .size(14)
+                .color(palette.text_secondary)
+                .into(),
+            strings.cut,
+            palette.text_primary,
+            Message::TextInputContextCut,
+            palette,
+        )
+    } else {
+        container(
+            row![
+                icon_scissors().size(14).color(disabled_color),
+                text(strings.cut)
+                    .size(12)
+                    .font(FONT_UI)
+                    .color(disabled_color),
+            ]
+            .spacing(10)
+            .align_y(Center),
+        )
+        .padding([6, 10])
+        .width(Length::Fill)
+        .into()
+    };
+
+    let copy_btn: Element<'a, Message> = if has_selection || has_text {
+        ctx_item(
+            icon_copy().size(14).color(palette.accent_primary).into(),
+            strings.copy,
+            palette.text_primary,
+            Message::TextInputContextCopy,
+            palette,
+        )
+    } else {
+        container(
+            row![
+                icon_copy().size(14).color(disabled_color),
+                text(strings.copy)
+                    .size(12)
+                    .font(FONT_UI)
+                    .color(disabled_color),
+            ]
+            .spacing(10)
+            .align_y(Center),
+        )
+        .padding([6, 10])
+        .width(Length::Fill)
+        .into()
+    };
+
+    let paste_btn = ctx_item(
+        icon_clipboard_paste()
+            .size(14)
+            .color(palette.accent_primary)
+            .into(),
+        strings.paste,
+        palette.text_primary,
+        Message::TextInputContextPaste,
+        palette,
+    );
+
+    items = items.push(cut_btn).push(copy_btn).push(paste_btn);
+
+    if has_text {
+        items = items.push(ctx_divider(palette)).push(ctx_item(
+            icon_check_square()
+                .size(14)
+                .color(palette.text_secondary)
+                .into(),
+            strings.select_all,
+            palette.text_primary,
+            Message::TextInputContextSelectAll,
+            palette,
+        ));
+    }
+
+    let est_h = if has_text { 150.0 } else { 112.0 };
+    let (x, y) = compute_context_menu_origin(menu.position, 212.0, est_h, viewport_size);
+
+    let card = opaque(
+        container(items)
+            .padding(8)
+            .style(styles::modal_card(palette)),
+    );
+
+    let backdrop = mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+        .on_press(Message::CloseTextInputContextMenu)
+        .on_right_press(Message::CloseTextInputContextMenu);
+
+    let menu_layer = container(card)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(Padding {
+            top: y,
+            right: 0.0,
+            bottom: 0.0,
+            left: x,
+        });
+
+    stack![backdrop, menu_layer].into()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
