@@ -108,6 +108,8 @@ mod tests {
             check_updates_on_startup: false,
             dismissed_update_tag: Some("v1.0.0".to_owned()),
             last_update_check_unix: Some(1_700_000_000),
+            show_recent_files: false,
+            recent_files: vec![PathBuf::from("/tmp/recent.txt")],
         };
 
         save_config_to(&path, &cfg).expect("save config ok");

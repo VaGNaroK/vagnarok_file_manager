@@ -337,7 +337,7 @@ fn split_pane_header<'a>(
     let mut up_btn = button(icon_arrow_up().size(13))
         .padding([3, 5])
         .style(styles::ghost_button(palette, 6.0));
-    if !fm_core::is_virtual_trash_path(&tab.current_path) && tab.current_path.parent().is_some() {
+    if !fm_core::is_virtual_readonly_dir(&tab.current_path) && tab.current_path.parent().is_some() {
         up_btn = up_btn.on_press(Message::SplitNavigateUp(pane));
     }
 
@@ -710,9 +710,27 @@ fn action_bar<'a>(
     );
 
     let is_in_trash = app.is_current_tab_trash();
+    let is_in_recent = app.is_current_tab_recent();
     let is_inside_archive = fm_fs::archive::split_archive_path(&tab.current_path).is_some();
     let sel_count = tab.selection.count();
     let mut ops_row = row![].spacing(4).align_y(Center);
+    if is_in_recent {
+        ops_row = ops_row.push(
+            button(
+                row![
+                    icon_trash_2().size(13).color(palette.status_error),
+                    text(strings.clear_recent_files)
+                        .size(12)
+                        .color(palette.status_error),
+                ]
+                .spacing(5)
+                .align_y(Center),
+            )
+            .padding([6, 10])
+            .style(styles::pill_secondary_button(palette))
+            .on_press(Message::ClearRecentFiles),
+        );
+    }
     if is_in_trash {
         if sel_count > 0 {
             ops_row = ops_row.push(
@@ -769,7 +787,7 @@ fn action_bar<'a>(
             ));
     }
 
-    if !is_in_trash && !is_inside_archive {
+    if !is_in_trash && !is_in_recent && !is_inside_archive {
         let paste_btn: Element<'a, Message> = if let Some(clip) = &app.clipboard {
             let tip = format!("{} ({})", strings.paste, clip.paths.len());
             let paste_color = match clip.mode {
@@ -988,7 +1006,11 @@ fn action_bar<'a>(
         palette,
     );
 
-    let mut toolbar_right = row![new_btn, ops_row].spacing(8).align_y(Center);
+    let mut toolbar_right = row![].spacing(8).align_y(Center);
+    if !is_in_trash && !is_in_recent && !is_inside_archive {
+        toolbar_right = toolbar_right.push(new_btn);
+    }
+    toolbar_right = toolbar_right.push(ops_row);
 
     if tab.view_mode == ViewMode::Grid {
         let card_px = clamp_grid_card_width(app.config.grid_card_width).round() as u32;

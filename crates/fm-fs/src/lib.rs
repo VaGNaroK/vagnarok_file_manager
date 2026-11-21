@@ -9,6 +9,7 @@ pub mod config;
 pub mod copy_engine;
 pub mod icons;
 pub mod open_with;
+pub mod recent;
 mod trash_bin;
 
 pub use archive::is_archive_file;
@@ -45,7 +46,7 @@ use directories::{BaseDirs, UserDirs};
 use fm_core::{
     DirectorySnapshot, DriveInfo, EntryExtraInfo, EntryKind, FileEntry, FsError,
     OpenWithAssociation, PermissionsMeta, UserPlaces, VfsProvider, VolumeSpace, compute_entry_id,
-    is_virtual_trash_path,
+    is_virtual_readonly_dir, is_virtual_recent_path, is_virtual_trash_path,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -269,11 +270,22 @@ pub async fn open_as_root(path: PathBuf) -> Result<(), FsError> {
 
 /// Implementação local de `VfsProvider` sobre o sistema de arquivos real do SO.
 #[derive(Debug, Default)]
-pub struct LocalFs;
+pub struct LocalFs {
+    recent_state: std::sync::RwLock<Option<(bool, Vec<PathBuf>)>>,
+}
 
 impl LocalFs {
     pub fn new() -> Self {
-        Self
+        Self {
+            recent_state: std::sync::RwLock::new(None),
+        }
+    }
+
+    /// Atualiza o snapshot em memória de arquivos recentes para leitura imediata sem corrida de I/O.
+    pub fn sync_recent_files(&self, show_recent: bool, recent_files: Vec<PathBuf>) {
+        if let Ok(mut guard) = self.recent_state.write() {
+            *guard = Some((show_recent, recent_files));
+        }
     }
 }
 
@@ -286,10 +298,25 @@ impl VfsProvider for LocalFs {
         cancel: CancellationToken,
     ) -> Result<DirectorySnapshot, FsError> {
         let target = path.to_path_buf();
+        let recent_snapshot = if is_virtual_recent_path(&target) {
+            self.recent_state.read().ok().and_then(|g| g.clone())
+        } else {
+            None
+        };
         tokio::task::spawn_blocking(move || {
             let started = std::time::Instant::now();
             let result = if is_virtual_trash_path(&target) {
                 trash_bin::list_virtual_trash(request_id, &cancel)
+            } else if is_virtual_recent_path(&target) {
+                let (show, list) = match recent_snapshot {
+                    Some(pair) => pair,
+                    None => {
+                        let cfg = load_config();
+                        (cfg.show_recent_files, cfg.recent_files)
+                    }
+                };
+                let active_list = if show { list } else { Vec::new() };
+                recent::list_virtual_recent(&active_list, false, request_id, &cancel)
             } else if let Some((archive_path, inner_prefix, kind)) =
                 archive::split_archive_path(&target)
             {
@@ -328,7 +355,7 @@ impl VfsProvider for LocalFs {
     }
 
     async fn volume_space(&self, path: &Path) -> Result<Option<VolumeSpace>, FsError> {
-        if is_virtual_trash_path(path) {
+        if is_virtual_readonly_dir(path) {
             return Ok(None);
         }
         let target = path.to_path_buf();
@@ -805,6 +832,18 @@ fn stat_entry_blocking(entry_path: &Path) -> Result<FileEntry, FsError> {
     if is_virtual_trash_path(entry_path) {
         return Ok(make_file_entry(
             CompactString::from("Trash"),
+            entry_path.to_path_buf(),
+            EntryKind::Directory,
+            0,
+            None,
+            None,
+            default_permissions_meta(),
+            false,
+        ));
+    }
+    if is_virtual_recent_path(entry_path) {
+        return Ok(make_file_entry(
+            CompactString::from("Recent"),
             entry_path.to_path_buf(),
             EntryKind::Directory,
             0,

@@ -22,9 +22,22 @@ pub fn compute_entry_id(path: &Path) -> EntryId {
 /// Caminho virtual usado para representar a Lixeira do SO quando não há diretório único navegável (ex.: Windows Recycle Bin).
 pub const VIRTUAL_TRASH_PATH: &str = "trash://";
 
+/// Caminho virtual usado para representar a visão de Arquivos Recentes.
+pub const VIRTUAL_RECENT_PATH: &str = "recent://";
+
 /// Indica se `path` aponta para a raiz virtual da Lixeira.
 pub fn is_virtual_trash_path(path: &Path) -> bool {
     path == Path::new(VIRTUAL_TRASH_PATH)
+}
+
+/// Indica se `path` aponta para a visão virtual de Arquivos Recentes.
+pub fn is_virtual_recent_path(path: &Path) -> bool {
+    path == Path::new(VIRTUAL_RECENT_PATH)
+}
+
+/// Indica se `path` é um diretório virtual somente leitura (`trash://` ou `recent://`).
+pub fn is_virtual_readonly_dir(path: &Path) -> bool {
+    is_virtual_trash_path(path) || is_virtual_recent_path(path)
 }
 
 /// Diretórios padrão do usuário resolvidos de forma nativa (XDG no Linux / Known Folders no Windows).

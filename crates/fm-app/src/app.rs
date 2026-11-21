@@ -314,6 +314,7 @@ pub fn thumbnail_key_for_entry(entry: &FileEntry) -> ThumbnailKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarTarget {
     Home,
+    Recent,
     Desktop,
     Documents,
     Downloads,
@@ -329,6 +330,7 @@ impl SidebarTarget {
     pub fn resolve_path(self, places: &UserPlaces) -> Option<PathBuf> {
         match self {
             Self::Home => Some(places.home.clone()),
+            Self::Recent => Some(PathBuf::from(fm_core::VIRTUAL_RECENT_PATH)),
             Self::Desktop => places.desktop.clone(),
             Self::Documents => places.documents.clone(),
             Self::Downloads => places.downloads.clone(),
@@ -786,6 +788,10 @@ pub enum Message {
     DismissUpdateSession,
     DismissUpdateVersion(String),
     ToggleAutoCheckUpdates,
+    ToggleRecentFiles,
+    ClearRecentFiles,
+    RemoveFromRecent(PathBuf),
+    OpenEntryParentLocation(PathBuf),
 }
 
 pub struct App {
@@ -892,6 +898,7 @@ impl App {
         if !config.language_customized {
             config.language = Language::detect_system();
         }
+        vfs.sync_recent_files(config.show_recent_files, config.recent_files.clone());
 
         let cli_initial = std::env::args_os()
             .nth(1)
@@ -1254,6 +1261,11 @@ impl App {
         })
     }
 
+    pub fn is_current_tab_recent(&self) -> bool {
+        self.current_tab()
+            .is_some_and(|tab| fm_core::is_virtual_recent_path(&tab.current_path))
+    }
+
     pub fn current_tab_mut(&mut self) -> Option<&mut TabState> {
         self.pane_tab_mut(self.active_pane())
     }
@@ -1406,7 +1418,7 @@ impl App {
             Message::NavigateUp => {
                 let parent = self
                     .current_tab()
-                    .filter(|t| !fm_core::is_virtual_trash_path(&t.current_path))
+                    .filter(|t| !fm_core::is_virtual_readonly_dir(&t.current_path))
                     .and_then(|t| t.current_path.parent().map(PathBuf::from));
                 if let Some(p) = parent {
                     self.navigate_active_tab(p)
@@ -2311,7 +2323,7 @@ impl App {
                             ));
 
                             if fm_fs::archive::split_archive_path(&dir_path).is_none()
-                                && !fm_core::is_virtual_trash_path(&dir_path)
+                                && !fm_core::is_virtual_readonly_dir(&dir_path)
                             {
                                 let meta_cache = self.metadata_cache.clone();
                                 let cancel_size = cancel.clone();
@@ -4028,11 +4040,13 @@ impl App {
                     return Task::none();
                 };
                 let path = props.entry.path.clone();
+                let record_task = self.record_recent_file_task(&path);
                 let vfs = Arc::clone(&self.vfs);
-                Task::perform(
+                let open_task = Task::perform(
                     async move { vfs.open_with(&path, &assoc).await },
                     Message::OpenDefaultFinished,
-                )
+                );
+                Task::batch([record_task, open_task])
             }
             Message::OpenWithToggleExecPicker(window_id) => {
                 let Some(props) = self.properties_windows.get_mut(&window_id) else {
@@ -4500,6 +4514,49 @@ impl App {
                 self.config.check_updates_on_startup = !self.config.check_updates_on_startup;
                 self.persist_config_task()
             }
+            Message::ToggleRecentFiles => {
+                self.config.show_recent_files = !self.config.show_recent_files;
+                let mut tasks = Vec::new();
+                if !self.config.show_recent_files {
+                    self.config.clear_recent_files();
+                    if self.active_sidebar == Some(SidebarTarget::Recent) {
+                        self.active_sidebar = Some(SidebarTarget::Home);
+                    }
+                    let recent_dir = std::path::Path::new(fm_core::VIRTUAL_RECENT_PATH);
+                    let (_, redirect_task) = self.release_tabs_under_mount(recent_dir);
+                    tasks.push(redirect_task);
+                }
+                tasks.push(self.persist_config_task());
+                Task::batch(tasks)
+            }
+            Message::ClearRecentFiles => {
+                self.context_menu = None;
+                self.config.clear_recent_files();
+                let persist = self.persist_config_task();
+                let reload = self
+                    .reload_matching_dir_tabs(std::path::Path::new(fm_core::VIRTUAL_RECENT_PATH));
+                Task::batch([persist, reload])
+            }
+            Message::RemoveFromRecent(path) => {
+                self.context_menu = None;
+                if self.config.remove_recent_file(&path) {
+                    let persist = self.persist_config_task();
+                    let reload = self.reload_matching_dir_tabs(std::path::Path::new(
+                        fm_core::VIRTUAL_RECENT_PATH,
+                    ));
+                    return Task::batch([persist, reload]);
+                }
+                Task::none()
+            }
+            Message::OpenEntryParentLocation(path) => {
+                self.context_menu = None;
+                if let Some(parent) = path.parent().map(PathBuf::from) {
+                    self.pending_select_path = Some(path);
+                    self.active_sidebar = None;
+                    return self.navigate_active_tab(parent);
+                }
+                Task::none()
+            }
             Message::WindowResized { window_id, size } => {
                 if window_id == self.main_window_id {
                     self.window_size = size;
@@ -4690,7 +4747,11 @@ impl App {
         if !self.config.theme_customized {
             subs.push(system::theme_changes().map(Message::SystemThemeDetected));
         }
-        if let Some(active_path) = self.current_tab().map(|t| t.current_path.clone()) {
+        if let Some(active_path) = self
+            .current_tab()
+            .map(|t| t.current_path.clone())
+            .filter(|p| !fm_core::is_virtual_readonly_dir(p))
+        {
             subs.push(Subscription::run_with(active_path, watch_directory_stream));
         }
         Subscription::batch(subs)
@@ -5415,9 +5476,24 @@ impl App {
         None
     }
 
-    fn open_file_respecting_preference(&self, path: PathBuf) -> Task<Message> {
+    fn record_recent_file_task(&mut self, path: &std::path::Path) -> Task<Message> {
+        if fm_fs::archive::is_inside_archive_path(path) || fm_core::is_virtual_readonly_dir(path) {
+            return Task::none();
+        }
+        if self.config.record_recent_file(path.to_path_buf()) {
+            let persist = self.persist_config_task();
+            let reload =
+                self.reload_matching_dir_tabs(std::path::Path::new(fm_core::VIRTUAL_RECENT_PATH));
+            Task::batch([persist, reload])
+        } else {
+            Task::none()
+        }
+    }
+
+    fn open_file_respecting_preference(&mut self, path: PathBuf) -> Task<Message> {
+        let record_task = self.record_recent_file_task(&path);
         let vfs = Arc::clone(&self.vfs);
-        if let Some(assoc) = self.resolve_open_with_default_for_path(&path) {
+        let open_task = if let Some(assoc) = self.resolve_open_with_default_for_path(&path) {
             Task::perform(
                 async move { vfs.open_with(&path, &assoc).await },
                 Message::OpenDefaultFinished,
@@ -5427,7 +5503,8 @@ impl App {
                 async move { vfs.open_default(&path).await },
                 Message::OpenDefaultFinished,
             )
-        }
+        };
+        Task::batch([record_task, open_task])
     }
 
     fn maybe_load_open_with_catalog(&mut self, window_id: window::Id) -> Task<Message> {
@@ -5684,6 +5761,10 @@ impl App {
     }
 
     fn persist_config_task(&self) -> Task<Message> {
+        self.vfs.sync_recent_files(
+            self.config.show_recent_files,
+            self.config.recent_files.clone(),
+        );
         let cfg = self.config.clone();
         Task::perform(
             async move { fm_fs::save_config(cfg).await.err().map(|e| e.to_string()) },
@@ -7217,6 +7298,9 @@ fn display_tab_title(path: &std::path::Path) -> CompactString {
     if fm_core::is_virtual_trash_path(path) {
         return CompactString::from("Trash");
     }
+    if fm_core::is_virtual_recent_path(path) {
+        return CompactString::from("Recent");
+    }
     let raw = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -7685,7 +7769,7 @@ pub(crate) fn resolve_internal_drop_destination(
         }
     };
 
-    if fm_core::is_virtual_trash_path(&dest) || fm_fs::archive::is_inside_archive_path(&dest) {
+    if fm_core::is_virtual_readonly_dir(&dest) || fm_fs::archive::is_inside_archive_path(&dest) {
         return None;
     }
 

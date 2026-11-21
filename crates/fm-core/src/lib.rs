@@ -36,16 +36,17 @@ pub use domain::{
     LocalTimestampKind, LocaleFormatSpec, OpenWithApp, OpenWithAssociation, OpenWithCatalog,
     PermissionsMeta, RecursiveSize, SelectedFileTelemetry, SortDirection, SortField, SortSpec,
     SystemIconBucket, SystemIconKey, SystemIconPayload, SystemPlaceKind, UserPlaces,
-    VIRTUAL_TRASH_PATH, ViewMode, VolumeSpace, compute_entry_id, drive_needs_disambiguation,
-    drive_short_device_name, format_bytes, format_grouped_u64, is_mountable_disk_image,
-    is_posix_executable, is_virtual_trash_path, local_timestamp_kind, open_with_type_key,
-    sort_drives_for_display, suggest_shortcut_name, toggle_posix_executable_mode,
+    VIRTUAL_RECENT_PATH, VIRTUAL_TRASH_PATH, ViewMode, VolumeSpace, compute_entry_id,
+    drive_needs_disambiguation, drive_short_device_name, format_bytes, format_grouped_u64,
+    is_mountable_disk_image, is_posix_executable, is_virtual_readonly_dir, is_virtual_recent_path,
+    is_virtual_trash_path, local_timestamp_kind, open_with_type_key, sort_drives_for_display,
+    suggest_shortcut_name, toggle_posix_executable_mode,
 };
 pub use i18n::Strings;
 pub use state::{
-    AppConfig, DIR_FILTER_SENTINEL, IconThemeMode, Language, SelectionModifiers, SelectionState,
-    TabId, TabState, ThemePreset, WindowDecorationsMode, format_extension_filter_badge,
-    matches_extension_filter, normalize_extension_filter_input,
+    AppConfig, DIR_FILTER_SENTINEL, IconThemeMode, Language, MAX_RECENT_FILES, SelectionModifiers,
+    SelectionState, TabId, TabState, ThemePreset, WindowDecorationsMode,
+    format_extension_filter_badge, matches_extension_filter, normalize_extension_filter_input,
 };
 pub use version::{
     GITHUB_OWNER, GITHUB_RELEASES_API_URL, GITHUB_RELEASES_FALLBACK_URL,

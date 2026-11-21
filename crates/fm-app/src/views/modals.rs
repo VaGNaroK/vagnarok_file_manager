@@ -2518,6 +2518,35 @@ pub fn preferences_modal<'a>(
                 .on_press(Message::ToggleAutoCheckUpdates)
                 .into(),
             ),
+            pref_row(
+                strings.prefs_recent_files_label,
+                row![
+                    button(
+                        text(strings.clear_recent_files)
+                            .size(11)
+                            .font(FONT_UI_SEMIBOLD)
+                            .color(palette.text_secondary),
+                    )
+                    .padding([5, 10])
+                    .style(styles::pill_secondary_button(palette))
+                    .on_press(Message::ClearRecentFiles),
+                    button(
+                        text(if app.config.show_recent_files {
+                            "ON"
+                        } else {
+                            "OFF"
+                        })
+                        .size(12)
+                        .font(FONT_MONO_BOLD),
+                    )
+                    .padding([5, 12])
+                    .style(styles::tab_button(palette, app.config.show_recent_files))
+                    .on_press(Message::ToggleRecentFiles),
+                ]
+                .spacing(6)
+                .align_y(Center)
+                .into(),
+            ),
             Space::new().height(2),
             text(cfg_path_hint)
                 .size(10)
@@ -3096,12 +3125,33 @@ pub fn context_menu_overlay<'a>(
                 ));
                 offset_y += ROW_STEP;
             }
+            let is_in_recent = app.is_current_tab_recent();
             let is_in_trash = app.is_current_tab_trash()
                 || app
                     .places
                     .trash
                     .as_ref()
                     .is_some_and(|tr| path.starts_with(tr));
+            if is_in_recent {
+                items = items
+                    .push(ctx_entry_item(
+                        icon_folder().size(14).color(palette.accent_primary).into(),
+                        strings.open_file_location,
+                        palette.text_primary,
+                        Message::OpenEntryParentLocation(path.clone()),
+                        palette,
+                        close_sub_on_hover,
+                    ))
+                    .push(ctx_entry_item(
+                        icon_x().size(14).color(palette.status_warning).into(),
+                        strings.remove_from_recent,
+                        palette.text_primary,
+                        Message::RemoveFromRecent(path.clone()),
+                        palette,
+                        close_sub_on_hover,
+                    ));
+                offset_y += ROW_STEP * 2.0;
+            }
             if is_in_trash {
                 items = items.push(ctx_entry_item(
                     icon_rotate_ccw()
@@ -3138,7 +3188,7 @@ pub fn context_menu_overlay<'a>(
                     close_sub_on_hover,
                 ));
                 offset_y += ROW_STEP;
-                if has_clipboard {
+                if has_clipboard && !is_in_recent {
                     items = items.push(ctx_entry_item(
                         icon_clipboard_paste()
                             .size(14)
@@ -3212,8 +3262,9 @@ pub fn context_menu_overlay<'a>(
                 }
             }
             let tab_is_writable_local = !is_in_trash
+                && !is_in_recent
                 && app.current_tab().is_some_and(|t| {
-                    !fm_core::is_virtual_trash_path(&t.current_path)
+                    !fm_core::is_virtual_readonly_dir(&t.current_path)
                         && fm_fs::archive::split_archive_path(&t.current_path).is_none()
                 });
             if tab_is_writable_local {
@@ -3361,7 +3412,7 @@ pub fn context_menu_overlay<'a>(
                     Message::OpenInNewTab(path.clone()),
                     palette,
                 ));
-            if show_open_as_root && !fm_core::is_virtual_trash_path(path) {
+            if show_open_as_root && !fm_core::is_virtual_readonly_dir(path) {
                 items = items.push(ctx_item(
                     icon_shield_alert()
                         .size(14)
@@ -3373,30 +3424,39 @@ pub fn context_menu_overlay<'a>(
                     palette,
                 ));
             }
-            items = items
-                .push(ctx_item(
-                    icon_clipboard_copy()
-                        .size(14)
-                        .color(palette.text_secondary)
-                        .into(),
-                    strings.copy_path,
-                    palette.text_primary,
-                    Message::CopyPath(path.clone()),
-                    palette,
-                ))
-                .push(ctx_item(
+            items = items.push(ctx_item(
+                icon_clipboard_copy()
+                    .size(14)
+                    .color(palette.text_secondary)
+                    .into(),
+                strings.copy_path,
+                palette.text_primary,
+                Message::CopyPath(path.clone()),
+                palette,
+            ));
+            if !fm_core::is_virtual_recent_path(path) {
+                items = items.push(ctx_item(
                     icon_info().size(14).color(palette.text_secondary).into(),
                     strings.properties,
                     palette.text_primary,
                     Message::OpenProperties(path.clone()),
                     palette,
                 ));
+            }
             if fm_core::is_virtual_trash_path(path) {
                 items = items.push(ctx_divider(palette)).push(ctx_item(
                     icon_trash_2().size(14).color(palette.status_error).into(),
                     strings.empty_trash,
                     palette.status_error,
                     Message::RequestEmptyTrash,
+                    palette,
+                ));
+            } else if fm_core::is_virtual_recent_path(path) {
+                items = items.push(ctx_divider(palette)).push(ctx_item(
+                    icon_trash_2().size(14).color(palette.status_error).into(),
+                    strings.clear_recent_files,
+                    palette.status_error,
+                    Message::ClearRecentFiles,
                     palette,
                 ));
             } else if *is_favorite {
@@ -3632,40 +3692,53 @@ pub fn context_menu_overlay<'a>(
                 ));
         }
         ContextMenuKind::Background => {
-            items = items
-                .push(ctx_item(
-                    icon_folder_plus()
-                        .size(14)
-                        .color(palette.accent_primary)
-                        .into(),
-                    strings.new_folder,
-                    palette.text_primary,
-                    Message::OpenCreateDialog(true),
-                    palette,
-                ))
-                .push(ctx_item(
-                    icon_file_plus()
-                        .size(14)
-                        .color(palette.text_secondary)
-                        .into(),
-                    strings.new_file,
-                    palette.text_primary,
-                    Message::OpenCreateDialog(false),
-                    palette,
-                ));
-            if has_clipboard {
-                items = items.push(ctx_item(
-                    icon_clipboard_paste()
-                        .size(14)
-                        .color(palette.accent_primary)
-                        .into(),
-                    strings.paste,
-                    palette.text_primary,
-                    Message::PasteClipboard,
-                    palette,
-                ));
+            if !app.is_current_tab_trash() && !app.is_current_tab_recent() {
+                items = items
+                    .push(ctx_item(
+                        icon_folder_plus()
+                            .size(14)
+                            .color(palette.accent_primary)
+                            .into(),
+                        strings.new_folder,
+                        palette.text_primary,
+                        Message::OpenCreateDialog(true),
+                        palette,
+                    ))
+                    .push(ctx_item(
+                        icon_file_plus()
+                            .size(14)
+                            .color(palette.text_secondary)
+                            .into(),
+                        strings.new_file,
+                        palette.text_primary,
+                        Message::OpenCreateDialog(false),
+                        palette,
+                    ));
+                if has_clipboard {
+                    items = items.push(ctx_item(
+                        icon_clipboard_paste()
+                            .size(14)
+                            .color(palette.accent_primary)
+                            .into(),
+                        strings.paste,
+                        palette.text_primary,
+                        Message::PasteClipboard,
+                        palette,
+                    ));
+                }
+                items = items.push(ctx_divider(palette));
+            } else if app.is_current_tab_recent() {
+                items = items
+                    .push(ctx_item(
+                        icon_trash_2().size(14).color(palette.status_error).into(),
+                        strings.clear_recent_files,
+                        palette.status_error,
+                        Message::ClearRecentFiles,
+                        palette,
+                    ))
+                    .push(ctx_divider(palette));
             }
-            items = items.push(ctx_divider(palette)).push(ctx_item(
+            items = items.push(ctx_item(
                 icon_check_square()
                     .size(14)
                     .color(palette.text_secondary)
@@ -3726,7 +3799,7 @@ pub fn context_menu_overlay<'a>(
                 ));
             }
             if let Some(tab) = app.current_tab() {
-                let can_scan_dups = !fm_core::is_virtual_trash_path(&tab.current_path)
+                let can_scan_dups = !fm_core::is_virtual_readonly_dir(&tab.current_path)
                     && fm_fs::archive::split_archive_path(&tab.current_path).is_none();
                 if can_scan_dups {
                     items = items.push(ctx_item(

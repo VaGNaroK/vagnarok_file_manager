@@ -513,6 +513,9 @@ pub enum IconThemeMode {
     HostSystem,
 }
 
+/// Capacidade máxima do histórico MRU de arquivos recentes.
+pub const MAX_RECENT_FILES: usize = 100;
+
 /// Preferências persistíveis da aplicação.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -552,6 +555,10 @@ pub struct AppConfig {
     pub dismissed_update_tag: Option<String>,
     #[serde(default)]
     pub last_update_check_unix: Option<u64>,
+    #[serde(default = "default_true")]
+    pub show_recent_files: bool,
+    #[serde(default)]
+    pub recent_files: Vec<PathBuf>,
 }
 
 impl Default for AppConfig {
@@ -578,7 +585,46 @@ impl Default for AppConfig {
             check_updates_on_startup: true,
             dismissed_update_tag: None,
             last_update_check_unix: None,
+            show_recent_files: true,
+            recent_files: Vec::new(),
         }
+    }
+}
+
+impl AppConfig {
+    /// Registra um arquivo aberto no topo da lista MRU quando `show_recent_files` está ativo.
+    pub fn record_recent_file(&mut self, path: PathBuf) -> bool {
+        if !self.show_recent_files
+            || path.as_os_str().is_empty()
+            || crate::domain::is_virtual_readonly_dir(&path)
+        {
+            return false;
+        }
+        if self.recent_files.first().is_some_and(|p| p == &path) {
+            return false;
+        }
+        self.recent_files.retain(|p| p != &path);
+        self.recent_files.insert(0, path);
+        if self.recent_files.len() > MAX_RECENT_FILES {
+            self.recent_files.truncate(MAX_RECENT_FILES);
+        }
+        true
+    }
+
+    /// Remove um caminho específico do histórico de arquivos recentes.
+    pub fn remove_recent_file(&mut self, path: &std::path::Path) -> bool {
+        let prev_len = self.recent_files.len();
+        self.recent_files.retain(|p| p != path);
+        self.recent_files.len() != prev_len
+    }
+
+    /// Limpa todo o histórico de arquivos recentes.
+    pub fn clear_recent_files(&mut self) -> bool {
+        if self.recent_files.is_empty() {
+            return false;
+        }
+        self.recent_files.clear();
+        true
     }
 }
 
@@ -746,5 +792,38 @@ mod tests {
         sel.select_range_in_order(2, &visual_order, true, &entries);
         assert_eq!(sel.count(), 4);
         assert!(sel.selected_ids.contains(&entries[2].id));
+    }
+
+    #[test]
+    fn recent_files_mru_deduplicates_caps_and_respects_enabled_flag() {
+        let mut cfg = AppConfig::default();
+        assert!(cfg.show_recent_files);
+        assert!(cfg.recent_files.is_empty());
+
+        let a = PathBuf::from("/tmp/a.txt");
+        let b = PathBuf::from("/tmp/b.txt");
+        assert!(cfg.record_recent_file(a.clone()));
+        assert!(cfg.record_recent_file(b.clone()));
+        assert_eq!(cfg.recent_files, vec![b.clone(), a.clone()]);
+
+        // Reabrir `a` move para o topo sem duplicar.
+        assert!(cfg.record_recent_file(a.clone()));
+        assert_eq!(cfg.recent_files, vec![a.clone(), b.clone()]);
+
+        // Caminhos virtuais ou vazios são ignorados.
+        assert!(!cfg.record_recent_file(PathBuf::from("trash://")));
+        assert!(!cfg.record_recent_file(PathBuf::from("recent://")));
+
+        // Remover individualmente.
+        assert!(cfg.remove_recent_file(&a));
+        assert_eq!(cfg.recent_files, vec![b]);
+
+        // Desativado: não registra novos arquivos.
+        cfg.show_recent_files = false;
+        assert!(!cfg.record_recent_file(a));
+        assert_eq!(cfg.recent_files.len(), 1);
+
+        cfg.clear_recent_files();
+        assert!(cfg.recent_files.is_empty());
     }
 }

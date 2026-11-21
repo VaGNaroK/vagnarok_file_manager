@@ -466,6 +466,11 @@ pub struct Strings {
     pub update_auto_check_label: &'static str,
     pub update_open_releases: &'static str,
     pub tip_update_available: &'static str,
+    pub recent_files: &'static str,
+    pub prefs_recent_files_label: &'static str,
+    pub clear_recent_files: &'static str,
+    pub remove_from_recent: &'static str,
+    pub open_file_location: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -1108,6 +1113,11 @@ impl Strings {
         let update_auto_check_label = resolve("update-auto-check-label");
         let update_open_releases = resolve("update-open-releases");
         let tip_update_available = resolve("tip-update-available");
+        let recent_files = resolve("recent-files");
+        let prefs_recent_files_label = resolve("prefs-recent-files-label");
+        let clear_recent_files = resolve("clear-recent-files");
+        let remove_from_recent = resolve("remove-from-recent");
+        let open_file_location = resolve("open-file-location");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -1543,6 +1553,11 @@ impl Strings {
             update_auto_check_label,
             update_open_releases,
             tip_update_available,
+            recent_files,
+            prefs_recent_files_label,
+            clear_recent_files,
+            remove_from_recent,
+            open_file_location,
         }
     }
 }

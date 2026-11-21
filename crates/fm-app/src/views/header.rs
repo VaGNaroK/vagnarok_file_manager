@@ -175,7 +175,7 @@ fn navigation_row<'a>(
     let can_back = tab.is_some_and(TabState::can_go_back);
     let can_fwd = tab.is_some_and(TabState::can_go_forward);
     let can_up = tab.is_some_and(|t| {
-        !fm_core::is_virtual_trash_path(&t.current_path) && t.current_path.parent().is_some()
+        !fm_core::is_virtual_readonly_dir(&t.current_path) && t.current_path.parent().is_some()
     });
 
     let mut back_btn = button(icon_arrow_left().size(15))
@@ -376,6 +376,19 @@ fn unified_breadcrumb<'a>(
     if let Some(tab) = tab {
         if fm_core::is_virtual_trash_path(&tab.current_path) {
             let txt = text(strings.trash)
+                .size(12)
+                .font(FONT_UI_SEMIBOLD)
+                .color(palette.text_primary)
+                .wrapping(text::Wrapping::None);
+            crumbs = crumbs.push(icon_chevron_right().size(12).color(palette.text_muted));
+            crumbs = crumbs.push(
+                button(txt)
+                    .padding([3, 6])
+                    .style(styles::ghost_button(palette, 6.0))
+                    .on_press(Message::NavigateTo(tab.current_path.clone())),
+            );
+        } else if fm_core::is_virtual_recent_path(&tab.current_path) {
+            let txt = text(strings.recent_files)
                 .size(12)
                 .font(FONT_UI_SEMIBOLD)
                 .color(palette.text_primary)

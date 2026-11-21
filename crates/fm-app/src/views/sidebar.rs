@@ -9,10 +9,10 @@ use iced::widget::{
 };
 use iced::{Element, Length, Padding};
 use lucide_icons::iced::{
-    icon_arrow_up_from_line, icon_chevron_down, icon_chevron_right, icon_database, icon_disc_3,
-    icon_download, icon_file_text, icon_folder, icon_hard_drive, icon_home, icon_image,
-    icon_monitor, icon_music, icon_panel_left, icon_plug, icon_refresh_cw, icon_settings,
-    icon_star, icon_trash_2, icon_video,
+    icon_arrow_up_from_line, icon_chevron_down, icon_chevron_right, icon_clock, icon_database,
+    icon_disc_3, icon_download, icon_file_text, icon_folder, icon_hard_drive, icon_home,
+    icon_image, icon_monitor, icon_music, icon_panel_left, icon_plug, icon_refresh_cw,
+    icon_settings, icon_star, icon_trash_2, icon_video,
 };
 
 use crate::app::{App, Message, SidebarTarget};
@@ -136,6 +136,7 @@ pub fn effective_sidebar_width(app: &App, strings: Strings) -> f32 {
 
     let quick_labels = [
         strings.home,
+        strings.recent_files,
         strings.desktop,
         strings.documents,
         strings.downloads,
@@ -303,6 +304,25 @@ pub fn view<'a>(app: &'a App, palette: ThemePalette, strings: Strings) -> Elemen
                 );
             }
         }
+    }
+
+    if app.config.show_recent_files {
+        let recent_path = std::path::PathBuf::from(fm_core::VIRTUAL_RECENT_PATH);
+        let recent_active = app
+            .current_tab()
+            .is_some_and(|t| fm_core::is_virtual_recent_path(&t.current_path));
+        quick_col = quick_col.push(sidebar_btn_owned(
+            icon_clock().size(16).into(),
+            strings.recent_files.to_owned(),
+            collapsed,
+            recent_active,
+            palette,
+            Message::SelectSidebar(SidebarTarget::Recent),
+            Some(Message::OpenSidebarContextMenu {
+                path: recent_path,
+                is_favorite: false,
+            }),
+        ));
     }
 
     for (target, place_kind, label, icon) in quick_candidates {
