@@ -2437,6 +2437,11 @@ impl App {
                 watched_root,
                 has_visible_change,
             } => {
+                // Evita tempestade de re-listagens, cálculo recursivo de tamanho e commits redb
+                // enquanto uma transferência de arquivos está escrevendo ativamente no disco.
+                if self.active_transfer.is_some() {
+                    return Task::none();
+                }
                 let Some(tab) = self.current_tab() else {
                     return Task::none();
                 };
@@ -5937,7 +5942,15 @@ impl App {
                     fm_fs::run_transfer_job(job_id, mode, sources, dest_dir, policy, cancel, tx)
                         .await;
             });
-            while let Some(progress) = rx.recv().await {
+            while let Some(mut progress) = rx.recv().await {
+                // Coalesce snapshots intermediários (`Running`) acumulados no canal para
+                // nunca atrasar a entrega do estado final (`Completed`/`Cancelled`/`Failed`).
+                while matches!(progress.state, JobState::Running) {
+                    match rx.try_recv() {
+                        Ok(newer) => progress = newer,
+                        Err(_) => break,
+                    }
+                }
                 if output
                     .send(Message::TransferProgress(progress))
                     .await

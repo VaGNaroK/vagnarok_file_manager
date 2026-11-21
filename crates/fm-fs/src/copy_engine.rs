@@ -4,6 +4,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use compact_str::CompactString;
 use fm_core::{ConflictPolicy, CopyMode, FsError, JobProgress, JobState};
@@ -14,8 +15,9 @@ use crate::map_io_err;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use crate::platform;
 
-const COPY_CHUNK_BYTES: usize = 4 * 1024 * 1024;
-const STREAM_BUF_BYTES: usize = 256 * 1024;
+const COPY_CHUNK_BYTES: usize = 16 * 1024 * 1024;
+const STREAM_BUF_BYTES: usize = 2 * 1024 * 1024;
+const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(60);
 
 /// Executa transferência (cópia ou movimentação) de `sources` para `dest_dir` emitindo progresso.
 pub async fn run_transfer_job(
@@ -52,12 +54,22 @@ struct TransferContext<'a> {
     bytes_total: u64,
     items_done: usize,
     items_total: usize,
+    last_emit: Option<Instant>,
     cancel: &'a CancellationToken,
     progress_tx: &'a UnboundedSender<JobProgress>,
 }
 
 impl TransferContext<'_> {
-    fn emit(&self, current_item: &Path, state: JobState) {
+    fn emit(&mut self, current_item: &Path, state: JobState) {
+        let is_terminal = !matches!(state, JobState::Running);
+        let now = Instant::now();
+        if !is_terminal
+            && let Some(prev) = self.last_emit
+            && now.duration_since(prev) < PROGRESS_EMIT_INTERVAL
+        {
+            return;
+        }
+        self.last_emit = Some(now);
         let name = current_item
             .file_name()
             .map(|n| CompactString::from(n.to_string_lossy().as_ref()))
@@ -96,6 +108,7 @@ fn transfer_blocking(
         bytes_total,
         items_done: 0,
         items_total,
+        last_emit: None,
         cancel,
         progress_tx,
     };
@@ -238,8 +251,16 @@ fn copy_single_file(src: &Path, dst: &Path, ctx: &mut TransferContext<'_>) -> Re
             .map(|n| CompactString::from(n.to_string_lossy().as_ref()))
             .unwrap_or_default();
 
+        let mut last_win_emit: Option<Instant> = None;
         let mut on_progress = |file_transferred: u64| {
             last_reported = file_transferred;
+            let now = Instant::now();
+            if let Some(prev) = last_win_emit
+                && now.duration_since(prev) < PROGRESS_EMIT_INTERVAL
+            {
+                return;
+            }
+            last_win_emit = Some(now);
             let _ = progress_tx.send(JobProgress {
                 job_id,
                 mode,
@@ -431,6 +452,14 @@ fn measure_single_tree(path: &Path, cancel: &CancellationToken) -> Result<(u64, 
     for entry in read_dir.flatten() {
         if cancel.is_cancelled() {
             return Err(FsError::Cancelled);
+        }
+        if let Ok(ft) = entry.file_type()
+            && !ft.is_dir()
+        {
+            let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            total_bytes = total_bytes.saturating_add(len);
+            total_items += 1;
+            continue;
         }
         let (b, i) = measure_single_tree(&entry.path(), cancel)?;
         total_bytes = total_bytes.saturating_add(b);

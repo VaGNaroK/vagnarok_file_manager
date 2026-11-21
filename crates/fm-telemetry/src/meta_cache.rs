@@ -120,6 +120,23 @@ impl DiskMetadataCache {
         let _ = write_txn.commit();
     }
 
+    /// Grava múltiplas contagens de subpastas em uma única transação `redb` (evita `fsync` por pasta).
+    pub fn put_dir_counts_batch(&self, entries: &[(std::path::PathBuf, u128, u32)]) {
+        if entries.is_empty() {
+            return;
+        }
+        let Ok(write_txn) = self.db.begin_write() else {
+            return;
+        };
+        if let Ok(mut table) = write_txn.open_table(DIR_COUNT_TABLE) {
+            for (path, modified_nanos, count) in entries {
+                let key = encode_file_key(path, 0, *modified_nanos);
+                let _ = table.insert(key.as_slice(), *count);
+            }
+        }
+        let _ = write_txn.commit();
+    }
+
     pub fn get_dir_size(&self, path: &Path, modified_nanos: u128) -> Option<RecursiveSize> {
         let key = encode_file_key(path, 1, modified_nanos);
         let read_txn = self.db.begin_read().ok()?;

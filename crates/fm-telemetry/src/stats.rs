@@ -35,6 +35,7 @@ pub async fn count_direct_children_cached(
 
     tokio::task::spawn_blocking(move || {
         let mut results = Vec::with_capacity(dirs.len());
+        let mut to_cache: Vec<(PathBuf, u128, u32)> = Vec::new();
         for dir in dirs {
             if cancel.is_cancelled() {
                 break;
@@ -59,12 +60,15 @@ pub async fn count_direct_children_cached(
                     count += 1;
                 }
             }
-            if let Some(c) = &cache
-                && mtime > 0
-            {
-                c.put_dir_count(&dir, mtime, count);
+            if cache.is_some() && mtime > 0 {
+                to_cache.push((dir.clone(), mtime, count));
             }
             results.push((dir, count));
+        }
+        if let Some(c) = &cache
+            && !to_cache.is_empty()
+        {
+            c.put_dir_counts_batch(&to_cache);
         }
         results
     })
