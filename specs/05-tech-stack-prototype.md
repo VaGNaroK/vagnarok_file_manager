@@ -103,3 +103,16 @@ strip = "symbols"
 * Implementar **Column View (Miller Columns)** e persistência de preferências (`toml`).
 * Substituir hot paths de `fm-fs` por `rustix` (`getdents64`/`statx`/`copy_file_range`) no Linux e `windows-rs` (`FindFirstFileExW`/`CopyFileExW`) no Windows.
 * **Critério de aceite**: Operações completas de gerenciamento de arquivos sem travar a UI, passando nos testes de `ubuntu-latest` e `windows-latest`.
+
+---
+
+## Política de Empacotamento e Versionamento da Primeira Versão Estável
+
+* **Atualização in-place (Linux e Windows)**:
+  * **Linux `.deb`**: pacote de nome fixo `vagnarok-file-manager` sobrescreve binário e assets preservando `~/.config/vagnarok-file-manager/`.
+  * **Linux Flatpak**: `id: dev.vagnarok.FileManager` com `--share=network` em `finish-args`.
+  * **Windows Inno Setup**: `AppId` fixo com `Flags: ignoreversion`, `CloseApplications=yes` e `RestartApplications=yes` para fechar e atualizar o executável sem erro de file locking.
+* **Verificador de atualizações**: consulta o GitHub Releases de forma assíncrona (`ureq` + `rustls`) e notifica **apenas versões estáveis** (ignorando `draft`, `prerelease` e sufixos `-alpha`/`-beta`/`-rc`).
+* **Recomendação obrigatória para a primeira versão estável**:
+  * Como as pré-releases `0.1.0-alpha.*` usaram hífen (`-alpha.N`) no campo `Version` do `.deb`, o `dpkg` considera `0.1.0-alpha.9 > 0.1.0`.
+  * **Recomenda-se publicar a primeira estável como `v0.2.0` ou `v1.0.0`** (evitando `v0.1.0`) para garantir atualização direta sem aviso de downgrade no `apt`/`dpkg`. Todo agente deve lembrar o usuário dessa recomendação ao preparar o lançamento da versão final.

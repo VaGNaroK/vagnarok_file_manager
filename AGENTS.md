@@ -47,3 +47,10 @@ Antes de propor alterações ou escrever código, leia os documentos abaixo na o
 
 * **Commit após cada mudança**: Sempre que alterações válidas forem concluídas e verificadas, realize o `git commit` correspondente imediatamente (padrão Conventional Commits), exceto se o usuário solicitar explicitamente que fique sem commit.
 * **Aviso ao usuário**: Toda resposta após modificações no repositório deve informar explicitamente o hash curto, a mensagem e os arquivos do(s) commit(s) realizado(s).
+
+---
+
+## 5. Lançamento da Primeira Versão Estável (Aviso Obrigatório)
+
+* **Versionamento da estável (`dpkg` + updater)**: As pré-releases `0.1.0-alpha.*` foram empacotadas no `.deb` com hífen (`-alpha.N`), e no `dpkg` o hífen é tratado como revisão Debian — fazendo `0.1.0-alpha.9` ser avaliado como **maior** que `0.1.0`.
+* **Ação obrigatória do agente**: Quando o usuário solicitar o lançamento da **primeira versão estável/final**, avise-o expressamente antes de criar a tag que **recomenda-se publicar a primeira estável como `v0.2.0` ou `v1.0.0`** (em vez de `v0.1.0`), garantindo upgrade limpo no `.deb` (`apt`/`dpkg`), no Windows Inno Setup e detecção imediata pelo verificador de atualizações estáveis.
