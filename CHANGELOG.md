@@ -32,6 +32,38 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-20 | **Alpha 8 (`v0.1.0-alpha.8`), Montagem de ISO/IMG, Desfazer (`Ctrl+Z`), Atalhos (`Enviar para... ▸`), Seleção `Shift+Setas` & Polimento Flatpak** | Montagem nativa de `.iso`/`.img` abrindo em nova aba, ejeção segura e hotplug automático de mídias removíveis (Linux/Flatpak/Windows), pilha de **Desfazer (`Ctrl+Z`)** para Lixeira e renomeações, submenu cascata **Enviar para... ▸** (symlinks Linux / `.lnk` Windows), seleção contínua por teclado (`Shift+Setas` e `Shift+Home/End`), caixa de filtro customizado por extensão, menu de contexto inteligente sem barra de rolagem forçada e correções Flatpak/arquivos compactados | 116 unitários |
 | 2026-11-20 | **Alpha 9 (`v0.1.0-alpha.9`), Extração com Senha (ZIP/7z/RAR), Propriedades Multi-Seleção, UX de Unidades & Contraste `AetherLight`** | Modal de senha e descriptografia 100% Rust para `.zip` (WinZip AES + ZipCrypto), `.7z` (AES-256) e `.rar` (RAR4/RAR5), soma recursiva de tamanho e itens em **Propriedades** com seleção múltipla, barra lateral de **Unidades** sem duplicação disco/partição com ordenação inteligente e tooltips de hardware, texto mais escuro (WCAG AA+) no tema `AetherLight`, remoção de Colunas Miller (mantendo Grade e Tabela) e reset de filtro de extensão com `Esc` | 125 unitários |
 | 2026-11-20 | **Alpha 10 (`v0.1.0-alpha.10`), Dual-Pane Split View, Arquivos Recentes (`recent://`), Verificador de Atualizações Estáveis, Performance NVMe & UX Estilo Nemo** | Tela dividida (**Dual-Pane Split View** `F3`) com navegação independente e drag & drop interno, visão virtual de **Arquivos Recentes (`recent://`)** com controle em Preferências, **verificador de atualizações estáveis** via GitHub Releases, **otimização de cópia em NVMe** (buffers de 4 MiB, throttling de progresso a 30 Hz e suspensão de reloads do watcher), menu de contexto em caixas de texto, busca profunda BFS precisa e seleção/rótulos multi-linha estilo Nemo no Grid | 136 unitários |
+| 2026-11-22 | **Alpha 11 (`v0.1.0-alpha.11`), Propriedades Flutuantes Simultâneas, Permissões Nativas Windows NTFS & Linux POSIX, Dual-Panel Simétrico & Processos Desacoplados** | **Janelas de Propriedades flutuantes não-bloqueantes** (múltiplas janelas simultâneas lado a lado com fundo interativo), **editor nativo de ACL NTFS (Win32)** no Windows e **editor POSIX modernizado** no Linux (proprietário/grupo, presets, octal ao vivo, bits especiais e aplicação recursiva), fechamento de **qualquer painel** no Dual-Pane com promoção do painel direito, arrastar/copiar itens de **dentro de arquivos compactados** para outro painel, troca de abas com scroll do mouse, aba única inicial na Home com última pasta visitada, desacoplamento de apps externos (`setsid` / Win32 process group) e correções de ícones do sistema e seleção em caixa (marquee) | 147 unitários |
+
+---
+
+## [0.1.0-alpha.11] — 2026-11-22
+
+### Adicionado
+- **Janelas de Propriedades flutuantes, não-bloqueantes e simultâneas**:
+  - Remoção do fundo opaco/escurecido em Propriedades: o gerenciador de arquivos atrás permanece 100% visível e clicável enquanto Propriedades está aberto.
+  - Suporte a **múltiplas janelas de Propriedades abertas ao mesmo tempo** com z-order independente (clicar traz para o topo), posicionamento automático lado a lado quando há espaço (ou cascata suave em telas menores), arraste/redimensionamento individual e deduplicação por caminho.
+- **Editor nativo de permissões NTFS (ACL) no Windows (`Win32`)**:
+  - Interface de permissões no padrão Windows na aba **Propriedades → Permissões** com lista de usuários/grupos (SIDs reais), permissões independentes de *Permitir*/*Negar* (*Controle total*, *Modificar*, *Ler & executar*, *Leitura*, *Gravar*), indicador de herança e fluxo unificado **Confirmar / Cancelar (reverte alterações) / Aplicar**.
+- **Editor de permissões POSIX modernizado no Linux**:
+  - Nova aba **Propriedades → Permissões** no Linux com proprietário e grupo, presets rápidos, cálculo octal e simbólico ao vivo, bits especiais (`setuid`, `setgid`, `sticky`) e opção de aplicação recursiva em pastas.
+- **Fechar qualquer painel no modo dividido (`Dual-Pane Split View`)**:
+  - Botão sutil `×` adicionado também no cabeçalho do painel esquerdo; ao fechar o painel esquerdo, o painel direito é promovido para o painel principal preservando abas abertas, histórico, seleção e posição de rolagem.
+- **Arrastar e copiar itens de dentro de arquivos compactados para outro painel**:
+  - Permite arrastar ou copiar entradas específicas de dentro de `.zip`, `.tar.*`, `.7z` e `.rar` abertos diretamente para o outro painel no modo dividido ou para outra pasta, extraindo apenas os itens selecionados.
+- **Troca de abas com a roda do mouse**:
+  - Rolar o scroll sobre a barra de abas alterna entre as abas abertas.
+- **Inicialização em aba única na Home, última pasta visitada e Preferências rolável**:
+  - Inicia por padrão com uma única aba na pasta Home, com opção nas Preferências para reabrir a última pasta visitada (persistida ao fechar) e rolagem vertical na janela de Preferências.
+
+### Melhorado e Corrigido
+- **Desacoplamento de aplicativos externos abertos pelo gerenciador**:
+  - Aplicativos externos (VLC, editores, terminais, `Abrir como root`) agora são iniciados em sessões/grupos de processos independentes (`setsid()` via `rustix` no Linux e `CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB` no Windows), permanecendo abertos quando o Vagnarok File Manager é fechado.
+- **Correção na alternância de ícones do sistema no painel principal**:
+  - Desacoplada a resolução global de ícones do sistema do token de cancelamento de navegação entre abas (impedindo envenenamento permanente de `system_icon_misses`), com limpeza de misses ao ativar ícones do sistema e suporte também no cabeçalho de Propriedades.
+- **Seleção em caixa (marquee) precisa após mudança de altura do conteúdo**:
+  - Restringido `scroll_y` ao limite físico do conteúdo no viewport (`clamp_scroll_y`), corrigindo deslocamentos no hit-test após fechar o modo dividido, redimensionar a janela, alterar zoom ou filtrar.
+- **Menu de contexto de arquivos compactados**:
+  - Truncamento da sugestão de subpasta longa e clip nos rótulos do menu de contexto.
 
 ---
 
