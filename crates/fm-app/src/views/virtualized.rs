@@ -191,6 +191,31 @@ pub fn build_tab_grid_bands<'a>(
     build_grid_bands(&dirs, &files, cols, strings.folders, strings.files)
 }
 
+/// Retorna a altura total (em px) ocupada pelas bandas da grade.
+pub fn grid_bands_total_height(bands: &[GridBand<'_>], row_height: f32) -> f32 {
+    if bands.is_empty() {
+        return 0.0;
+    }
+    let mut total = 0.0_f32;
+    for (i, band) in bands.iter().enumerate() {
+        total += band.height_with(row_height);
+        if i + 1 < bands.len() {
+            total += GRID_BAND_SPACING;
+        }
+    }
+    total
+}
+
+/// Restringe um `scroll_y` armazenado ao limite físico do conteúdo no viewport atual.
+/// Evita deslocamentos obsoletos quando o conteúdo encolhe (ex.: fechar split, redimensionar, zoom, filtro).
+pub fn clamp_scroll_y(scroll_y: f32, content_height: f32, viewport_height: f32) -> f32 {
+    if !scroll_y.is_finite() || !content_height.is_finite() || !viewport_height.is_finite() {
+        return 0.0;
+    }
+    let max_scroll = (content_height - viewport_height.max(0.0)).max(0.0);
+    scroll_y.clamp(0.0, max_scroll)
+}
+
 pub fn compute_band_window_with_row_height(
     bands: &[GridBand<'_>],
     row_height: f32,
@@ -597,5 +622,17 @@ mod tests {
             ContentRect::from_points(20.0, 40.0, 300.0, 120.0),
         );
         assert_eq!(list_hits, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn clamp_scroll_y_resets_stale_offset_when_content_fits_viewport() {
+        // Conteúdo cabe no viewport (ex.: após fechar split ou dar zoom out): scroll efetivo é 0.
+        assert_eq!(clamp_scroll_y(250.0, 460.0, 700.0), 0.0);
+        // Conteúdo maior que o viewport: limita ao máximo físico (1200 - 700 = 500).
+        assert_eq!(clamp_scroll_y(900.0, 1200.0, 700.0), 500.0);
+        assert_eq!(clamp_scroll_y(180.0, 1200.0, 700.0), 180.0);
+        // Valores inválidos ou negativos são sanitizados para 0.
+        assert_eq!(clamp_scroll_y(-20.0, 1200.0, 700.0), 0.0);
+        assert_eq!(clamp_scroll_y(f32::NAN, 1200.0, 700.0), 0.0);
     }
 }

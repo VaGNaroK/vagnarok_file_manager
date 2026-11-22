@@ -34,9 +34,9 @@ use crate::app::{
 use crate::views::modals::format_transfer_summary;
 use crate::views::virtualized::{
     ContentRect, DETAIL_LIST_SIDE_PADDING, DETAIL_ROW_HEIGHT, DETAIL_ROW_STEP, GRID_BAND_SPACING,
-    GRID_GAP, GridBand, build_tab_grid_bands, clamp_grid_card_width,
+    GRID_GAP, GridBand, build_tab_grid_bands, clamp_grid_card_width, clamp_scroll_y,
     compute_band_window_with_row_height, compute_fixed_window, compute_grid_layout_metrics,
-    grid_card_height, grid_columns_for_width, grid_preview_box_size,
+    grid_bands_total_height, grid_card_height, grid_columns_for_width, grid_preview_box_size,
 };
 use crate::views::{render_entry_icon, sanitize_single_line, with_tooltip};
 
@@ -1331,8 +1331,24 @@ fn grid_view<'a>(
     responsive(move |size| {
         let fit_cols = grid_columns_for_width(size.width, card_width);
         let bands = build_tab_grid_bands(&tab.visible_entries, fit_cols, group_folders, strings);
-        let win =
-            compute_band_window_with_row_height(&bands, card_height, scroll_y, viewport_h, 280.0);
+        let total_content_h = if bands.is_empty() {
+            48.0
+        } else {
+            grid_bands_total_height(&bands, card_height) + GRID_BAND_SPACING + 48.0
+        };
+        let effective_viewport_h = if size.height > 1.0 {
+            size.height
+        } else {
+            viewport_h
+        };
+        let effective_scroll_y = clamp_scroll_y(scroll_y, total_content_h, effective_viewport_h);
+        let win = compute_band_window_with_row_height(
+            &bands,
+            card_height,
+            effective_scroll_y,
+            effective_viewport_h,
+            280.0,
+        );
         let metrics = compute_grid_layout_metrics(&bands, size.width, card_width, center_items);
 
         let mut list = column![]
@@ -1416,7 +1432,7 @@ fn grid_view<'a>(
                 viewport_height: vp.bounds().height,
                 viewport_width: vp.bounds().width,
             });
-        wrap_marquee(app, pane, scroll.into(), palette)
+        wrap_marquee(app, pane, scroll.into(), effective_scroll_y, palette)
     })
     .into()
 }
@@ -1767,10 +1783,12 @@ fn detail_table_view<'a>(
     .width(Length::Fill)
     .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 8.0));
 
+    let total_content_h = tab.visible_entries.len() as f32 * DETAIL_ROW_STEP + 48.0;
+    let effective_scroll_y = clamp_scroll_y(scroll_y, total_content_h, viewport_h);
     let win = compute_fixed_window(
         tab.visible_entries.len(),
         DETAIL_ROW_STEP,
-        scroll_y,
+        effective_scroll_y,
         viewport_h,
         6,
     );
@@ -1917,7 +1935,7 @@ fn detail_table_view<'a>(
 
     column![
         sticky_header,
-        wrap_marquee(app, pane, scroll.into(), palette)
+        wrap_marquee(app, pane, scroll.into(), effective_scroll_y, palette)
     ]
     .spacing(6)
     .width(Length::Fill)
@@ -2308,6 +2326,7 @@ fn wrap_marquee<'a>(
     app: &'a App,
     pane: SplitPane,
     content: Element<'a, Message>,
+    scroll_y: f32,
     palette: ThemePalette,
 ) -> Element<'a, Message> {
     let enabled = app.active_dialog.is_none()
@@ -2317,7 +2336,6 @@ fn wrap_marquee<'a>(
         && !app.quicklook_open
         && !app.prefs_open
         && !app.deep_search_open;
-    let (scroll_y, _, _) = app.pane_scroll_metrics(pane);
     Element::new(MarqueeSelect {
         content,
         pane,
