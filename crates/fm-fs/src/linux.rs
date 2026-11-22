@@ -335,11 +335,15 @@ pub fn open_properties(path: &Path) -> Result<(), FsError> {
     })
 }
 
-/// Aplica alterações de permissões POSIX / modo somente leitura no Linux.
+/// Aplica alterações de permissões POSIX / modo somente leitura no Linux (com suporte a recursividade em pastas).
 pub fn apply_entry_properties(path: &Path, patch: &PropertyPatch) -> Result<(), FsError> {
     if let Some(mode) = patch.posix_mode {
-        let perms = std::fs::Permissions::from_mode(mode & 0o7777);
+        let masked = mode & 0o7777;
+        let perms = std::fs::Permissions::from_mode(masked);
         std::fs::set_permissions(path, perms).map_err(|e| map_io_err(path, e))?;
+        if patch.recursive && path.is_dir() {
+            apply_posix_mode_recursive(path, masked);
+        }
         return Ok(());
     }
     if let Some(readonly) = patch.readonly {
@@ -349,6 +353,28 @@ pub fn apply_entry_properties(path: &Path, patch: &PropertyPatch) -> Result<(), 
         std::fs::set_permissions(path, perms).map_err(|e| map_io_err(path, e))?;
     }
     Ok(())
+}
+
+fn apply_posix_mode_recursive(root: &Path, mode: u32) {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for item in entries.flatten() {
+            let child = item.path();
+            let Ok(ft) = item.file_type() else {
+                continue;
+            };
+            if ft.is_symlink() {
+                continue;
+            }
+            let _ = std::fs::set_permissions(&child, std::fs::Permissions::from_mode(mode));
+            if ft.is_dir() {
+                stack.push(child);
+            }
+        }
+    }
 }
 
 /// Cria um link simbólico POSIX apontando para `target` dentro de `dest_dir` sem sobrescrever entradas existentes.

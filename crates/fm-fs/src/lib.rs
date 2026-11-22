@@ -785,9 +785,10 @@ pub struct PropertyPatch {
     pub readonly: Option<bool>,
     pub hidden: Option<bool>,
     pub posix_mode: Option<u32>,
+    pub recursive: bool,
 }
 
-/// Lê metadados adicionais sob demanda (último acesso, alvo de symlink, estado somente leitura).
+/// Lê metadados adicionais sob demanda (último acesso, alvo de symlink, estado somente leitura, dono/grupo POSIX).
 pub async fn read_entry_extra_info(path: PathBuf) -> EntryExtraInfo {
     tokio::task::spawn_blocking(move || {
         let Ok(link_meta) = std::fs::symlink_metadata(&path) else {
@@ -799,14 +800,61 @@ pub async fn read_entry_extra_info(path: PathBuf) -> EntryExtraInfo {
             None
         };
         let effective = std::fs::metadata(&path).unwrap_or(link_meta);
+        let (owner_name, owner_uid, group_name, group_gid) = resolve_posix_owner_group(&effective);
         EntryExtraInfo {
             accessed_at: effective.accessed().ok(),
             symlink_target,
             is_readonly: effective.permissions().readonly(),
+            owner_name,
+            owner_uid,
+            group_name,
+            group_gid,
         }
     })
     .await
     .unwrap_or_default()
+}
+
+fn resolve_posix_owner_group(
+    meta: &std::fs::Metadata,
+) -> (
+    Option<CompactString>,
+    Option<u32>,
+    Option<CompactString>,
+    Option<u32>,
+) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let uid = meta.uid();
+        let gid = meta.gid();
+        let owner = lookup_etc_id_name("/etc/passwd", uid).map(CompactString::from);
+        let group = lookup_etc_id_name("/etc/group", gid).map(CompactString::from);
+        (owner, Some(uid), group, Some(gid))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = meta;
+        (None, None, None, None)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn lookup_etc_id_name(etc_path: &str, target_id: u32) -> Option<String> {
+    let raw = std::fs::read_to_string(etc_path).ok()?;
+    for line in raw.lines() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut parts = line.split(':');
+        let name = parts.next()?;
+        let _passwd = parts.next()?;
+        let id_str = parts.next()?;
+        if id_str.parse::<u32>().ok() == Some(target_id) {
+            return Some(name.to_owned());
+        }
+    }
+    None
 }
 
 /// Aplica alterações de permissões / atributos no item de forma assíncrona.
@@ -1018,6 +1066,7 @@ mod tests {
                     readonly: None,
                     hidden: Some(true),
                     posix_mode: None,
+                    recursive: false,
                 },
             )
             .await
@@ -1121,6 +1170,7 @@ mod tests {
                     readonly: Some(true),
                     hidden: None,
                     posix_mode: None,
+                    recursive: false,
                 },
             )
             .await
@@ -1134,6 +1184,7 @@ mod tests {
                     readonly: Some(false),
                     hidden: None,
                     posix_mode: None,
+                    recursive: false,
                 },
             )
             .await

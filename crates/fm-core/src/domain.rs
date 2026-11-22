@@ -107,6 +107,15 @@ impl PermissionsMeta {
                         buf[idx + 1] = *ch;
                     }
                 }
+                if mode & 0o4000 != 0 {
+                    buf[3] = if mode & 0o100 != 0 { b's' } else { b'S' };
+                }
+                if mode & 0o2000 != 0 {
+                    buf[6] = if mode & 0o010 != 0 { b's' } else { b'S' };
+                }
+                if mode & 0o1000 != 0 {
+                    buf[9] = if mode & 0o001 != 0 { b't' } else { b'T' };
+                }
                 let s = std::str::from_utf8(&buf).unwrap_or("----------");
                 CompactString::new(s)
             }
@@ -217,6 +226,20 @@ pub struct EntryExtraInfo {
     pub accessed_at: Option<SystemTime>,
     pub symlink_target: Option<PathBuf>,
     pub is_readonly: bool,
+    pub owner_name: Option<CompactString>,
+    pub owner_uid: Option<u32>,
+    pub group_name: Option<CompactString>,
+    pub group_gid: Option<u32>,
+}
+
+/// Faz parsing de uma string octal POSIX de 3 ou 4 dígitos (ex.: `"755"`, `"0644"`, `"1777"`).
+#[must_use]
+pub fn parse_posix_octal_mode(raw: &str) -> Option<u32> {
+    let trimmed = raw.trim().trim_start_matches("0o").trim_start_matches("0O");
+    if !(3..=4).contains(&trimmed.len()) || !trimmed.bytes().all(|b| (b'0'..=b'7').contains(&b)) {
+        return None;
+    }
+    u32::from_str_radix(trimmed, 8).ok().map(|m| m & 0o7777)
 }
 
 /// Constantes Win32 de `ACCESS_MASK` NTFS usadas para mapeamento puro e multiplataforma.
@@ -1281,5 +1304,32 @@ mod tests {
         assert!(decoded_write.write);
         assert!(!decoded_write.read);
         assert!(!decoded_write.delete);
+    }
+
+    #[test]
+    fn posix_special_bits_and_octal_parser_work_accurately() {
+        assert_eq!(
+            PermissionsMeta::PosixMode(0o4755)
+                .format_compact(false)
+                .as_str(),
+            "-rwsr-xr-x"
+        );
+        assert_eq!(
+            PermissionsMeta::PosixMode(0o2640)
+                .format_compact(false)
+                .as_str(),
+            "-rw-r-S---"
+        );
+        assert_eq!(
+            PermissionsMeta::PosixMode(0o1777)
+                .format_compact(true)
+                .as_str(),
+            "drwxrwxrwt"
+        );
+        assert_eq!(parse_posix_octal_mode("755"), Some(0o0755));
+        assert_eq!(parse_posix_octal_mode("0644"), Some(0o0644));
+        assert_eq!(parse_posix_octal_mode("1777"), Some(0o1777));
+        assert_eq!(parse_posix_octal_mode("089"), None);
+        assert_eq!(parse_posix_octal_mode("75"), None);
     }
 }

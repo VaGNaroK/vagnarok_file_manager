@@ -175,6 +175,8 @@ pub struct PropertiesWindowState {
     pub initial_hidden: bool,
     pub posix_mode_draft: Option<u32>,
     pub initial_posix_mode: Option<u32>,
+    pub posix_octal_draft: String,
+    pub posix_recursive_draft: bool,
     pub ntfs_acl_loading: bool,
     pub ntfs_acl_initial: Option<fm_core::NtfsSecurityInfo>,
     pub ntfs_acl_draft: Option<fm_core::NtfsSecurityInfo>,
@@ -216,6 +218,7 @@ impl PropertiesWindowState {
             || self.readonly_draft != self.initial_readonly
             || self.hidden_draft != self.initial_hidden
             || self.posix_mode_draft != self.initial_posix_mode
+            || (self.entry.kind.is_dir_like() && self.posix_recursive_draft)
             || self.ntfs_acl_draft != self.ntfs_acl_initial
     }
 
@@ -224,6 +227,11 @@ impl PropertiesWindowState {
         self.readonly_draft = self.initial_readonly;
         self.hidden_draft = self.initial_hidden;
         self.posix_mode_draft = self.initial_posix_mode;
+        self.posix_octal_draft = self
+            .initial_posix_mode
+            .map(|m| format!("{:04o}", m & 0o7777))
+            .unwrap_or_default();
+        self.posix_recursive_draft = false;
         self.ntfs_acl_draft = self.ntfs_acl_initial.clone();
         self.ntfs_edit_mode = false;
         self.ntfs_add_input = None;
@@ -678,6 +686,9 @@ pub enum Message {
     PropertiesToggleReadonly(window::Id),
     PropertiesToggleHidden(window::Id),
     PropertiesTogglePosixBit(window::Id, u32),
+    PropertiesSetPosixMode(window::Id, u32),
+    PropertiesPosixOctalChanged(window::Id, String),
+    PropertiesTogglePosixRecursive(window::Id),
     PropertiesToggleExecutable(window::Id),
     PropertiesCancel(window::Id),
     PropertiesNtfsAclLoaded {
@@ -3673,6 +3684,7 @@ impl App {
                         } else {
                             *mode |= 0o200;
                         }
+                        props.posix_octal_draft = format!("{:04o}", *mode & 0o7777);
                     }
                 }
                 Task::none()
@@ -3708,8 +3720,54 @@ impl App {
                     && !props.applying
                     && let Some(mode) = &mut props.posix_mode_draft
                 {
-                    *mode ^= bit;
+                    *mode = (*mode ^ bit) & 0o7777;
                     props.readonly_draft = (*mode & 0o222) == 0;
+                    props.posix_octal_draft = format!("{:04o}", *mode);
+                }
+                Task::none()
+            }
+            Message::PropertiesSetPosixMode(window_id, next_mode) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && !props.is_multi()
+                    && !props.is_archive()
+                    && !props.applying
+                    && let Some(mode) = &mut props.posix_mode_draft
+                {
+                    let masked = next_mode & 0o7777;
+                    *mode = masked;
+                    props.readonly_draft = (masked & 0o222) == 0;
+                    props.posix_octal_draft = format!("{masked:04o}");
+                }
+                Task::none()
+            }
+            Message::PropertiesPosixOctalChanged(window_id, raw) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && !props.is_multi()
+                    && !props.is_archive()
+                    && !props.applying
+                    && let Some(mode) = &mut props.posix_mode_draft
+                {
+                    let filtered: String = raw
+                        .chars()
+                        .filter(|c| ('0'..='7').contains(c))
+                        .take(4)
+                        .collect();
+                    props.posix_octal_draft = filtered.clone();
+                    if let Some(parsed) = fm_core::domain::parse_posix_octal_mode(&filtered) {
+                        *mode = parsed;
+                        props.readonly_draft = (parsed & 0o222) == 0;
+                    }
+                }
+                Task::none()
+            }
+            Message::PropertiesTogglePosixRecursive(window_id) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && !props.is_multi()
+                    && !props.is_archive()
+                    && !props.applying
+                    && props.entry.kind.is_dir_like()
+                {
+                    props.posix_recursive_draft = !props.posix_recursive_draft;
                 }
                 Task::none()
             }
@@ -3721,8 +3779,11 @@ impl App {
                     && !props.entry.kind.is_dir_like()
                     && let Some(mode) = &mut props.posix_mode_draft
                 {
-                    *mode = fm_core::toggle_posix_executable_mode(*mode);
+                    let special = *mode & 0o7000;
+                    let base = fm_core::toggle_posix_executable_mode(*mode & 0o0777);
+                    *mode = special | base;
                     props.readonly_draft = (*mode & 0o222) == 0;
+                    props.posix_octal_draft = format!("{:04o}", *mode);
                 }
                 Task::none()
             }
@@ -3891,6 +3952,7 @@ impl App {
                             readonly: None,
                             hidden: None,
                             posix_mode: Some(next_mode),
+                            recursive: false,
                         };
                         if let Err(err) =
                             fm_fs::apply_entry_properties(target_path.clone(), patch).await
@@ -3962,7 +4024,8 @@ impl App {
                     .then_some(props.readonly_draft);
                 let hidden =
                     (props.hidden_draft != props.initial_hidden).then_some(props.hidden_draft);
-                let posix_mode = (props.posix_mode_draft != props.initial_posix_mode)
+                let recursive = props.entry.kind.is_dir_like() && props.posix_recursive_draft;
+                let posix_mode = (props.posix_mode_draft != props.initial_posix_mode || recursive)
                     .then_some(props.posix_mode_draft)
                     .flatten();
                 let ntfs_acl = (props.ntfs_acl_draft != props.ntfs_acl_initial)
@@ -3997,6 +4060,7 @@ impl App {
                                 readonly,
                                 hidden,
                                 posix_mode,
+                                recursive,
                             };
                             if let Err(err) =
                                 fm_fs::apply_entry_properties(target_path.clone(), patch).await
@@ -4066,7 +4130,7 @@ impl App {
                         {
                             let (pm, ro) = match updated_entry.permissions {
                                 PermissionsMeta::PosixMode(mode) => {
-                                    let perms = mode & 0o777;
+                                    let perms = mode & 0o7777;
                                     (Some(perms), updated_extra.is_readonly)
                                 }
                                 PermissionsMeta::WinAttributes(_) => {
@@ -4080,6 +4144,9 @@ impl App {
                             props.initial_readonly = ro;
                             props.posix_mode_draft = pm;
                             props.initial_posix_mode = pm;
+                            props.posix_octal_draft =
+                                pm.map(|m| format!("{m:04o}")).unwrap_or_default();
+                            props.posix_recursive_draft = false;
                             props.ntfs_edit_mode = false;
                             props.ntfs_add_input = None;
                             if props.ntfs_acl_draft.is_some() {
@@ -5477,6 +5544,8 @@ impl App {
                 initial_hidden: false,
                 posix_mode_draft: None,
                 initial_posix_mode: None,
+                posix_octal_draft: String::new(),
+                posix_recursive_draft: false,
                 ntfs_acl_loading: false,
                 ntfs_acl_initial: None,
                 ntfs_acl_draft: None,
@@ -5651,11 +5720,14 @@ impl App {
 
         let (initial_posix_mode, initial_readonly) = match entry.permissions {
             PermissionsMeta::PosixMode(mode) => {
-                let perms = mode & 0o777;
+                let perms = mode & 0o7777;
                 (Some(perms), (perms & 0o222) == 0)
             }
             PermissionsMeta::WinAttributes(attrs) => (None, (attrs & 0x1) != 0),
         };
+        let initial_posix_octal = initial_posix_mode
+            .map(|m| format!("{m:04o}"))
+            .unwrap_or_default();
         let draft_name = entry.name.to_string();
         let initial_hidden = entry.is_hidden;
 
@@ -5687,6 +5759,8 @@ impl App {
                 initial_hidden,
                 posix_mode_draft: initial_posix_mode,
                 initial_posix_mode,
+                posix_octal_draft: initial_posix_octal,
+                posix_recursive_draft: false,
                 ntfs_acl_loading: false,
                 ntfs_acl_initial: None,
                 ntfs_acl_draft: None,

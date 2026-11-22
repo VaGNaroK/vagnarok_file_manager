@@ -496,6 +496,22 @@ pub struct Strings {
     pub ntfs_inheritance_off: &'static str,
     pub ntfs_add_placeholder: &'static str,
     pub ntfs_loading: &'static str,
+    pub posix_owner_group_header: &'static str,
+    pub posix_octal_symbolic_header: &'static str,
+    pub posix_presets_label: &'static str,
+    pub posix_preset_default: &'static str,
+    pub posix_preset_exec: &'static str,
+    pub posix_preset_private: &'static str,
+    pub posix_preset_readonly: &'static str,
+    pub posix_preset_group: &'static str,
+    pub posix_preset_shared: &'static str,
+    pub posix_scope_col: &'static str,
+    pub posix_summary_col: &'static str,
+    pub posix_others_sub: &'static str,
+    pub posix_special_bits_header: &'static str,
+    pub posix_quick_action_header: &'static str,
+    pub posix_recursive_header: &'static str,
+    pub posix_apply_recursive: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -1168,6 +1184,22 @@ impl Strings {
         let ntfs_inheritance_off = resolve("ntfs-inheritance-off");
         let ntfs_add_placeholder = resolve("ntfs-add-placeholder");
         let ntfs_loading = resolve("ntfs-loading");
+        let posix_owner_group_header = resolve("posix-owner-group-header");
+        let posix_octal_symbolic_header = resolve("posix-octal-symbolic-header");
+        let posix_presets_label = resolve("posix-presets-label");
+        let posix_preset_default = resolve("posix-preset-default");
+        let posix_preset_exec = resolve("posix-preset-exec");
+        let posix_preset_private = resolve("posix-preset-private");
+        let posix_preset_readonly = resolve("posix-preset-readonly");
+        let posix_preset_group = resolve("posix-preset-group");
+        let posix_preset_shared = resolve("posix-preset-shared");
+        let posix_scope_col = resolve("posix-scope-col");
+        let posix_summary_col = resolve("posix-summary-col");
+        let posix_others_sub = resolve("posix-others-sub");
+        let posix_special_bits_header = resolve("posix-special-bits-header");
+        let posix_quick_action_header = resolve("posix-quick-action-header");
+        let posix_recursive_header = resolve("posix-recursive-header");
+        let posix_apply_recursive = resolve("posix-apply-recursive");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -1633,6 +1665,22 @@ impl Strings {
             ntfs_inheritance_off,
             ntfs_add_placeholder,
             ntfs_loading,
+            posix_owner_group_header,
+            posix_octal_symbolic_header,
+            posix_presets_label,
+            posix_preset_default,
+            posix_preset_exec,
+            posix_preset_private,
+            posix_preset_readonly,
+            posix_preset_group,
+            posix_preset_shared,
+            posix_scope_col,
+            posix_summary_col,
+            posix_others_sub,
+            posix_special_bits_header,
+            posix_quick_action_header,
+            posix_recursive_header,
+            posix_apply_recursive,
         }
     }
 }

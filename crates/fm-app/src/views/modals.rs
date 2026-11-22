@@ -1574,123 +1574,426 @@ fn properties_permissions_tab<'a>(
     let editable = !is_archive && !props.applying;
 
     if let Some(mode) = props.posix_mode_draft {
-        let octal_label = format!("0o{mode:03o}");
         let symbolic = PermissionsMeta::PosixMode(mode)
             .format_compact(is_dir)
             .to_string();
 
-        let bit_btn = |title: &'static str, bit: u32| {
+        let owner_name = props
+            .extra
+            .as_ref()
+            .and_then(|e| e.owner_name.as_deref())
+            .unwrap_or("—");
+        let owner_uid_str = props
+            .extra
+            .as_ref()
+            .and_then(|e| e.owner_uid)
+            .map(|u| format!("({u})"))
+            .unwrap_or_default();
+        let group_name = props
+            .extra
+            .as_ref()
+            .and_then(|e| e.group_name.as_deref())
+            .unwrap_or("—");
+        let group_gid_str = props
+            .extra
+            .as_ref()
+            .and_then(|e| e.group_gid)
+            .map(|g| format!("({g})"))
+            .unwrap_or_default();
+
+        let owner_pill = container(
+            row![
+                text(format!("{}:", strings.prop_owner))
+                    .size(11)
+                    .font(FONT_UI)
+                    .color(palette.text_muted),
+                text(owner_name)
+                    .size(11)
+                    .font(FONT_MONO_BOLD)
+                    .color(palette.text_primary),
+                text(owner_uid_str)
+                    .size(10)
+                    .font(FONT_MONO)
+                    .color(palette.text_muted),
+            ]
+            .spacing(4)
+            .align_y(Center),
+        )
+        .padding([4, 8])
+        .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 8.0));
+
+        let group_pill = container(
+            row![
+                text(format!("{}:", strings.prop_group))
+                    .size(11)
+                    .font(FONT_UI)
+                    .color(palette.text_muted),
+                text(group_name)
+                    .size(11)
+                    .font(FONT_MONO_BOLD)
+                    .color(palette.text_primary),
+                text(group_gid_str)
+                    .size(10)
+                    .font(FONT_MONO)
+                    .color(palette.text_muted),
+            ]
+            .spacing(4)
+            .align_y(Center),
+        )
+        .padding([4, 8])
+        .style(move |_| styles::panel_surface(palette.surface_lowest, palette.border, 8.0));
+
+        let owner_card = container(
+            column![
+                text(strings.posix_owner_group_header)
+                    .size(10)
+                    .font(FONT_MONO_BOLD)
+                    .color(palette.text_muted),
+                row![owner_pill, group_pill].spacing(8).align_y(Center),
+            ]
+            .spacing(6),
+        )
+        .width(Length::FillPortion(6))
+        .padding([10, 12])
+        .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0));
+
+        let octal_input = text_input("0755", &props.posix_octal_draft)
+            .size(13)
+            .font(FONT_MONO_BOLD)
+            .padding([5, 8])
+            .width(Length::Fixed(72.0))
+            .style(styles::search_input_style(palette))
+            .on_input_maybe(
+                editable.then_some(move |v| Message::PropertiesPosixOctalChanged(win_id, v)),
+            );
+
+        let symbolic_badge = container(
+            text(symbolic)
+                .size(12)
+                .font(FONT_MONO_BOLD)
+                .color(palette.accent_primary)
+                .wrapping(text::Wrapping::None),
+        )
+        .padding([5, 10])
+        .style(styles::badge_container(
+            palette.accent_surface,
+            palette.accent_primary,
+            palette.accent_border,
+            8.0,
+        ));
+
+        let mode_card = container(
+            column![
+                text(strings.posix_octal_symbolic_header)
+                    .size(10)
+                    .font(FONT_MONO_BOLD)
+                    .color(palette.text_muted),
+                row![
+                    icon_lock().size(14).color(palette.accent_primary),
+                    octal_input,
+                    space::horizontal(),
+                    symbolic_badge,
+                ]
+                .spacing(8)
+                .align_y(Center),
+            ]
+            .spacing(6),
+        )
+        .width(Length::FillPortion(5))
+        .padding([10, 12])
+        .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0));
+
+        let top_summary = row![owner_card, mode_card].spacing(10).width(Length::Fill);
+
+        // Presets rápidos (1 clique)
+        let presets: Vec<(String, u32)> = if is_dir {
+            vec![
+                (format!("0755 {}", strings.posix_preset_default), 0o0755),
+                (format!("0700 {}", strings.posix_preset_private), 0o0700),
+                (format!("0775 {}", strings.posix_preset_group), 0o0775),
+                (format!("1777 {}", strings.posix_preset_shared), 0o1777),
+            ]
+        } else {
+            vec![
+                (format!("0644 {}", strings.posix_preset_default), 0o0644),
+                (format!("0755 {}", strings.posix_preset_exec), 0o0755),
+                (format!("0600 {}", strings.posix_preset_private), 0o0600),
+                (format!("0444 {}", strings.posix_preset_readonly), 0o0444),
+            ]
+        };
+
+        let mut presets_row = row![
+            text(strings.posix_presets_label)
+                .size(11)
+                .font(FONT_UI_SEMIBOLD)
+                .color(palette.text_muted),
+        ]
+        .spacing(6)
+        .align_y(Center);
+
+        for (label, preset_mode) in presets {
+            let active = (mode & 0o7777) == preset_mode;
+            presets_row = presets_row.push(
+                button(
+                    text(label)
+                        .size(11)
+                        .font(FONT_MONO)
+                        .wrapping(text::Wrapping::None),
+                )
+                .padding([4, 10])
+                .style(styles::tab_button(palette, active))
+                .on_press_maybe(
+                    editable.then_some(Message::PropertiesSetPosixMode(win_id, preset_mode)),
+                ),
+            );
+        }
+
+        // Matriz tabular (Escopo | Leitura | Escrita | Execução | Resumo)
+        let mut matrix_col = column![
+            container(
+                row![
+                    text(strings.posix_scope_col)
+                        .size(11)
+                        .font(FONT_UI_SEMIBOLD)
+                        .color(palette.text_secondary)
+                        .width(Length::Fill),
+                    container(
+                        text(format!("{} (r)", strings.perm_read))
+                            .size(11)
+                            .font(FONT_UI_SEMIBOLD)
+                            .color(palette.text_secondary),
+                    )
+                    .width(Length::Fixed(86.0))
+                    .align_x(Center),
+                    container(
+                        text(format!("{} (w)", strings.perm_write))
+                            .size(11)
+                            .font(FONT_UI_SEMIBOLD)
+                            .color(palette.text_secondary),
+                    )
+                    .width(Length::Fixed(86.0))
+                    .align_x(Center),
+                    container(
+                        text(format!("{} (x)", strings.perm_execute))
+                            .size(11)
+                            .font(FONT_UI_SEMIBOLD)
+                            .color(palette.text_secondary),
+                    )
+                    .width(Length::Fixed(92.0))
+                    .align_x(Center),
+                    container(
+                        text(strings.posix_summary_col)
+                            .size(11)
+                            .font(FONT_UI_SEMIBOLD)
+                            .color(palette.text_secondary),
+                    )
+                    .width(Length::Fixed(64.0))
+                    .align_x(Center),
+                ]
+                .align_y(Center),
+            )
+            .width(Length::Fill)
+            .padding([7, 12])
+            .style(move |_| styles::panel_surface(
+                palette.surface_high,
+                Color::TRANSPARENT,
+                0.0
+            )),
+        ]
+        .width(Length::Fill);
+
+        let scopes = [
+            (strings.prop_owner, owner_name, 0o400, 0o200, 0o100),
+            (strings.prop_group, group_name, 0o040, 0o020, 0o010),
+            (
+                strings.prop_others,
+                strings.posix_others_sub,
+                0o004,
+                0o002,
+                0o001,
+            ),
+        ];
+
+        for (scope_title, scope_sub, r_bit, w_bit, x_bit) in scopes {
+            let r_on = (mode & r_bit) != 0;
+            let w_on = (mode & w_bit) != 0;
+            let x_on = (mode & x_bit) != 0;
+            let rwx = format!(
+                "{}{}{}",
+                if r_on { 'r' } else { '-' },
+                if w_on { 'w' } else { '-' },
+                if x_on { 'x' } else { '-' },
+            );
+
+            let cell_toggle = |active: bool, bit: u32, col_w: f32| {
+                container(
+                    button(perm_checkbox_box(active, palette))
+                        .padding(3)
+                        .style(styles::ghost_button(palette, 6.0))
+                        .on_press_maybe(
+                            editable.then_some(Message::PropertiesTogglePosixBit(win_id, bit)),
+                        ),
+                )
+                .width(Length::Fixed(col_w))
+                .align_x(Center)
+            };
+
+            matrix_col = matrix_col
+                .push(
+                    container(Space::new().width(Length::Fill).height(1))
+                        .style(styles::divider_line(palette)),
+                )
+                .push(
+                    container(
+                        row![
+                            column![
+                                text(scope_title)
+                                    .size(12)
+                                    .font(FONT_UI_SEMIBOLD)
+                                    .color(palette.text_primary),
+                                text(scope_sub)
+                                    .size(10)
+                                    .font(FONT_MONO)
+                                    .color(palette.text_muted),
+                            ]
+                            .spacing(1)
+                            .width(Length::Fill),
+                            cell_toggle(r_on, r_bit, 86.0),
+                            cell_toggle(w_on, w_bit, 86.0),
+                            cell_toggle(x_on, x_bit, 92.0),
+                            container(
+                                text(rwx)
+                                    .size(12)
+                                    .font(FONT_MONO_BOLD)
+                                    .color(palette.text_secondary),
+                            )
+                            .width(Length::Fixed(64.0))
+                            .align_x(Center),
+                        ]
+                        .align_y(Center),
+                    )
+                    .width(Length::Fill)
+                    .padding([6, 12]),
+                );
+        }
+
+        let matrix_card = container(matrix_col)
+            .width(Length::Fill)
+            .clip(true)
+            .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0));
+
+        // Bits Especiais POSIX (SetUID, SetGID, Sticky)
+        let special_btn = |label: &'static str, bit: u32| {
             let active = (mode & bit) != 0;
             button(
                 row![
                     perm_checkbox_box(active, palette),
-                    text(title)
-                        .size(12)
+                    text(label)
+                        .size(11)
                         .font(FONT_UI)
-                        .color(palette.text_primary),
+                        .color(palette.text_primary)
+                        .wrapping(text::Wrapping::None),
                 ]
                 .spacing(6)
                 .align_y(Center),
             )
-            .padding([5, 10])
+            .padding([4, 6])
             .style(styles::ghost_button(palette, 6.0))
             .on_press_maybe(editable.then_some(Message::PropertiesTogglePosixBit(win_id, bit)))
         };
 
-        let r_lbl = strings.perm_read;
-        let w_lbl = strings.perm_write;
-        let x_lbl = strings.perm_execute;
-
-        let perm_group = |title: &'a str, r: u32, w: u32, x: u32| {
-            row![
-                text(title)
-                    .size(12)
-                    .font(FONT_UI_SEMIBOLD)
-                    .color(palette.text_secondary)
-                    .width(Length::Fixed(110.0)),
-                bit_btn(r_lbl, r),
-                bit_btn(w_lbl, w),
-                bit_btn(x_lbl, x),
-            ]
-            .spacing(10)
-            .align_y(Center)
-        };
-
-        let mut perms_col = column![
-            container(
+        let special_card = container(
+            column![
+                text(strings.posix_special_bits_header)
+                    .size(10)
+                    .font(FONT_MONO_BOLD)
+                    .color(palette.text_muted),
                 row![
-                    icon_lock().size(15).color(palette.accent_primary),
-                    text(strings.prop_octal_mode)
-                        .size(12)
-                        .font(FONT_UI)
-                        .color(palette.text_muted),
-                    text(octal_label)
-                        .size(13)
-                        .font(FONT_MONO_BOLD)
-                        .color(palette.text_primary),
-                    space::horizontal(),
-                    text(symbolic)
-                        .size(13)
-                        .font(FONT_MONO)
-                        .color(palette.accent_primary),
+                    special_btn("SetUID (4)", 0o4000),
+                    special_btn("SetGID (2)", 0o2000),
+                    special_btn("Sticky (1)", 0o1000),
                 ]
-                .spacing(10)
+                .spacing(6)
                 .align_y(Center),
-            )
-            .width(Length::Fill)
-            .padding(12)
-            .style(move |_| styles::panel_surface(
-                palette.surface_low,
-                palette.border,
-                10.0
-            )),
+            ]
+            .spacing(6),
+        )
+        .width(Length::FillPortion(1))
+        .padding([10, 12])
+        .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0));
+
+        // Ação contextual: Executável (arquivo) ou Recursivo (pasta)
+        let context_card = if is_dir {
             container(
                 column![
-                    perm_group(strings.prop_owner, 0o400, 0o200, 0o100),
-                    perm_group(strings.prop_group, 0o040, 0o020, 0o010),
-                    perm_group(strings.prop_others, 0o004, 0o002, 0o001),
-                ]
-                .spacing(8),
-            )
-            .width(Length::Fill)
-            .padding(12)
-            .style(move |_| styles::panel_surface(
-                palette.surface_low,
-                palette.border,
-                10.0
-            )),
-        ]
-        .spacing(10);
-
-        if !is_dir {
-            let exec_active = is_posix_executable(mode);
-            perms_col = perms_col.push(
-                container(
+                    text(strings.posix_recursive_header)
+                        .size(10)
+                        .font(FONT_MONO_BOLD)
+                        .color(palette.text_muted),
                     button(
                         row![
-                            perm_checkbox_box(exec_active, palette),
-                            text(strings.perm_allow_exec)
-                                .size(12)
+                            perm_checkbox_box(props.posix_recursive_draft, palette),
+                            text(strings.posix_apply_recursive)
+                                .size(11)
                                 .font(FONT_UI_SEMIBOLD)
                                 .color(palette.text_primary),
                         ]
                         .spacing(8)
                         .align_y(Center),
                     )
-                    .padding([6, 10])
+                    .padding([4, 6])
+                    .width(Length::Fill)
+                    .style(styles::ghost_button(palette, 6.0))
+                    .on_press_maybe(
+                        editable.then_some(Message::PropertiesTogglePosixRecursive(win_id)),
+                    ),
+                ]
+                .spacing(6),
+            )
+            .width(Length::FillPortion(1))
+            .padding([10, 12])
+            .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0))
+        } else {
+            let exec_active = is_posix_executable(mode);
+            container(
+                column![
+                    text(strings.posix_quick_action_header)
+                        .size(10)
+                        .font(FONT_MONO_BOLD)
+                        .color(palette.text_muted),
+                    button(
+                        row![
+                            perm_checkbox_box(exec_active, palette),
+                            text(strings.perm_allow_exec)
+                                .size(11)
+                                .font(FONT_UI_SEMIBOLD)
+                                .color(palette.text_primary),
+                        ]
+                        .spacing(8)
+                        .align_y(Center),
+                    )
+                    .padding([4, 6])
                     .width(Length::Fill)
                     .style(styles::ghost_button(palette, 6.0))
                     .on_press_maybe(
                         editable.then_some(Message::PropertiesToggleExecutable(win_id)),
                     ),
-                )
-                .width(Length::Fill)
-                .padding(8)
-                .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0)),
-            );
-        }
+                ]
+                .spacing(6),
+            )
+            .width(Length::FillPortion(1))
+            .padding([10, 12])
+            .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0))
+        };
 
-        return perms_col.into();
+        let extras_row = row![special_card, context_card]
+            .spacing(10)
+            .width(Length::Fill);
+
+        return column![top_summary, presets_row, matrix_card, extras_row]
+            .spacing(10)
+            .width(Length::Fill)
+            .into();
     }
 
     // Windows NTFS ACL UI (conforme mockup v2)
