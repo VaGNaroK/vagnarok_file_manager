@@ -2954,19 +2954,20 @@ pub fn context_menu_overlay<'a>(
     palette: ThemePalette,
     strings: Strings,
 ) -> Element<'a, Message> {
-    let menu_width = match &menu.kind {
+    let base_menu_width = match &menu.kind {
+        ContextMenuKind::Entry { path, .. }
+            if fm_fs::archive::detect_archive_kind(path).is_some() =>
+        {
+            288.0_f32
+        }
         ContextMenuKind::Entry {
             posix_mode: Some(_),
             ..
         } => 278.0_f32,
-        ContextMenuKind::Entry { path, .. }
-            if fm_fs::archive::detect_archive_kind(path).is_some() =>
-        {
-            284.0_f32
-        }
         ContextMenuKind::Entry { is_dir: true, .. } | ContextMenuKind::Background => 256.0_f32,
         _ => 236.0_f32,
     };
+    let mut max_label_chars: usize = 0;
     let has_clipboard = app.clipboard.is_some();
     let show_open_as_root = fm_fs::supports_open_as_root();
 
@@ -3275,11 +3276,9 @@ pub fn context_menu_overlay<'a>(
                         .file_name()
                         .map(|n| fm_core::strip_known_archive_suffix(&n.to_string_lossy()))
                         .unwrap_or_default();
-                    let subdir_label = if folder_hint.is_empty() {
-                        strings.arch_extract_subdir.to_owned()
-                    } else {
-                        format!("{} ({folder_hint}/)", strings.arch_extract_subdir)
-                    };
+                    let subdir_label =
+                        format_extract_subdir_label(strings.arch_extract_subdir, &folder_hint);
+                    max_label_chars = max_label_chars.max(subdir_label.chars().count());
                     items = items
                         .push(ctx_entry_item(
                             icon_file_archive()
@@ -3924,6 +3923,7 @@ pub fn context_menu_overlay<'a>(
         ContextMenuKind::PreferencesMenu => 84.0,
     };
 
+    let menu_width = estimate_context_menu_width(base_menu_width, max_label_chars);
     let main_card_w = menu_width + 16.0;
     let max_card_h = (app.window_size.height - 16.0).max(200.0);
     let rendered_h = est_height.min(max_card_h);
@@ -3948,6 +3948,7 @@ pub fn context_menu_overlay<'a>(
         container(card_body)
             .max_height(max_card_h)
             .padding(8)
+            .clip(true)
             .style(styles::modal_card(palette)),
     );
 
@@ -4322,16 +4323,20 @@ fn ctx_item<'a>(
     palette: ThemePalette,
 ) -> Element<'a, Message> {
     button(
-        row![
-            icon,
-            text(label)
-                .size(12)
-                .font(FONT_UI)
-                .color(label_color)
-                .wrapping(text::Wrapping::None)
-        ]
-        .spacing(8)
-        .align_y(Center),
+        container(
+            row![
+                icon,
+                text(label)
+                    .size(12)
+                    .font(FONT_UI)
+                    .color(label_color)
+                    .wrapping(text::Wrapping::None)
+            ]
+            .spacing(8)
+            .align_y(Center),
+        )
+        .width(Length::Fill)
+        .clip(true),
     )
     .width(Length::Fill)
     .padding([5, 10])
@@ -4348,22 +4353,60 @@ fn ctx_item_owned<'a>(
     palette: ThemePalette,
 ) -> Element<'a, Message> {
     button(
-        row![
-            icon,
-            text(label)
-                .size(12)
-                .font(FONT_UI)
-                .color(label_color)
-                .wrapping(text::Wrapping::None)
-        ]
-        .spacing(8)
-        .align_y(Center),
+        container(
+            row![
+                icon,
+                text(label)
+                    .size(12)
+                    .font(FONT_UI)
+                    .color(label_color)
+                    .wrapping(text::Wrapping::None)
+            ]
+            .spacing(8)
+            .align_y(Center),
+        )
+        .width(Length::Fill)
+        .clip(true),
     )
     .width(Length::Fill)
     .padding([5, 10])
     .style(styles::ghost_button(palette, 6.0))
     .on_press(msg)
     .into()
+}
+
+const MAX_EXTRACT_SUBDIR_HINT_CHARS: usize = 22;
+const CONTEXT_MENU_MAX_WIDTH: f32 = 340.0;
+
+fn truncate_middle_hint(input: &str, max_chars: usize) -> String {
+    let clean = sanitize_single_line(input);
+    let chars: Vec<char> = clean.chars().collect();
+    if chars.len() <= max_chars || max_chars < 4 {
+        return clean;
+    }
+    let keep = max_chars - 1;
+    let head_len = keep.div_ceil(2);
+    let tail_len = keep - head_len;
+    let head: String = chars[..head_len].iter().collect();
+    let tail: String = chars[chars.len() - tail_len..].iter().collect();
+    format!("{head}…{tail}")
+}
+
+fn format_extract_subdir_label(base_label: &str, folder_hint: &str) -> String {
+    let clean_hint = truncate_middle_hint(folder_hint.trim(), MAX_EXTRACT_SUBDIR_HINT_CHARS);
+    if clean_hint.is_empty() {
+        base_label.to_owned()
+    } else {
+        format!("{base_label} ({clean_hint}/)")
+    }
+}
+
+fn estimate_context_menu_width(base_width: f32, max_label_chars: usize) -> f32 {
+    if max_label_chars == 0 {
+        return base_width;
+    }
+    let estimated = (max_label_chars as f32 * 6.9 + 46.0).round();
+    estimated.clamp(base_width, CONTEXT_MENU_MAX_WIDTH)
 }
 
 fn perm_checkbox_box<'a>(active: bool, palette: ThemePalette) -> Element<'a, Message> {
@@ -4407,7 +4450,9 @@ fn ctx_divider<'a>(palette: ThemePalette) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
     use super::{
-        RenameMenuAction, compute_context_menu_origin, compute_submenu_origin, rename_menu_action,
+        CONTEXT_MENU_MAX_WIDTH, RenameMenuAction, compute_context_menu_origin,
+        compute_submenu_origin, estimate_context_menu_width, format_extract_subdir_label,
+        rename_menu_action, truncate_middle_hint,
     };
     use iced::{Point, Size};
 
@@ -4460,5 +4505,22 @@ mod tests {
         // Gatilho muito próximo ao rodapé: submenu permanece dentro da margem inferior.
         let (_, sy_bot) = compute_submenu_origin(200.0, 620.0, 260.0, 160.0, 292.0, 84.0, win);
         assert_eq!(sy_bot, 800.0 - 84.0 - 8.0);
+    }
+
+    #[test]
+    fn truncates_extract_subdir_hint_and_adapts_menu_width_within_bounds() {
+        assert_eq!(truncate_middle_hint("projeto", 22), "projeto");
+        let long_name = "vagnarok-file-manager-0.1.0-alpha.10-linux-x86_64";
+        let truncated = truncate_middle_hint(long_name, 22);
+        assert_eq!(truncated.chars().count(), 22);
+        assert!(truncated.contains('…'));
+        assert!(truncated.starts_with("vagnarok-fi"));
+        assert!(truncated.ends_with("nux-x86_64"));
+
+        let label = format_extract_subdir_label("Extrair em subpasta", long_name);
+        assert_eq!(label, "Extrair em subpasta (vagnarok-fi…nux-x86_64/)");
+
+        let w = estimate_context_menu_width(288.0, label.chars().count());
+        assert!((288.0..=CONTEXT_MENU_MAX_WIDTH).contains(&w));
     }
 }
