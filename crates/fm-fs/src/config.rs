@@ -34,6 +34,14 @@ pub async fn save_config(config: AppConfig) -> Result<(), FsError> {
         })?
 }
 
+/// Persiste `AppConfig` de forma síncrona/atômica no encerramento da janela principal.
+pub fn save_config_blocking(config: &AppConfig) -> Result<(), FsError> {
+    let Some(path) = config_file_path() else {
+        return Ok(());
+    };
+    save_config_to(&path, config)
+}
+
 /// Carrega configuração a partir de um arquivo TOML específico.
 pub fn load_config_from(path: &Path) -> AppConfig {
     let Ok(raw) = std::fs::read_to_string(path) else {
@@ -110,6 +118,8 @@ mod tests {
             last_update_check_unix: Some(1_700_000_000),
             show_recent_files: false,
             recent_files: vec![PathBuf::from("/tmp/recent.txt")],
+            startup_location: fm_core::StartupLocation::LastVisited,
+            last_visited_dir: Some(PathBuf::from("/tmp/last")),
         };
 
         save_config_to(&path, &cfg).expect("save config ok");

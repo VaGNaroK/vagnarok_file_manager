@@ -15,7 +15,7 @@ mod trash_bin;
 pub use archive::is_archive_file;
 pub use archive_ops::{run_compress_job, run_extract_entries_job, run_extract_job};
 pub use bulk_rename::{BulkRenameBatchOutcome, execute_bulk_rename_plan, undo_bulk_rename_pairs};
-pub use config::{config_file_path, load_config, save_config};
+pub use config::{config_file_path, load_config, save_config, save_config_blocking};
 pub use copy_engine::run_transfer_job;
 pub use icons::{resolve_app_icon, resolve_system_icon};
 pub use open_with::{

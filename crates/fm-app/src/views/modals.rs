@@ -2519,6 +2519,24 @@ pub fn preferences_modal<'a>(
                 .into(),
             ),
             pref_row(
+                strings.prefs_startup_location_label,
+                button(
+                    text(match app.config.startup_location {
+                        fm_core::StartupLocation::Home => strings.startup_home,
+                        fm_core::StartupLocation::LastVisited => strings.startup_last_visited,
+                    })
+                    .size(12)
+                    .font(FONT_UI_SEMIBOLD),
+                )
+                .padding([5, 12])
+                .style(styles::tab_button(
+                    palette,
+                    app.config.startup_location == fm_core::StartupLocation::LastVisited,
+                ))
+                .on_press(Message::ToggleStartupLocation)
+                .into(),
+            ),
+            pref_row(
                 strings.prefs_recent_files_label,
                 row![
                     button(
@@ -2558,6 +2576,15 @@ pub fn preferences_modal<'a>(
         PreferencesTab::About => about_tab_view(app, palette, strings),
     };
 
+    let scrollable_body = scrollable(container(tab_body).width(Length::Fill).padding(Padding {
+        top: 0.0,
+        right: 10.0,
+        bottom: 2.0,
+        left: 0.0,
+    }))
+    .height(Length::Shrink);
+
+    let max_prefs_h = (app.window_size.height - 64.0).clamp(320.0, 560.0);
     let card = container(
         column![
             row![
@@ -2577,11 +2604,12 @@ pub fn preferences_modal<'a>(
             ]
             .align_y(Center),
             prefs_tabs,
-            tab_body,
+            scrollable_body,
         ]
         .spacing(12)
         .width(Length::Fixed(520.0)),
     )
+    .max_height(max_prefs_h)
     .padding(20)
     .style(styles::modal_card(palette));
 

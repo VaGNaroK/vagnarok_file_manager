@@ -790,6 +790,7 @@ pub enum Message {
     DismissUpdateSession,
     DismissUpdateVersion(String),
     ToggleAutoCheckUpdates,
+    ToggleStartupLocation,
     ToggleRecentFiles,
     ClearRecentFiles,
     RemoveFromRecent(PathBuf),
@@ -906,13 +907,13 @@ impl App {
         let cli_initial = std::env::args_os()
             .nth(1)
             .and_then(|arg| resolve_cli_initial_dir(&arg));
-        let tab1_path = cli_initial
-            .or_else(|| places.documents.clone().filter(|p| p.exists()))
-            .unwrap_or_else(|| places.home.clone());
-        let tab2_path = std::env::current_dir()
-            .ok()
-            .filter(|p| p.exists())
-            .unwrap_or_else(|| places.home.clone());
+        let tab1_path = resolve_startup_dir(
+            cli_initial,
+            config.startup_location,
+            config.last_visited_dir.as_deref(),
+            &places.home,
+        );
+        let starts_at_home = tab1_path == places.home;
 
         let mut tab1 = TabState::new(TabId(1), tab1_path.clone());
         tab1.view_mode = config.default_view_mode;
@@ -920,18 +921,10 @@ impl App {
         tab1.is_loading = true;
         tab1.active_request_id = 1;
 
-        let mut tab2 = TabState::new(TabId(2), tab2_path.clone());
-        tab2.view_mode = config.default_view_mode;
-        tab2.sort.dirs_first = config.dirs_first;
-        tab2.is_loading = true;
-        tab2.active_request_id = 2;
-
         let cancel1 = CancellationToken::new();
-        let cancel2 = CancellationToken::new();
 
         let mut tab_cancels = HashMap::new();
         tab_cancels.insert(TabId(1), cancel1.clone());
-        tab_cancels.insert(TabId(2), cancel2.clone());
 
         let initial_size = Size::new(1120.0, 660.0);
         let (main_window_id, open_main_task) = window::open(window::Settings {
@@ -946,10 +939,10 @@ impl App {
             vfs: Arc::clone(&vfs),
             places,
             config,
-            tabs: vec![tab1, tab2],
+            tabs: vec![tab1],
             active_tab: TabId(1),
-            next_tab_id: 3,
-            next_request_id: 3,
+            next_tab_id: 2,
+            next_request_id: 2,
             tab_cancels,
             preview_cancel: None,
             preview_request_id: 0,
@@ -1005,7 +998,7 @@ impl App {
             home_subdirs: Vec::new(),
             sidebar_home_expanded: false,
             is_elevated: fm_fs::is_elevated_session(),
-            active_sidebar: Some(SidebarTarget::Documents),
+            active_sidebar: starts_at_home.then_some(SidebarTarget::Home),
             path_editing: false,
             path_draft: String::new(),
             quicklook_open: false,
@@ -1077,8 +1070,7 @@ impl App {
             Message::MetaCacheReady,
         );
         let vibrancy_task = apply_window_vibrancy(main_window_id, app.config.theme);
-        let load1 = spawn_list_task(Arc::clone(&vfs), TabId(1), tab1_path, 1, cancel1);
-        let load2 = spawn_list_task(vfs, TabId(2), tab2_path, 2, cancel2);
+        let load1 = spawn_list_task(vfs, TabId(1), tab1_path, 1, cancel1);
         let sys_icons_task = app.queue_visible_system_icons();
 
         let monitor_fit_task = open_main_task
@@ -1111,7 +1103,6 @@ impl App {
                 meta_cache_task,
                 vibrancy_task,
                 load1,
-                load2,
                 sys_icons_task,
                 auto_update_task,
             ]),
@@ -4532,6 +4523,13 @@ impl App {
                 self.config.check_updates_on_startup = !self.config.check_updates_on_startup;
                 self.persist_config_task()
             }
+            Message::ToggleStartupLocation => {
+                self.config.startup_location = self.config.startup_location.toggled();
+                if self.config.startup_location == fm_core::StartupLocation::LastVisited {
+                    self.record_active_last_visited_dir();
+                }
+                self.persist_config_task()
+            }
             Message::ToggleRecentFiles => {
                 self.config.show_recent_files = !self.config.show_recent_files;
                 let mut tasks = Vec::new();
@@ -4602,6 +4600,8 @@ impl App {
             Message::MonitorSizeReady(None) => Task::none(),
             Message::WindowClosed(window_id) => {
                 if window_id == self.main_window_id {
+                    self.record_active_last_visited_dir();
+                    let _ = fm_fs::save_config_blocking(&self.config);
                     if let Some(mut modal) = self.bulk_rename_modal.take()
                         && let Some(cancel) = modal.tags_cancel.take()
                     {
@@ -4654,7 +4654,11 @@ impl App {
             }
             Message::WindowMinimize => window::minimize(self.main_window_id, true),
             Message::WindowToggleMaximize => window::toggle_maximize(self.main_window_id),
-            Message::WindowClose => window::close(self.main_window_id),
+            Message::WindowClose => {
+                self.record_active_last_visited_dir();
+                let _ = fm_fs::save_config_blocking(&self.config);
+                window::close(self.main_window_id)
+            }
             Message::ModifiersChanged(modifiers) => {
                 self.current_modifiers = modifiers;
                 if !modifiers.control() && self.grid_zoom_dirty {
@@ -5760,11 +5764,24 @@ impl App {
             self.canvas_scroll_y = 0.0;
             canvas_scroll_id()
         };
+        self.record_last_visited_dir(&path);
         let cancel = self.reset_tab_cancel(tab_id);
         Task::batch([
             spawn_list_task(Arc::clone(&self.vfs), tab_id, path, request_id, cancel),
             operation::snap_to(scroll_id, RelativeOffset::START),
         ])
+    }
+
+    fn record_last_visited_dir(&mut self, path: &std::path::Path) {
+        if let Some(clean) = sanitize_last_visited_dir(path) {
+            self.config.last_visited_dir = Some(clean);
+        }
+    }
+
+    fn record_active_last_visited_dir(&mut self) {
+        if let Some(path) = self.current_tab().map(|t| t.current_path.clone()) {
+            self.record_last_visited_dir(&path);
+        }
     }
 
     fn dispatch_selection_side_effects(&mut self, entry: Option<&FileEntry>) -> Task<Message> {
@@ -7648,6 +7665,42 @@ fn resolve_cli_initial_dir(arg: &std::ffi::OsStr) -> Option<PathBuf> {
     }
 }
 
+/// Sanitiza um diretório para persistência como última pasta visitada:
+/// ignora caminhos virtuais (`trash://`, `recent://`) e extrai a pasta pai caso o caminho esteja dentro de um arquivo compactado.
+fn sanitize_last_visited_dir(path: &std::path::Path) -> Option<PathBuf> {
+    if path.as_os_str().is_empty() || fm_core::is_virtual_readonly_dir(path) {
+        return None;
+    }
+    if let Some((archive_path, _, _)) = fm_fs::archive::split_archive_path(path) {
+        return archive_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(PathBuf::from);
+    }
+    Some(path.to_path_buf())
+}
+
+/// Resolve a pasta inicial da aba única ao abrir o aplicativo (Windows e Linux).
+/// Prioridade: 1) argumento CLI; 2) última pasta acessada (se opção ativa e existente); 3) pasta do usuário (`home`).
+fn resolve_startup_dir(
+    cli_initial: Option<PathBuf>,
+    mode: fm_core::StartupLocation,
+    last_visited: Option<&std::path::Path>,
+    home: &std::path::Path,
+) -> PathBuf {
+    if let Some(cli) = cli_initial {
+        return cli;
+    }
+    if mode == fm_core::StartupLocation::LastVisited
+        && let Some(last) = last_visited
+        && !fm_core::is_virtual_readonly_dir(last)
+        && last.is_dir()
+    {
+        return last.to_path_buf();
+    }
+    home.to_path_buf()
+}
+
 fn parse_clipboard_transfer_text(raw: &str) -> Option<(CopyMode, Vec<PathBuf>)> {
     let mut lines = raw
         .lines()
@@ -8492,5 +8545,77 @@ mod tests {
             Some(false)
         );
         assert_eq!(accum, 0.0);
+    }
+
+    #[test]
+    fn resolves_startup_dir_and_sanitizes_last_visited_paths() {
+        let home = std::env::temp_dir();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let existing_dir = home.join(format!("vagnarok_startup_test_{unique}"));
+        std::fs::create_dir_all(&existing_dir).expect("create temp dir");
+        let missing_dir = home.join(format!("vagnarok_startup_missing_{unique}"));
+
+        // Modo padrão (Home) sempre abre na pasta do usuário, mesmo havendo last_visited.
+        assert_eq!(
+            super::resolve_startup_dir(
+                None,
+                fm_core::StartupLocation::Home,
+                Some(&existing_dir),
+                &home,
+            ),
+            home
+        );
+
+        // Modo LastVisited abre na última pasta salva quando ela existe.
+        assert_eq!(
+            super::resolve_startup_dir(
+                None,
+                fm_core::StartupLocation::LastVisited,
+                Some(&existing_dir),
+                &home,
+            ),
+            existing_dir
+        );
+
+        // Modo LastVisited cai para Home se a pasta salva não existir mais.
+        assert_eq!(
+            super::resolve_startup_dir(
+                None,
+                fm_core::StartupLocation::LastVisited,
+                Some(&missing_dir),
+                &home,
+            ),
+            home
+        );
+
+        // Argumento CLI sempre tem precedência sobre Home e LastVisited.
+        assert_eq!(
+            super::resolve_startup_dir(
+                Some(existing_dir.clone()),
+                fm_core::StartupLocation::Home,
+                None,
+                &home,
+            ),
+            existing_dir
+        );
+
+        // Sanitização ignora caminhos virtuais e preserva diretórios reais.
+        assert_eq!(
+            super::sanitize_last_visited_dir(std::path::Path::new(fm_core::VIRTUAL_TRASH_PATH)),
+            None
+        );
+        assert_eq!(
+            super::sanitize_last_visited_dir(std::path::Path::new(fm_core::VIRTUAL_RECENT_PATH)),
+            None
+        );
+        assert_eq!(
+            super::sanitize_last_visited_dir(&existing_dir),
+            Some(existing_dir.clone())
+        );
+
+        let _ = std::fs::remove_dir_all(&existing_dir);
     }
 }

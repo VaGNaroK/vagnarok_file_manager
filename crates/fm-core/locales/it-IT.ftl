@@ -509,3 +509,6 @@ prefs-recent-files-label = Mostra file recenti
 clear-recent-files = Svuota recenti
 remove-from-recent = Rimuovi dai recenti
 open-file-location = Apri percorso file
+prefs-startup-location-label = Cartella iniziale all'avvio
+startup-home = Cartella utente
+startup-last-visited = Ultima cartella aperta

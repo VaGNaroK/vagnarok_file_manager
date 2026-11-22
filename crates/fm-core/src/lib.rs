@@ -45,7 +45,7 @@ pub use domain::{
 pub use i18n::Strings;
 pub use state::{
     AppConfig, DIR_FILTER_SENTINEL, IconThemeMode, Language, MAX_RECENT_FILES, SelectionModifiers,
-    SelectionState, TabId, TabState, ThemePreset, WindowDecorationsMode,
+    SelectionState, StartupLocation, TabId, TabState, ThemePreset, WindowDecorationsMode,
     format_extension_filter_badge, matches_extension_filter, normalize_extension_filter_input,
 };
 pub use version::{

@@ -505,6 +505,24 @@ fn default_grid_card_width() -> f32 {
     140.0
 }
 
+/// Pasta aberta por padrão ao iniciar o aplicativo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum StartupLocation {
+    #[default]
+    Home,
+    LastVisited,
+}
+
+impl StartupLocation {
+    #[must_use]
+    pub const fn toggled(self) -> Self {
+        match self {
+            Self::Home => Self::LastVisited,
+            Self::LastVisited => Self::Home,
+        }
+    }
+}
+
 /// Modo de ícones exibidos para pastas, arquivos, locais e unidades.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum IconThemeMode {
@@ -559,6 +577,10 @@ pub struct AppConfig {
     pub show_recent_files: bool,
     #[serde(default)]
     pub recent_files: Vec<PathBuf>,
+    #[serde(default)]
+    pub startup_location: StartupLocation,
+    #[serde(default)]
+    pub last_visited_dir: Option<PathBuf>,
 }
 
 impl Default for AppConfig {
@@ -587,6 +609,8 @@ impl Default for AppConfig {
             last_update_check_unix: None,
             show_recent_files: true,
             recent_files: Vec::new(),
+            startup_location: StartupLocation::Home,
+            last_visited_dir: None,
         }
     }
 }
