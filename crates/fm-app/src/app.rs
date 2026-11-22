@@ -349,6 +349,8 @@ pub enum Message {
     TabNew,
     TabSelect(TabId),
     TabNext(bool),
+    TabStripScrolled(mouse::ScrollDelta),
+    TabStripScrollReset,
     TabClose(TabId),
     OpenInNewTab(PathBuf),
     OpenManyInNewTabs(Vec<PathBuf>),
@@ -880,6 +882,7 @@ pub struct App {
     pub last_watcher_reload: Option<(PathBuf, Instant)>,
     pub grid_zoom_dirty: bool,
     pub zoom_save_seq: u64,
+    pub tab_scroll_accum: f32,
     pub split_view: Option<SplitViewState>,
     pub entry_drag: Option<InternalEntryDrag>,
     pub drag_hover_pane: Option<SplitPane>,
@@ -1025,6 +1028,7 @@ impl App {
             last_watcher_reload: None,
             grid_zoom_dirty: false,
             zoom_save_seq: 0,
+            tab_scroll_accum: 0.0,
             split_view: None,
             entry_drag: None,
             drag_hover_pane: None,
@@ -1339,6 +1343,22 @@ impl App {
                     let id = self.tabs[next].id;
                     return self.update(Message::TabSelect(id));
                 }
+                Task::none()
+            }
+            Message::TabStripScrolled(delta) => {
+                if self.tabs.len() <= 1 || self.active_dialog.is_some() || self.prefs_open {
+                    self.tab_scroll_accum = 0.0;
+                    return Task::none();
+                }
+                if let Some(reverse) =
+                    resolve_tab_scroll_direction(delta, &mut self.tab_scroll_accum)
+                {
+                    return self.update(Message::TabNext(reverse));
+                }
+                Task::none()
+            }
+            Message::TabStripScrollReset => {
+                self.tab_scroll_accum = 0.0;
                 Task::none()
             }
             Message::TabSelect(id) => {
@@ -7558,6 +7578,48 @@ fn fit_window_size_to_monitor(mon: Size) -> Size {
     Size::new(width.round(), height.round())
 }
 
+const TAB_SCROLL_PIXEL_THRESHOLD: f32 = 28.0;
+
+/// Converte o evento de roda do mouse/touchpad sobre a barra de abas em direção de troca:
+/// `Some(true)` = aba anterior (esquerda), `Some(false)` = próxima aba (direita).
+fn resolve_tab_scroll_direction(delta: mouse::ScrollDelta, pixel_accum: &mut f32) -> Option<bool> {
+    match delta {
+        mouse::ScrollDelta::Lines { x, y } => {
+            *pixel_accum = 0.0;
+            if y > 0.0 {
+                Some(true)
+            } else if y < 0.0 {
+                Some(false)
+            } else if x > 0.0 {
+                Some(true)
+            } else if x < 0.0 {
+                Some(false)
+            } else {
+                None
+            }
+        }
+        mouse::ScrollDelta::Pixels { x, y } => {
+            let axis = if y.abs() >= x.abs() { y } else { x };
+            if axis == 0.0 {
+                return None;
+            }
+            if (*pixel_accum > 0.0 && axis < 0.0) || (*pixel_accum < 0.0 && axis > 0.0) {
+                *pixel_accum = 0.0;
+            }
+            *pixel_accum += axis;
+            if *pixel_accum >= TAB_SCROLL_PIXEL_THRESHOLD {
+                *pixel_accum = 0.0;
+                Some(true)
+            } else if *pixel_accum <= -TAB_SCROLL_PIXEL_THRESHOLD {
+                *pixel_accum = 0.0;
+                Some(false)
+            } else {
+                None
+            }
+        }
+    }
+}
+
 fn wheel_zoom_delta(delta: mouse::ScrollDelta) -> f32 {
     match delta {
         mouse::ScrollDelta::Lines { y, .. } => y * 16.0,
@@ -8380,5 +8442,55 @@ mod tests {
             super::apply_text_input_paste("cabello.jpg", None, 7, "_v2"),
             ("cabello_v2.jpg".to_owned(), 10)
         );
+    }
+
+    #[test]
+    fn tab_strip_scroll_switches_tabs_for_lines_pixels_and_horizontal_wheel() {
+        let mut accum = 0.0_f32;
+        assert_eq!(
+            super::resolve_tab_scroll_direction(
+                iced::mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+                &mut accum
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            super::resolve_tab_scroll_direction(
+                iced::mouse::ScrollDelta::Lines { x: 0.0, y: -1.0 },
+                &mut accum
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            super::resolve_tab_scroll_direction(
+                iced::mouse::ScrollDelta::Lines { x: -1.0, y: 0.0 },
+                &mut accum
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            super::resolve_tab_scroll_direction(
+                iced::mouse::ScrollDelta::Lines { x: 0.0, y: 0.0 },
+                &mut accum
+            ),
+            None
+        );
+
+        // Touchpad em pixels acumula até o limiar antes de alternar e reseta em seguida.
+        assert_eq!(
+            super::resolve_tab_scroll_direction(
+                iced::mouse::ScrollDelta::Pixels { x: 0.0, y: -15.0 },
+                &mut accum
+            ),
+            None
+        );
+        assert_eq!(
+            super::resolve_tab_scroll_direction(
+                iced::mouse::ScrollDelta::Pixels { x: 0.0, y: -15.0 },
+                &mut accum
+            ),
+            Some(false)
+        );
+        assert_eq!(accum, 0.0);
     }
 }

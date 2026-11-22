@@ -140,7 +140,11 @@ fn tab_strip_row<'a>(
         right_controls = right_controls.push(window_controls(palette));
     }
 
-    row![tabs_row, space::horizontal(), right_controls]
+    let tabs_strip = mouse_area(tabs_row)
+        .on_scroll(Message::TabStripScrolled)
+        .on_exit(Message::TabStripScrollReset);
+
+    row![tabs_strip, space::horizontal(), right_controls]
         .height(Spacing::TITLEBAR_HEIGHT - 4.0)
         .align_y(Center)
         .into()
