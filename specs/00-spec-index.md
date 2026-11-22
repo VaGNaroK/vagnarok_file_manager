@@ -16,7 +16,8 @@ Este diretório contém a especificação executável do **Vagnarok File Manager
 * **Fidelidade Visual ao Mockup Reconciliado**: Suporte imediato à alternância entre *Aether Light* (visual de `screen.png`) e *Obsidian Flow* (especificação de `DESIGN.md`).
 * **Commit e Notificação Obrigatórios**: Toda entrega com mudanças no repositório deve ser finalizada após as verificações com `git commit` imediato (seguindo Conventional Commits, sem incluir artefatos temporários ou builds) e o usuário deve ser expressamente avisado na resposta sobre o hash, a mensagem e os arquivos do(s) commit(s) realizado(s).
 
-## Fluxo Git Obrigatório
+## Fluxo Git e Releases Obrigatórios
 1. Após concluir e validar qualquer alteração (código, documentação, specs, assets ou CI/CD), faça o `git commit` antes de encerrar a tarefa — salvo quando o usuário pedir explicitamente para não commitar.
 2. Revise `git status` para não versionar arquivos temporários ou diretórios ignorados e utilize mensagens no padrão Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, etc.).
 3. Sempre informe ao usuário na resposta final os commits criados (hash curto, mensagem e resumo do escopo).
+4. **Checklist de Release**: Todo bump de versão ou lançamento (alpha/beta/rc/estável) deve atualizar obrigatoriamente `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md` e `README.md` (badge de versão, estágio atual, resumo de funcionalidades e atalhos) antes de criar e enviar a tag.

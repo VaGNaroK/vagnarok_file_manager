@@ -9,7 +9,7 @@
   </p>
 
   <p>
-    <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/versão-v0.1.0--alpha.9-blue?style=flat-square" alt="Versão v0.1.0-alpha.9" /></a>
+    <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/versão-v0.1.0--alpha.11-blue?style=flat-square" alt="Versão v0.1.0-alpha.11" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/licença-GPL--3.0--or--later-green?style=flat-square" alt="Licença GPL-3.0-or-later" /></a>
     <img src="https://img.shields.io/badge/rust-1.88%2B%20(edition%202024)-orange?style=flat-square" alt="Rust 1.88+" />
     <img src="https://img.shields.io/badge/plataformas-Linux%20%7C%20Windows-lightgrey?style=flat-square" alt="Linux e Windows" />
@@ -26,7 +26,7 @@
 
 O **Vagnarok File Manager** (`dev.vagnarok.FileManager`) combina interface reativa acelerada por GPU (`wgpu` via Vulkan/DirectX 12) e drivers nativos de sistema de arquivos para manter a thread de UI sempre livre, mesmo em diretórios com dezenas de milhares de itens.
 
-* **Estágio atual**: `v0.1.0-alpha.9` (prévia alpha funcional com suporte a Linux e Windows).
+* **Estágio atual**: `v0.1.0-alpha.11` (prévia alpha funcional com suporte a Linux e Windows).
 * **Requisitos de GPU**: exige placa gráfica com suporte a **Vulkan** (Linux/Windows) ou **DirectX 12** (Windows). **Hardware legado sem suporte a Vulkan/DX12** (ex.: Intel HD Graphics 2000/3000 e GPUs equivalentes da geração D3D10/OpenGL 3.x) **não é suportado no momento**, pois drivers legados e o modo de software (`tiny-skia`) apresentam artefatos visuais em sombras, transparências e overlays.
 * **Temas oficiais**: **Obsidian Flow** (Dark) e **Aether Light** (Light), selecionáveis em runtime ou sincronizados automaticamente com o tema do sistema operacional.
 * **Arquitetura estrita**: toda leitura de disco, geração de miniaturas, cálculo de hash, busca profunda e telemetria Git roda em workers assíncronos canceláveis (`tokio` + `rayon`).
@@ -36,13 +36,14 @@ O **Vagnarok File Manager** (`dev.vagnarok.FileManager`) combina interface reati
 ## Principais Funcionalidades
 
 ### Navegação, Visualizações e Arquivos Compactados
-* **Múltiplas abas** com histórico voltar/avançar, breadcrumbs interativos com menus suspensos e edição direta de caminho (`Ctrl+L`).
+* **Múltiplas abas e Modo Dividido (`Dual-Pane Split View`, `F3`)**: troca de abas com a roda do mouse, inicialização configurável (Home ou última pasta visitada), histórico voltar/avançar, breadcrumbs interativos, edição direta de caminho (`Ctrl+L`), dois painéis independentes com fechamento de qualquer painel e drag & drop interno entre painéis.
 * **2 modos de visualização virtualizados** (renderizam apenas a janela visível do scroll):
   * **Grid** (alinhado da esquerda para direita ou centralizado, agrupado por pastas/arquivos ou unificado, com zoom por `Ctrl + Scroll` ou `Ctrl + +` / `-` / `0`).
   * **Tabela de Detalhes** (ordenação por coluna) com seleção em caixa (*marquee*) ao clicar e arrastar no espaço vazio.
 * **Ícones híbridos opcionais**: alternância rápida na barra do canvas entre os ícones vetoriais padrão (`lucide-icons`) e os ícones instalados no sistema hospedeiro (tema Freedesktop no Linux/Flatpak ou Shell nativo no Windows).
-* **Arquivos compactados e imagens de disco**: navegação transparente em `.zip`/`.tar`/`.tar.gz`/`.7z`/`.rar`, extração com suporte nativo a senha via janela modal (`.zip` AES/ZipCrypto, `.7z` AES-256 e `.rar`), compactação em segundo plano e montagem de `.iso`/`.img` em nova aba.
-* **Lixeira e Favoritos**: acesso rápido, drag-and-drop, restauração/esvaziamento de lixeira e gerenciamento persistente de favoritos em TOML.
+* **Arquivos compactados e imagens de disco**: navegação transparente em `.zip`/`.tar`/`.tar.gz`/`.7z`/`.rar`, arrastar/copiar itens de dentro de compactados abertos para outro painel, extração com suporte nativo a senha (`.zip` AES/ZipCrypto, `.7z` AES-256 e `.rar`), compactação em segundo plano e montagem de `.iso`/`.img` em nova aba.
+* **Arquivos Recentes (`recent://`), Lixeira e Favoritos**: acesso rápido com opção de privacidade em Preferências, drag-and-drop, restauração/esvaziamento de lixeira e gerenciamento persistente de favoritos em TOML.
+* **Processos externos desacoplados**: aplicativos abertos pelo gerenciador (players, editores, terminais) rodam em sessões/grupos independentes (`setsid` no Linux e `CREATE_NEW_PROCESS_GROUP` no Windows) e permanecem abertos ao encerrar o app.
 
 ### Performance Nativa (Linux & Windows)
 * **Linux (`rustix`)**: listagem direta via `getdents64`, metadados estendidos (`statx`), espaço em disco (`statvfs`), montagem via `/proc/mounts`, cópia rápida com `copy_file_range` / `FICLONE` (reflinks em Btrfs/XFS) e abertura de terminal integrada (inclusive com `flatpak-spawn --host` dentro de Flatpak).
@@ -55,7 +56,7 @@ O **Vagnarok File Manager** (`dev.vagnarok.FileManager`) combina interface reati
 * **Busca instantânea e profunda**: filtragem fuzzy com `nucleo-matcher` (`Ctrl+K`) e busca recursiva paralela em subdiretórios respeitando regras com `ignore` (`Ctrl+Shift+F`).
 * **Telemetria em background (`fm-telemetry`)**: branch e status Git com `gix` (*gitoxide*), tipo real via *magic bytes* (`infer`), tamanho recursivo de pastas, cache persistente em `redb` e cálculo `SHA-256` sob demanda.
 * **QuickLook (`Space`) e Thumbnails (`fm-preview`)**: preview rápido com syntax highlighting (`syntect`), imagens e vetor SVG (`resvg`), redimensionamento SIMD (`fast_image_resize`) e cache LRU + disco (`redb`).
-* **Inspetor lateral e janela flutuante de Propriedades** em 5 abas, além de menu **Sobre** (`Preferências` → aba *Sobre* ou clique direito no botão de Preferências).
+* **Inspetor lateral e janelas flutuantes de Propriedades (não-bloqueantes e simultâneas)**: múltiplas janelas de Propriedades podem ser abertas lado a lado com fundo interativo, incluindo **editor nativo de permissões NTFS (ACL Win32)** no Windows e **editor POSIX modernizado** no Linux (proprietário/grupo, presets, octal ao vivo, bits especiais e aplicação recursiva), além do verificador de atualizações estáveis e menu **Sobre**.
 
 ### Internacionalização (`Project Fluent`)
 * Catálogos embutidos no binário (zero I/O em runtime) para **6 idiomas**, com pluralização CLDR e seleção via dropdown em **Preferências** (ou indicador rápido no topo):
@@ -85,7 +86,8 @@ O **Vagnarok File Manager** (`dev.vagnarok.FileManager`) combina interface reati
 | `Ctrl+B` / `Alt+I` / `Ctrl+H` | Alternar barra lateral / Inspetor / Arquivos ocultos |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` / `Ctrl+Scroll` | Aumentar / Diminuir / Resetar zoom do Grid |
 | `PageUp` / `PageDown` | Rolagem rápida da lista ou grade |
-| `F5` ou `Ctrl+R` / `Esc` | Atualizar aba / Fechar menu, QuickLook ou limpar filtro |
+| `F3` | Alternar modo de tela dividida (*Dual-Pane Split View*) |
+| `F5` ou `Ctrl+R` / `Esc` | Atualizar aba / Fechar menu, Propriedades no topo, QuickLook ou limpar filtro |
 | `Ctrl+Q` | Fechar janela de propriedades/modal ou encerrar o aplicativo |
 
 ---
@@ -160,11 +162,11 @@ O projeto possui workflows em [`.github/workflows/ci.yml`](.github/workflows/ci.
 * **Windows Installer & Portable** (`windows-latest`, instalador via **Inno Setup 6** em [vagnarok.iss](packaging/windows/vagnarok.iss) + arquivo `.zip` portátil).
 * **GitHub Releases**: disparado em tags `v*.*.*` (ou via `workflow_dispatch`), publicando todos os pacotes acompanhados de `SHA256SUMS.txt`.
 
-Para preparar uma nova tag localmente após atualizar o [CHANGELOG.md](CHANGELOG.md):
+Para preparar uma nova tag localmente após atualizar o [CHANGELOG.md](CHANGELOG.md) e o [README.md](README.md):
 
 ```bash
-./scripts/cut-release.sh 0.1.0-alpha.2
-git push origin main v0.1.0-alpha.2
+./scripts/cut-release.sh 0.1.0-alpha.11
+git push origin main v0.1.0-alpha.11
 ```
 
 ---

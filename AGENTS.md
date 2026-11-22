@@ -50,7 +50,8 @@ Antes de propor alterações ou escrever código, leia os documentos abaixo na o
 
 ---
 
-## 5. Lançamento da Primeira Versão Estável (Aviso Obrigatório)
+## 5. Checklist de Release e Lançamento da Primeira Versão Estável (Obrigatório)
 
+* **Arquivos obrigatórios em todo versionamento/release**: Sempre que atualizar a versão do projeto ou preparar uma nova release/pré-release, atualize em conjunto **`Cargo.toml`**, **`Cargo.lock`**, **`CHANGELOG.md`** e **`README.md`** (badge de versão, estágio atual, novas funcionalidades relevantes e atalhos) antes de criar a tag e fazer o push.
 * **Versionamento da estável (`dpkg` + updater)**: As pré-releases `0.1.0-alpha.*` foram empacotadas no `.deb` com hífen (`-alpha.N`), e no `dpkg` o hífen é tratado como revisão Debian — fazendo `0.1.0-alpha.9` ser avaliado como **maior** que `0.1.0`.
 * **Ação obrigatória do agente**: Quando o usuário solicitar o lançamento da **primeira versão estável/final**, avise-o expressamente antes de criar a tag que **recomenda-se publicar a primeira estável como `v0.2.0` ou `v1.0.0`** (em vez de `v0.1.0`), garantindo upgrade limpo no `.deb` (`apt`/`dpkg`), no Windows Inno Setup e detecção imediata pelo verificador de atualizações estáveis.
