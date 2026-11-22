@@ -249,14 +249,15 @@ fn spawn_terminal_cmd(bin: &str, path: &Path, in_flatpak: bool) -> bool {
         if !has_host_bin {
             return false;
         }
-        return Command::new("flatpak-spawn")
-            .arg("--host")
+        let mut cmd = Command::new("flatpak-spawn");
+        cmd.arg("--host")
             .arg(format!("--directory={}", path.to_string_lossy()))
-            .arg(bin)
-            .spawn()
-            .is_ok();
+            .arg(bin);
+        return spawn_detached(&mut cmd).is_ok();
     }
-    Command::new(bin).current_dir(path).spawn().is_ok()
+    let mut cmd = Command::new(bin);
+    cmd.current_dir(path);
+    spawn_detached(&mut cmd).is_ok()
 }
 
 pub fn open_default(path: &Path) -> Result<(), FsError> {
@@ -264,26 +265,26 @@ pub fn open_default(path: &Path) -> Result<(), FsError> {
         // No Flatpak, `open::that_detached` aciona o shim `/usr/bin/xdg-open` do sandbox
         // (org.freedesktop.portal.OpenURI), que ignora `~/.config/mimeapps.list` e abre
         // repetidamente o diálogo AppChooser. Despachamos para o `gio open` / `xdg-open`
-        // do host para respeitar os aplicativos padrão reais do sistema.
-        if host_command("gio")
-            .arg("open")
-            .arg(path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|st| st.success())
-        {
+        // do host desacoplado para respeitar os aplicativos padrão reais do sistema.
+        let mut gio = host_command("gio");
+        gio.arg("open").arg(path);
+        if spawn_detached(&mut gio).is_ok() {
             return Ok(());
         }
-        if host_command("xdg-open")
-            .arg(path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .is_ok()
-        {
+        let mut xdg = host_command("xdg-open");
+        xdg.arg(path);
+        if spawn_detached(&mut xdg).is_ok() {
+            return Ok(());
+        }
+    } else {
+        let mut gio = Command::new("gio");
+        gio.arg("open").arg(path);
+        if spawn_detached(&mut gio).is_ok() {
+            return Ok(());
+        }
+        let mut xdg = Command::new("xdg-open");
+        xdg.arg(path);
+        if spawn_detached(&mut xdg).is_ok() {
             return Ok(());
         }
     }
@@ -542,6 +543,26 @@ pub(crate) fn host_command(program: &str) -> Command {
     } else {
         Command::new(program)
     }
+}
+
+/// Inicia um processo externo completamente desacoplado da sessão e do grupo de processos do app.
+/// Garante que aplicativos abertos (VLC, editores, terminais, etc.) sobrevivam ao fechamento do gerenciador.
+pub(crate) fn spawn_detached(cmd: &mut Command) -> std::io::Result<()> {
+    use std::os::unix::process::CommandExt;
+
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    // SAFETY: `setsid()` é async-signal-safe segundo POSIX e não acessa estado compartilhado do processo pai.
+    unsafe {
+        cmd.pre_exec(|| {
+            let _ = rustix::process::setsid();
+            Ok(())
+        });
+    }
+
+    cmd.spawn().map(|_| ())
 }
 
 fn is_ignored_system_mount(mount_point: &Path) -> bool {
@@ -1247,11 +1268,9 @@ pub fn open_as_root(path: &Path) -> Result<(), FsError> {
     let exe = std::env::current_exe().map_err(|e| map_io_err(target_dir, e))?;
 
     if is_elevated_session() {
-        Command::new(&exe)
-            .arg(target_dir)
-            .spawn()
-            .map(|_| ())
-            .map_err(|e| map_io_err(target_dir, e))?;
+        let mut cmd = Command::new(&exe);
+        cmd.arg(target_dir);
+        spawn_detached(&mut cmd).map_err(|e| map_io_err(target_dir, e))?;
         return Ok(());
     }
 
@@ -1282,7 +1301,7 @@ pub fn open_as_root(path: &Path) -> Result<(), FsError> {
     }
 
     cmd.arg(&exe).arg(target_dir);
-    cmd.spawn().map(|_| ()).map_err(|e| FsError::Io {
+    spawn_detached(&mut cmd).map_err(|e| FsError::Io {
         path: target_dir.to_path_buf(),
         message: format!("falha ao iniciar pkexec: {e}"),
     })
@@ -1669,6 +1688,42 @@ mod tests {
         assert_eq!(
             resolve_device_model(&part, &models).as_deref(),
             Some("SanDisk Ultra")
+        );
+    }
+
+    #[test]
+    fn spawn_detached_starts_child_in_independent_session() {
+        let out_file =
+            std::env::temp_dir().join(format!("vagnarok_detached_sid_{}.txt", std::process::id()));
+        let _ = std::fs::remove_file(&out_file);
+
+        let parent_sid = rustix::process::getsid(None)
+            .map(|p| p.as_raw_nonzero().get())
+            .unwrap_or(0);
+
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c")
+            .arg("awk '{print $6}' /proc/self/stat > \"$1\"")
+            .arg("_")
+            .arg(&out_file);
+        spawn_detached(&mut cmd).expect("spawn_detached deve iniciar processo filho");
+
+        let mut child_sid = None;
+        for _ in 0..50 {
+            if let Ok(raw) = std::fs::read_to_string(&out_file)
+                && let Ok(parsed) = raw.trim().parse::<i32>()
+            {
+                child_sid = Some(parsed);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let _ = std::fs::remove_file(&out_file);
+
+        let sid = child_sid.expect("filho desacoplado deve gravar seu SID");
+        assert_ne!(
+            sid, parent_sid,
+            "processo desacoplado deve rodar em uma nova sessão POSIX"
         );
     }
 }

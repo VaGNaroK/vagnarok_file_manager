@@ -203,17 +203,35 @@ fn filetime_to_system_time(high: u32, low: u32) -> Option<SystemTime> {
     UNIX_EPOCH.checked_add(Duration::new(secs, rem_nanos))
 }
 
+/// Inicia um processo externo no Windows em um grupo de processos independente (desacoplado do Job atual quando permitido).
+pub(crate) fn spawn_detached(cmd: &mut Command) -> std::io::Result<()> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+
+    cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
+    match cmd.spawn() {
+        Ok(_) => Ok(()),
+        Err(err) if err.raw_os_error() == Some(5) => {
+            // Job Object pai não permite breakaway; mantém apenas novo grupo de processos.
+            cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+            cmd.spawn().map(|_| ())
+        }
+        Err(err) => Err(err),
+    }
+}
+
 /// Abre Windows Terminal (`wt.exe`) ou fallback `cmd.exe` no diretório especificado.
 pub fn open_terminal_at(path: &Path) -> Result<(), FsError> {
-    if Command::new("wt.exe").arg("-d").arg(path).spawn().is_ok() {
+    let mut wt = Command::new("wt.exe");
+    wt.arg("-d").arg(path);
+    if spawn_detached(&mut wt).is_ok() {
         return Ok(());
     }
-    Command::new("cmd.exe")
-        .args(["/C", "start", "cmd.exe"])
-        .current_dir(path)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| map_io_err(path, e))
+    let mut cmd = Command::new("cmd.exe");
+    cmd.args(["/C", "start", "cmd.exe"]).current_dir(path);
+    spawn_detached(&mut cmd).map_err(|e| map_io_err(path, e))
 }
 
 pub fn open_default(path: &Path) -> Result<(), FsError> {

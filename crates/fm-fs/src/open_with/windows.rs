@@ -230,14 +230,12 @@ pub(super) fn launch_open_with(path: &Path, target: &OpenWithAssociation) -> Res
         args.push(file_str);
     }
 
-    Command::new(exe_raw)
-        .args(&args)
-        .spawn()
-        .map(|_| ())
-        .map_err(|err| FsError::Io {
-            path: path.to_path_buf(),
-            message: format!("falha ao abrir com '{}': {err}", target.display_name),
-        })
+    let mut cmd = Command::new(exe_raw);
+    cmd.args(&args);
+    crate::windows::spawn_detached(&mut cmd).map_err(|err| FsError::Io {
+        path: path.to_path_buf(),
+        message: format!("falha ao abrir com '{}': {err}", target.display_name),
+    })
 }
 
 fn resolve_progid_app(

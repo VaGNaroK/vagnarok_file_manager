@@ -11,7 +11,7 @@ use fm_core::{FsError, OpenWithApp, OpenWithAssociation, OpenWithCatalog};
 use tokio_util::sync::CancellationToken;
 
 use super::split_posix_command_tokens;
-use crate::linux::host_command;
+use crate::linux::{host_command, spawn_detached};
 
 pub(super) fn discover_open_with_catalog(
     path: &Path,
@@ -152,11 +152,8 @@ pub(super) fn launch_open_with(path: &Path, target: &OpenWithAssociation) -> Res
     }
 
     let mut cmd = host_command(program);
-    cmd.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    cmd.spawn().map(|_| ()).map_err(|err| FsError::Io {
+    cmd.args(args);
+    spawn_detached(&mut cmd).map_err(|err| FsError::Io {
         path: path.to_path_buf(),
         message: format!("falha ao abrir com '{}': {err}", target.display_name),
     })
@@ -179,11 +176,8 @@ fn launch_in_host_terminal(path: &Path, program: &str, args: &[String]) -> Resul
         if let Some(f) = flag {
             cmd.arg(f);
         }
-        cmd.args(&full)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        if cmd.spawn().is_ok() {
+        cmd.args(&full);
+        if spawn_detached(&mut cmd).is_ok() {
             return Ok(());
         }
     }
