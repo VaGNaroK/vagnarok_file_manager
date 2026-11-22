@@ -341,18 +341,22 @@ fn split_pane_header<'a>(
         up_btn = up_btn.on_press(Message::SplitNavigateUp(pane));
     }
 
-    let mut controls = row![back_btn, fwd_btn, up_btn].spacing(2).align_y(Center);
-    if pane == SplitPane::Right {
-        controls = controls.push(with_tooltip(
+    let controls = row![
+        back_btn,
+        fwd_btn,
+        up_btn,
+        with_tooltip(
             button(icon_x().size(13).color(palette.text_muted))
                 .padding([3, 5])
                 .style(styles::ghost_button(palette, 6.0))
-                .on_press(Message::ToggleSplitView),
+                .on_press(Message::CloseSplitPane(pane)),
             strings.close_split_pane,
             tooltip::Position::Bottom,
             palette,
-        ));
-    }
+        ),
+    ]
+    .spacing(2)
+    .align_y(Center);
 
     let header_bg = if is_active {
         palette.surface_low

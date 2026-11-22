@@ -454,6 +454,7 @@ pub enum Message {
     ActivateEntry(usize),
     SetViewMode(ViewMode),
     ToggleSplitView,
+    CloseSplitPane(SplitPane),
     FocusSplitPane(SplitPane),
     SplitNavigateBack(SplitPane),
     SplitNavigateForward(SplitPane),
@@ -1289,6 +1290,56 @@ impl App {
         }
     }
 
+    fn close_split_pane(&mut self, pane: SplitPane) -> Task<Message> {
+        self.context_menu = None;
+        self.entry_drag = None;
+        self.drag_hover_pane = None;
+        self.drag_hover_folder = None;
+        self.path_editing = false;
+        self.breadcrumb_menu = None;
+        self.last_entry_click = None;
+
+        let Some((cancelled_tab_id, promoted_scroll_y)) = close_split_pane_state(
+            pane,
+            &mut self.tabs,
+            &mut self.active_tab,
+            &mut self.split_view,
+            &mut self.canvas_scroll_y,
+        ) else {
+            return Task::none();
+        };
+
+        if let Some(cancel) = self.tab_cancels.remove(&cancelled_tab_id) {
+            cancel.cancel();
+        }
+        self.canvas_viewport_width = None;
+        if promoted_scroll_y.is_some() {
+            self.active_sidebar = None;
+            self.quicklook_open = false;
+        }
+        self.record_active_last_visited_dir();
+
+        let mut tasks = Vec::new();
+        if let Some(y) = promoted_scroll_y {
+            tasks.push(operation::scroll_to(
+                canvas_scroll_id(),
+                AbsoluteOffset { x: 0.0, y },
+            ));
+            let selected = self
+                .current_tab()
+                .and_then(|t| t.selection.single_selected(&t.visible_entries))
+                .cloned();
+            if selected.is_some() {
+                tasks.push(self.dispatch_selection_side_effects(selected.as_ref()));
+            } else {
+                tasks.push(self.queue_visible_thumbnails());
+            }
+        } else {
+            tasks.push(self.queue_visible_thumbnails());
+        }
+        Task::batch(tasks)
+    }
+
     pub fn current_tab(&self) -> Option<&TabState> {
         self.pane_tab(self.active_pane())
     }
@@ -1912,17 +1963,13 @@ impl App {
                 ])
             }
             Message::ToggleSplitView => {
+                if self.split_view.is_some() {
+                    return self.close_split_pane(SplitPane::Right);
+                }
                 self.context_menu = None;
                 self.entry_drag = None;
                 self.drag_hover_pane = None;
                 self.drag_hover_folder = None;
-                if let Some(split) = self.split_view.take() {
-                    if let Some(cancel) = self.tab_cancels.remove(&split.right_tab.id) {
-                        cancel.cancel();
-                    }
-                    self.canvas_viewport_width = None;
-                    return Task::none();
-                }
 
                 let (initial_path, view_mode, sort, show_hidden) = self
                     .left_tab()
@@ -1964,6 +2011,7 @@ impl App {
                     operation::snap_to(secondary_canvas_scroll_id(), RelativeOffset::START),
                 ])
             }
+            Message::CloseSplitPane(pane) => self.close_split_pane(pane),
             Message::FocusSplitPane(pane) => {
                 self.context_menu = None;
                 self.focus_split_pane(pane);
@@ -8204,6 +8252,33 @@ pub(crate) fn resolve_open_in_new_tab_targets(
     }
 }
 
+/// Aplica a transição de estado ao fechar um painel no modo dividido.
+/// Retorna `(cancelled_tab_id, promoted_scroll_y)` quando um split estava ativo.
+fn close_split_pane_state(
+    pane: SplitPane,
+    tabs: &mut Vec<TabState>,
+    active_tab: &mut TabId,
+    split_view: &mut Option<SplitViewState>,
+    canvas_scroll_y: &mut f32,
+) -> Option<(TabId, Option<f32>)> {
+    let split = split_view.take()?;
+    match pane {
+        SplitPane::Right => Some((split.right_tab.id, None)),
+        SplitPane::Left => {
+            let old_left_id = *active_tab;
+            let promoted_id = split.right_tab.id;
+            if let Some(slot) = tabs.iter_mut().find(|t| t.id == old_left_id) {
+                *slot = split.right_tab;
+            } else {
+                tabs.push(split.right_tab);
+            }
+            *active_tab = promoted_id;
+            *canvas_scroll_y = split.right_scroll_y;
+            Some((old_left_id, Some(split.right_scroll_y)))
+        }
+    }
+}
+
 fn find_tab_mut_parts<'a>(
     tabs: &'a mut [TabState],
     split_view: &'a mut Option<SplitViewState>,
@@ -9002,5 +9077,73 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn close_split_pane_promotes_right_pane_when_closing_left_and_keeps_left_when_closing_right() {
+        use std::path::PathBuf;
+
+        let left_tab = fm_core::TabState::new(fm_core::TabId(1), PathBuf::from("/tmp/left"));
+        let other_tab = fm_core::TabState::new(fm_core::TabId(2), PathBuf::from("/tmp/other"));
+        let right_tab = fm_core::TabState::new(fm_core::TabId(3), PathBuf::from("/tmp/right"));
+
+        // 1. Fechar o painel esquerdo promove o painel direito na mesma posição e preserva outras abas.
+        let mut tabs = vec![left_tab.clone(), other_tab.clone()];
+        let mut active_tab = fm_core::TabId(1);
+        let mut scroll_y = 42.0;
+        let mut split = Some(super::SplitViewState {
+            right_tab: right_tab.clone(),
+            active_pane: super::SplitPane::Right,
+            ratio: 0.5,
+            divider_hovered: false,
+            resizing: None,
+            right_scroll_y: 185.5,
+            right_viewport_height: 600.0,
+            right_viewport_width: Some(500.0),
+        });
+
+        let result = super::close_split_pane_state(
+            super::SplitPane::Left,
+            &mut tabs,
+            &mut active_tab,
+            &mut split,
+            &mut scroll_y,
+        );
+        assert_eq!(result, Some((fm_core::TabId(1), Some(185.5))));
+        assert!(split.is_none());
+        assert_eq!(active_tab, fm_core::TabId(3));
+        assert_eq!(scroll_y, 185.5);
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs[0].id, fm_core::TabId(3));
+        assert_eq!(tabs[0].current_path, PathBuf::from("/tmp/right"));
+        assert_eq!(tabs[1].id, fm_core::TabId(2));
+
+        // 2. Fechar o painel direito mantém a aba esquerda intacta e cancela apenas a direita.
+        let mut tabs_r = vec![left_tab, other_tab];
+        let mut active_r = fm_core::TabId(1);
+        let mut scroll_r = 75.0;
+        let mut split_r = Some(super::SplitViewState {
+            right_tab,
+            active_pane: super::SplitPane::Left,
+            ratio: 0.5,
+            divider_hovered: false,
+            resizing: None,
+            right_scroll_y: 300.0,
+            right_viewport_height: 600.0,
+            right_viewport_width: Some(500.0),
+        });
+
+        let result_r = super::close_split_pane_state(
+            super::SplitPane::Right,
+            &mut tabs_r,
+            &mut active_r,
+            &mut split_r,
+            &mut scroll_r,
+        );
+        assert_eq!(result_r, Some((fm_core::TabId(3), None)));
+        assert!(split_r.is_none());
+        assert_eq!(active_r, fm_core::TabId(1));
+        assert_eq!(scroll_r, 75.0);
+        assert_eq!(tabs_r[0].current_path, PathBuf::from("/tmp/left"));
     }
 }
