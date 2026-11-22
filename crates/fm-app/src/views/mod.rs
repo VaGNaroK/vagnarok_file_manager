@@ -231,6 +231,165 @@ pub fn modal_overlay_backdrop_at<'a, M: 'a>(
     )
 }
 
+/// Posiciona uma janela flutuante não-bloqueante em `(x, y)` sem escurecer ou travar o fundo.
+/// Cliques fora do card passam livremente para o gerenciador de arquivos atrás; cliques dentro
+/// do card promovem a janela no z-order sem bloquear a interação interna.
+pub fn floating_window_at<'a>(
+    card: impl Into<Element<'a, Message>>,
+    x: f32,
+    y: f32,
+    window_id: window::Id,
+    is_topmost: bool,
+) -> Element<'a, Message> {
+    let wrapped = Element::new(FloatingWindowFocus {
+        content: opaque(card),
+        window_id,
+        is_topmost,
+    });
+    container(wrapped)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(Padding {
+            top: y.max(0.0),
+            right: 0.0,
+            bottom: 0.0,
+            left: x.max(0.0),
+        })
+        .into()
+}
+
+struct FloatingWindowFocus<'a> {
+    content: Element<'a, Message>,
+    window_id: window::Id,
+    is_topmost: bool,
+}
+
+impl Widget<Message, iced::Theme, iced::Renderer> for FloatingWindowFocus<'_> {
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content));
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.content
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        if !self.is_topmost
+            && matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_)))
+            && cursor.is_over(layout.bounds())
+        {
+            shell.publish(Message::FocusPropertiesWindow(self.window_id));
+        }
+
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &iced::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
+
 /// Envolve um `text_input` para abrir menu de contexto (Recortar/Copiar/Colar/Selecionar tudo)
 /// com botão direito preservando exatamente a seleção e a posição do cursor internas do widget.
 pub fn wrap_text_input_context_menu<'a>(

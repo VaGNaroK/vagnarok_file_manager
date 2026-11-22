@@ -189,6 +189,8 @@ pub struct PropertiesWindowState {
     pub open_with_selected_id: Option<String>,
     pub open_with_custom_command: String,
     pub exec_picker: Option<ExecPickerState>,
+    pub modal_size: (f32, f32),
+    pub modal_offset: Option<(f32, f32)>,
     pub cancel: Option<CancellationToken>,
 }
 
@@ -755,6 +757,7 @@ pub enum Message {
     },
     OpenWithExecPickerPick(window::Id, PathBuf),
     OpenWithExecPickerClose(window::Id),
+    FocusPropertiesWindow(window::Id),
     DragPropertiesWindow(window::Id),
     ClosePropertiesWindow(window::Id),
     OpenBulkRenameDialog,
@@ -805,7 +808,7 @@ pub enum Message {
     CopyText(String, String),
     StartColumnResize(usize),
     StartSidebarResize,
-    StartPropertiesResize,
+    StartPropertiesResize(window::Id),
     SidebarDividerHovered(bool),
     ResetSidebarWidth,
     EndColumnResize(window::Id),
@@ -874,10 +877,9 @@ pub struct App {
     pub resizing_col: Option<(usize, f32, [f32; 5])>,
     pub resizing_sidebar: Option<(f32, f32)>,
     pub sidebar_divider_hovered: bool,
-    pub properties_modal_size: (f32, f32),
-    pub properties_modal_offset: Option<(f32, f32)>,
-    pub resizing_properties_modal: Option<(Point, f32, f32, f32, f32)>,
-    pub dragging_properties_modal: Option<(Point, f32, f32)>,
+    pub properties_z_order: Vec<window::Id>,
+    pub resizing_properties_modal: Option<(window::Id, Point, f32, f32, f32, f32)>,
+    pub dragging_properties_modal: Option<(window::Id, Point, f32, f32)>,
     pub deep_search_open: bool,
     pub deep_search_query: String,
     pub deep_search_loading: bool,
@@ -1012,8 +1014,7 @@ impl App {
             resizing_col: None,
             resizing_sidebar: None,
             sidebar_divider_hovered: false,
-            properties_modal_size: (760.0, 560.0),
-            properties_modal_offset: None,
+            properties_z_order: Vec::new(),
             resizing_properties_modal: None,
             dragging_properties_modal: None,
             deep_search_open: false,
@@ -4171,16 +4172,8 @@ impl App {
                     }
                     self.status_notice = Some(self.strings().prop_applied_notice.to_owned());
                     let close_task = if close_after {
-                        if let Some(mut props) = self.properties_windows.remove(&window_id)
-                            && let Some(cancel) = props.cancel.take()
-                        {
-                            cancel.cancel();
-                        }
-                        if window_id != self.main_window_id {
-                            window::close(window_id)
-                        } else {
-                            Task::none()
-                        }
+                        self.close_properties_window_state(window_id);
+                        Task::none()
                     } else {
                         let mut reload_acl = Task::none();
                         if let Some(props) = self.properties_windows.get_mut(&window_id)
@@ -4483,35 +4476,24 @@ impl App {
                 }
                 Task::none()
             }
+            Message::FocusPropertiesWindow(window_id) => {
+                self.bring_properties_window_to_front(window_id);
+                Task::none()
+            }
             Message::DragPropertiesWindow(window_id) => {
-                if window_id == self.main_window_id {
-                    let (x, y, _, _) = effective_properties_modal_rect(self);
-                    self.properties_modal_offset = Some((x, y));
-                    self.dragging_properties_modal = Some((self.cursor_position, x, y));
-                    Task::none()
-                } else {
-                    window::drag(window_id)
+                self.bring_properties_window_to_front(window_id);
+                if let Some(props) = self.properties_windows.get(&window_id) {
+                    let (x, y, _, _) = effective_properties_modal_rect(self, props);
+                    if let Some(props_mut) = self.properties_windows.get_mut(&window_id) {
+                        props_mut.modal_offset = Some((x, y));
+                    }
+                    self.dragging_properties_modal = Some((window_id, self.cursor_position, x, y));
                 }
+                Task::none()
             }
             Message::ClosePropertiesWindow(window_id) => {
-                if let Some(mut props) = self.properties_windows.remove(&window_id)
-                    && let Some(cancel) = props.cancel.take()
-                {
-                    cancel.cancel();
-                }
-                if self.properties_windows.is_empty() {
-                    self.open_with_icons.clear();
-                    self.open_with_icons.shrink_to_fit();
-                    self.open_with_icons_in_flight.clear();
-                    self.dragging_properties_modal = None;
-                    self.resizing_properties_modal = None;
-                    self.properties_modal_offset = None;
-                }
-                if window_id == self.main_window_id {
-                    Task::none()
-                } else {
-                    window::close(window_id)
-                }
+                self.close_properties_window_state(window_id);
+                Task::none()
             }
             Message::OpenFilterMenu => {
                 self.breadcrumb_menu = None;
@@ -4574,10 +4556,16 @@ impl App {
                 self.resizing_sidebar = Some((start_x, current_w));
                 Task::none()
             }
-            Message::StartPropertiesResize => {
-                let (x, y, w, h) = effective_properties_modal_rect(self);
-                self.properties_modal_offset = Some((x, y));
-                self.resizing_properties_modal = Some((self.cursor_position, x, y, w, h));
+            Message::StartPropertiesResize(window_id) => {
+                self.bring_properties_window_to_front(window_id);
+                if let Some(props) = self.properties_windows.get(&window_id) {
+                    let (x, y, w, h) = effective_properties_modal_rect(self, props);
+                    if let Some(props_mut) = self.properties_windows.get_mut(&window_id) {
+                        props_mut.modal_offset = Some((x, y));
+                    }
+                    self.resizing_properties_modal =
+                        Some((window_id, self.cursor_position, x, y, w, h));
+                }
                 Task::none()
             }
             Message::SidebarDividerHovered(hovered) => {
@@ -4714,28 +4702,32 @@ impl App {
                     split.right_viewport_width = None;
                     self.canvas_viewport_width = None;
                 }
-                if let Some((start, start_x, start_y)) = self.dragging_properties_modal {
-                    let (w, h) = effective_properties_modal_size(self);
-                    self.properties_modal_offset = Some(clamp_properties_modal_pos(
-                        start_x + (pos.x - start.x),
-                        start_y + (pos.y - start.y),
-                        w,
-                        h,
-                        self.window_size,
-                    ));
+                if let Some((win_id, start, start_x, start_y)) = self.dragging_properties_modal {
+                    let win_size = self.window_size;
+                    if let Some(props) = self.properties_windows.get_mut(&win_id) {
+                        let (w, h) = clamp_properties_modal_size(
+                            props.modal_size.0,
+                            props.modal_size.1,
+                            win_size,
+                        );
+                        props.modal_offset = Some(clamp_properties_modal_pos(
+                            start_x + (pos.x - start.x),
+                            start_y + (pos.y - start.y),
+                            w,
+                            h,
+                            win_size,
+                        ));
+                    }
                 }
-                if let Some((start, anchor_x, anchor_y, initial_w, initial_h)) =
+                if let Some((win_id, start, anchor_x, anchor_y, initial_w, initial_h)) =
                     self.resizing_properties_modal
                 {
-                    self.properties_modal_size = compute_dragged_properties_modal_size(
-                        anchor_x,
-                        anchor_y,
-                        initial_w,
-                        initial_h,
-                        start,
-                        pos,
-                        self.window_size,
-                    );
+                    let win_size = self.window_size;
+                    if let Some(props) = self.properties_windows.get_mut(&win_id) {
+                        props.modal_size = compute_dragged_properties_modal_size(
+                            anchor_x, anchor_y, initial_w, initial_h, start, pos, win_size,
+                        );
+                    }
                 }
                 if let Some(modal) = &mut self.bulk_rename_modal {
                     if let Some((start, start_x, start_y)) = modal.dragging_modal {
@@ -4978,13 +4970,10 @@ impl App {
                             cancel.cancel();
                         }
                     }
+                    self.properties_z_order.clear();
                     return iced::exit();
                 }
-                if let Some(mut props) = self.properties_windows.remove(&window_id)
-                    && let Some(cancel) = props.cancel.take()
-                {
-                    cancel.cancel();
-                }
+                self.close_properties_window_state(window_id);
                 Task::none()
             }
             Message::FileDropped { window_id, path } => {
@@ -5270,14 +5259,6 @@ impl App {
                 palette,
                 strings,
             ))
-        } else if let Some(props) = self.properties_windows.get(&self.main_window_id) {
-            Some(views::modals::properties_modal_overlay(
-                self,
-                self.main_window_id,
-                props,
-                palette,
-                strings,
-            ))
         } else if self.prefs_open {
             Some(views::modals::preferences_modal(self, palette, strings))
         } else if self.quicklook_open {
@@ -5304,7 +5285,10 @@ impl App {
         let text_menu_overlay: Option<Element<'_, Message>> = self
             .text_input_menu
             .as_ref()
-            .filter(|m| m.window_id == self.main_window_id)
+            .filter(|m| {
+                m.window_id == self.main_window_id
+                    || self.properties_windows.contains_key(&m.window_id)
+            })
             .map(|menu| {
                 views::modals::text_input_context_menu_overlay(
                     self,
@@ -5316,6 +5300,15 @@ impl App {
             });
 
         let mut layers: Vec<Element<'_, Message>> = vec![main_shell.into()];
+        let prop_count = self.properties_z_order.len();
+        for (idx, &prop_id) in self.properties_z_order.iter().enumerate() {
+            if let Some(props) = self.properties_windows.get(&prop_id) {
+                let is_topmost = idx + 1 == prop_count;
+                layers.push(views::modals::properties_modal_overlay(
+                    self, prop_id, props, is_topmost, palette, strings,
+                ));
+            }
+        }
         if let Some(layer) = overlay {
             layers.push(layer);
         }
@@ -5468,13 +5461,8 @@ impl App {
             .iter()
             .find(|(_, props)| !props.is_multi() && props.entry.path == path)
         {
-            let focus = if existing_id != self.main_window_id {
-                window::gain_focus(existing_id)
-            } else {
-                Task::none()
-            };
-            let select = self.update(Message::PropertiesSelectTab(existing_id, tab));
-            return Task::batch([focus, select]);
+            self.bring_properties_window_to_front(existing_id);
+            return self.update(Message::PropertiesSelectTab(existing_id, tab));
         }
         let entry = self.current_tab().and_then(|t| {
             t.visible_entries
@@ -5494,6 +5482,60 @@ impl App {
     fn next_properties_req_id(&mut self) -> u64 {
         self.next_properties_request_id = self.next_properties_request_id.wrapping_add(1);
         self.next_properties_request_id
+    }
+
+    fn bring_properties_window_to_front(&mut self, window_id: window::Id) {
+        if self.properties_windows.contains_key(&window_id) {
+            self.properties_z_order.retain(|&id| id != window_id);
+            self.properties_z_order.push(window_id);
+        }
+    }
+
+    fn close_properties_window_state(&mut self, window_id: window::Id) {
+        self.properties_z_order.retain(|&id| id != window_id);
+        if let Some(mut props) = self.properties_windows.remove(&window_id)
+            && let Some(cancel) = props.cancel.take()
+        {
+            cancel.cancel();
+        }
+        if self
+            .dragging_properties_modal
+            .is_some_and(|(id, _, _, _)| id == window_id)
+        {
+            self.dragging_properties_modal = None;
+        }
+        if self
+            .resizing_properties_modal
+            .is_some_and(|(id, _, _, _, _, _)| id == window_id)
+        {
+            self.resizing_properties_modal = None;
+        }
+        if self
+            .text_input_menu
+            .as_ref()
+            .is_some_and(|m| m.window_id == window_id)
+        {
+            self.text_input_menu = None;
+        }
+        if self.properties_windows.is_empty() {
+            self.open_with_icons.clear();
+            self.open_with_icons.shrink_to_fit();
+            self.open_with_icons_in_flight.clear();
+            self.dragging_properties_modal = None;
+            self.resizing_properties_modal = None;
+        }
+    }
+
+    fn next_floating_properties_geometry(&self) -> ((f32, f32), Option<(f32, f32)>) {
+        let size = (PROPERTIES_DEFAULT_W, PROPERTIES_DEFAULT_H);
+        let existing_rects: Vec<(f32, f32, f32, f32)> = self
+            .properties_z_order
+            .iter()
+            .filter_map(|id| self.properties_windows.get(id))
+            .map(|p| effective_properties_modal_rect(self, p))
+            .collect();
+        let offset = initial_floating_properties_offset(&existing_rects, size, self.window_size);
+        (size, Some(offset))
     }
 
     /// Abre janela flutuante de Propriedades agregada para múltiplos itens selecionados,
@@ -5522,12 +5564,8 @@ impl App {
                 .flatten()
         });
 
-        let win_id = self.main_window_id;
-        if let Some(mut prev) = self.properties_windows.remove(&win_id)
-            && let Some(prev_cancel) = prev.cancel.take()
-        {
-            prev_cancel.cancel();
-        }
+        let win_id = window::Id::unique();
+        let (modal_size, modal_offset) = self.next_floating_properties_geometry();
         let request_id = self.next_properties_req_id();
         let win_cancel = CancellationToken::new();
         let mut tasks: Vec<Task<Message>> = Vec::new();
@@ -5616,13 +5654,16 @@ impl App {
                 open_with_selected_id: None,
                 open_with_custom_command: String::new(),
                 exec_picker: None,
+                modal_size,
+                modal_offset,
                 cancel: Some(win_cancel),
             },
         );
+        self.properties_z_order.push(win_id);
         Task::batch(tasks)
     }
 
-    /// Opens (or focuses) a floating centered Properties window for `entry`.
+    /// Opens (or focuses) a floating non-blocking Properties window for `entry`.
     fn open_properties_window(
         &mut self,
         entry: FileEntry,
@@ -5633,13 +5674,8 @@ impl App {
             .iter()
             .find(|(_, props)| !props.is_multi() && props.entry.path == entry.path)
         {
-            let focus = if existing_id != self.main_window_id {
-                window::gain_focus(existing_id)
-            } else {
-                Task::none()
-            };
-            let select = self.update(Message::PropertiesSelectTab(existing_id, initial_tab));
-            return Task::batch([focus, select]);
+            self.bring_properties_window_to_front(existing_id);
+            return self.update(Message::PropertiesSelectTab(existing_id, initial_tab));
         }
         let existing_telemetry = self.current_tab().and_then(|t| {
             let selected = t.selection.single_selected(&t.visible_entries)?;
@@ -5663,12 +5699,8 @@ impl App {
                 .flatten()
         });
 
-        let win_id = self.main_window_id;
-        if let Some(mut prev) = self.properties_windows.remove(&win_id)
-            && let Some(prev_cancel) = prev.cancel.take()
-        {
-            prev_cancel.cancel();
-        }
+        let win_id = window::Id::unique();
+        let (modal_size, modal_offset) = self.next_floating_properties_geometry();
         let request_id = self.next_properties_req_id();
         let win_cancel = CancellationToken::new();
         let mut tasks: Vec<Task<Message>> = Vec::new();
@@ -5831,9 +5863,12 @@ impl App {
                 open_with_selected_id: None,
                 open_with_custom_command: String::new(),
                 exec_picker: None,
+                modal_size,
+                modal_offset,
                 cancel: Some(win_cancel),
             },
         );
+        self.properties_z_order.push(win_id);
         if active_tab == PropertiesTab::OpenWith {
             tasks.push(self.maybe_load_open_with_catalog(win_id));
         } else if active_tab == PropertiesTab::Permissions {
@@ -7022,7 +7057,7 @@ impl App {
 
     fn handle_global_key(
         &mut self,
-        window_id: window::Id,
+        _window_id: window::Id,
         key: keyboard::Key,
         modifiers: keyboard::Modifiers,
     ) -> Task<Message> {
@@ -7045,8 +7080,8 @@ impl App {
             if dup_modal_visible {
                 return self.update(Message::DuplicateFinder(DuplicateFinderMsg::Close));
             }
-            if self.properties_windows.contains_key(&window_id) {
-                return self.update(Message::ClosePropertiesWindow(window_id));
+            if let Some(&top_prop_id) = self.properties_z_order.last() {
+                return self.update(Message::ClosePropertiesWindow(top_prop_id));
             }
             if self.prefs_open {
                 return self.update(Message::ClosePreferences);
@@ -7070,11 +7105,16 @@ impl App {
             return Task::none();
         }
 
-        if self.properties_windows.contains_key(&window_id) {
-            if matches!(key.as_ref(), keyboard::Key::Named(Named::Escape)) {
-                return self.update(Message::ClosePropertiesWindow(window_id));
-            }
-            return Task::none();
+        if matches!(key.as_ref(), keyboard::Key::Named(Named::Escape))
+            && self.context_menu.is_none()
+            && self.breadcrumb_menu.is_none()
+            && self.active_dialog.is_none()
+            && !self.prefs_open
+            && !self.quicklook_open
+            && !self.deep_search_open
+            && let Some(&top_prop_id) = self.properties_z_order.last()
+        {
+            return self.update(Message::ClosePropertiesWindow(top_prop_id));
         }
         let filter_menu_open = matches!(
             self.context_menu.as_ref().map(|m| &m.kind),
@@ -7822,22 +7862,50 @@ fn longest_common_prefix<'a>(items: &[&'a str]) -> &'a str {
     &first[..prefix_len]
 }
 
-pub fn effective_properties_modal_size(app: &App) -> (f32, f32) {
-    clamp_properties_modal_size(
-        app.properties_modal_size.0,
-        app.properties_modal_size.1,
+const PROPERTIES_DEFAULT_W: f32 = 580.0;
+const PROPERTIES_DEFAULT_H: f32 = 520.0;
+const PROPERTIES_MIN_W: f32 = 460.0;
+const PROPERTIES_MIN_H: f32 = 400.0;
+
+pub fn effective_properties_modal_rect(
+    app: &App,
+    props: &PropertiesWindowState,
+) -> (f32, f32, f32, f32) {
+    crate::bulk_rename::effective_modal_rect(
+        props.modal_size,
+        props.modal_offset,
+        PROPERTIES_MIN_W,
+        PROPERTIES_MIN_H,
         app.window_size,
     )
 }
 
-pub fn effective_properties_modal_rect(app: &App) -> (f32, f32, f32, f32) {
-    crate::bulk_rename::effective_modal_rect(
-        app.properties_modal_size,
-        app.properties_modal_offset,
-        560.0,
-        420.0,
-        app.window_size,
-    )
+fn initial_floating_properties_offset(
+    existing_rects: &[(f32, f32, f32, f32)],
+    size: (f32, f32),
+    window_size: Size,
+) -> (f32, f32) {
+    let (w, h) = clamp_properties_modal_size(size.0, size.1, window_size);
+    let Some(&(last_x, last_y, last_w, _)) = existing_rects.last() else {
+        let centered_x = ((window_size.width - w) * 0.5).max(12.0);
+        let centered_y = ((window_size.height - h) * 0.5).max(12.0);
+        return clamp_properties_modal_pos(centered_x, centered_y, w, h, window_size);
+    };
+
+    // Ao abrir a 2ª janela, tenta posicionar lado a lado automaticamente se couber no viewport.
+    if existing_rects.len() == 1 {
+        let side_by_side_x = last_x + last_w + 16.0;
+        if side_by_side_x + w <= window_size.width - 12.0 {
+            return clamp_properties_modal_pos(side_by_side_x, last_y, w, h, window_size);
+        }
+        let left_side_x = last_x - w - 16.0;
+        if left_side_x >= 12.0 {
+            return clamp_properties_modal_pos(left_side_x, last_y, w, h, window_size);
+        }
+    }
+
+    // Caso contrário, aplica cascata suave para manter cabeçalhos visíveis e arrastáveis.
+    clamp_properties_modal_pos(last_x + 32.0, last_y + 28.0, w, h, window_size)
 }
 
 fn clamp_properties_modal_pos(
@@ -7851,7 +7919,13 @@ fn clamp_properties_modal_pos(
 }
 
 fn clamp_properties_modal_size(width: f32, height: f32, window_size: Size) -> (f32, f32) {
-    crate::bulk_rename::clamp_modal_size(width, height, 560.0, 420.0, window_size)
+    crate::bulk_rename::clamp_modal_size(
+        width,
+        height,
+        PROPERTIES_MIN_W,
+        PROPERTIES_MIN_H,
+        window_size,
+    )
 }
 
 fn compute_dragged_properties_modal_size(
@@ -7866,7 +7940,7 @@ fn compute_dragged_properties_modal_size(
     crate::bulk_rename::compute_dragged_modal_size(
         (anchor_x, anchor_y),
         (initial_w, initial_h),
-        (560.0, 420.0),
+        (PROPERTIES_MIN_W, PROPERTIES_MIN_H),
         start,
         current,
         window_size,
@@ -8564,7 +8638,7 @@ mod tests {
                 iced::Point::new(500.0, 300.0),
                 win,
             ),
-            (560.0, 420.0)
+            (super::PROPERTIES_MIN_W, super::PROPERTIES_MIN_H)
         );
         assert_eq!(
             super::clamp_properties_modal_pos(-20.0, 500.0, 760.0, 560.0, win),
@@ -9145,5 +9219,27 @@ mod tests {
         assert_eq!(active_r, fm_core::TabId(1));
         assert_eq!(scroll_r, 75.0);
         assert_eq!(tabs_r[0].current_path, PathBuf::from("/tmp/left"));
+    }
+
+    #[test]
+    fn floating_properties_positions_second_window_side_by_side_or_cascaded() {
+        let size = (super::PROPERTIES_DEFAULT_W, super::PROPERTIES_DEFAULT_H);
+
+        // 1ª janela centralizada em viewport 1400x800.
+        let wide_vp = iced::Size::new(1400.0, 800.0);
+        let first = super::initial_floating_properties_offset(&[], size, wide_vp);
+        assert_eq!(first, (410.0, 140.0));
+
+        // 2ª janela quando há espaço à esquerda ou direita fica lado a lado sem sobrepor.
+        let left_placed = [(40.0, 100.0, size.0, size.1)];
+        let second_wide = super::initial_floating_properties_offset(&left_placed, size, wide_vp);
+        assert_eq!(second_wide, (40.0 + size.0 + 16.0, 100.0));
+
+        // Em viewport menor (1100x700), aplica cascata suave (+32, +28) dentro dos limites.
+        let narrow_vp = iced::Size::new(1100.0, 700.0);
+        let centered_first = [(260.0, 90.0, size.0, size.1)];
+        let second_narrow =
+            super::initial_floating_properties_offset(&centered_first, size, narrow_vp);
+        assert_eq!(second_narrow, (292.0, 118.0));
     }
 }

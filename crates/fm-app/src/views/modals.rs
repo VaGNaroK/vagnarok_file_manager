@@ -33,7 +33,7 @@ use crate::app::{
 use crate::archive_jobs::ArchiveUiMsg;
 use crate::duplicate_finder::DuplicateFinderMsg;
 use crate::views::{
-    modal_overlay_backdrop, modal_overlay_backdrop_at, render_entry_icon, sanitize_single_line,
+    floating_window_at, modal_overlay_backdrop, render_entry_icon, sanitize_single_line,
     with_tooltip, wrap_text_input_context_menu,
 };
 
@@ -402,17 +402,25 @@ pub fn properties_modal_overlay<'a>(
     app: &'a App,
     win_id: window::Id,
     props: &'a PropertiesWindowState,
+    is_topmost: bool,
     palette: ThemePalette,
     strings: Strings,
 ) -> Element<'a, Message> {
-    let (x, y, modal_w, modal_h) = effective_properties_modal_rect(app);
+    let (x, y, modal_w, modal_h) = effective_properties_modal_rect(app, props);
     let card = container(properties_window_view(app, win_id, props, palette, strings))
         .width(Length::Fixed(modal_w))
         .height(Length::Fixed(modal_h))
         .clip(true)
-        .style(styles::modal_card(palette));
+        .style(move |theme| {
+            let mut style = styles::modal_card(palette)(theme);
+            if is_topmost {
+                style.border.color = palette.accent_border;
+                style.border.width = 1.5;
+            }
+            style
+        });
 
-    modal_overlay_backdrop_at(card, x, y)
+    floating_window_at(card, x, y, win_id, is_topmost)
 }
 
 pub fn properties_window_view<'a>(
@@ -464,11 +472,16 @@ pub fn properties_window_view<'a>(
         .spacing(10)
         .align_y(Center),
     )
-    .interaction(if app.dragging_properties_modal.is_some() {
-        mouse::Interaction::Grabbing
-    } else {
-        mouse::Interaction::Grab
-    })
+    .interaction(
+        if app
+            .dragging_properties_modal
+            .is_some_and(|(id, _, _, _)| id == win_id)
+        {
+            mouse::Interaction::Grabbing
+        } else {
+            mouse::Interaction::Grab
+        },
+    )
     .on_press(Message::DragPropertiesWindow(win_id));
 
     let header = row![
@@ -605,7 +618,7 @@ pub fn properties_window_view<'a>(
         .padding([4, 4]),
     )
     .interaction(mouse::Interaction::ResizingDiagonallyDown)
-    .on_press(Message::StartPropertiesResize);
+    .on_press(Message::StartPropertiesResize(win_id));
 
     let footer_buttons = if is_multi {
         row![confirm_btn].spacing(8)
