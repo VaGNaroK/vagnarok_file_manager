@@ -219,6 +219,217 @@ pub struct EntryExtraInfo {
     pub is_readonly: bool,
 }
 
+/// Constantes Win32 de `ACCESS_MASK` NTFS usadas para mapeamento puro e multiplataforma.
+pub const NTFS_FILE_READ_DATA: u32 = 0x0000_0001;
+pub const NTFS_FILE_WRITE_DATA: u32 = 0x0000_0002;
+pub const NTFS_FILE_APPEND_DATA: u32 = 0x0000_0004;
+pub const NTFS_FILE_READ_EA: u32 = 0x0000_0008;
+pub const NTFS_FILE_WRITE_EA: u32 = 0x0000_0010;
+pub const NTFS_FILE_EXECUTE: u32 = 0x0000_0020;
+pub const NTFS_FILE_DELETE_CHILD: u32 = 0x0000_0040;
+pub const NTFS_FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+pub const NTFS_FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;
+pub const NTFS_DELETE: u32 = 0x0001_0000;
+pub const NTFS_READ_CONTROL: u32 = 0x0002_0000;
+pub const NTFS_WRITE_DAC: u32 = 0x0004_0000;
+pub const NTFS_WRITE_OWNER: u32 = 0x0008_0000;
+pub const NTFS_SYNCHRONIZE: u32 = 0x0010_0000;
+pub const NTFS_FILE_ALL_ACCESS: u32 = 0x001F_01FF;
+pub const NTFS_GENERIC_ALL: u32 = 0x1000_0000;
+pub const NTFS_GENERIC_EXECUTE: u32 = 0x2000_0000;
+pub const NTFS_GENERIC_WRITE: u32 = 0x4000_0000;
+pub const NTFS_GENERIC_READ: u32 = 0x8000_0000;
+
+/// Identificador de cada linha na matriz de permissões NTFS (Windows).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NtfsPermissionKind {
+    FullControl,
+    Read,
+    Write,
+    Execute,
+    ListDir,
+    Delete,
+}
+
+/// Conjunto de bits independentes de permissão NTFS (Permitir ou Negar).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NtfsPermissionBits {
+    pub read: bool,
+    pub write: bool,
+    pub execute: bool,
+    pub list_dir: bool,
+    pub delete: bool,
+}
+
+impl NtfsPermissionBits {
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        !self.read && !self.write && !self.execute && !self.list_dir && !self.delete
+    }
+
+    #[must_use]
+    pub const fn is_full_control(self, is_dir: bool) -> bool {
+        self.read && self.write && self.execute && self.delete && (!is_dir || self.list_dir)
+    }
+
+    pub fn set_full_control(&mut self, enabled: bool) {
+        self.read = enabled;
+        self.write = enabled;
+        self.execute = enabled;
+        self.list_dir = enabled;
+        self.delete = enabled;
+    }
+
+    pub fn merge_from(&mut self, other: Self) {
+        self.read |= other.read;
+        self.write |= other.write;
+        self.execute |= other.execute;
+        self.list_dir |= other.list_dir;
+        self.delete |= other.delete;
+    }
+
+    #[must_use]
+    pub const fn get(self, kind: NtfsPermissionKind, is_dir: bool) -> bool {
+        match kind {
+            NtfsPermissionKind::FullControl => self.is_full_control(is_dir),
+            NtfsPermissionKind::Read => self.read,
+            NtfsPermissionKind::Write => self.write,
+            NtfsPermissionKind::Execute => self.execute,
+            NtfsPermissionKind::ListDir => self.list_dir,
+            NtfsPermissionKind::Delete => self.delete,
+        }
+    }
+
+    pub fn set(&mut self, kind: NtfsPermissionKind, val: bool) {
+        match kind {
+            NtfsPermissionKind::FullControl => self.set_full_control(val),
+            NtfsPermissionKind::Read => self.read = val,
+            NtfsPermissionKind::Write => self.write = val,
+            NtfsPermissionKind::Execute => self.execute = val,
+            NtfsPermissionKind::ListDir => self.list_dir = val,
+            NtfsPermissionKind::Delete => self.delete = val,
+        }
+    }
+
+    /// Converte uma máscara Win32 (`ACCESS_MASK`) em flags independentes de exibição.
+    #[must_use]
+    pub const fn from_win32_mask(mask: u32, is_dir: bool) -> Self {
+        let full =
+            (mask & NTFS_GENERIC_ALL) != 0 || (mask & NTFS_FILE_ALL_ACCESS) == NTFS_FILE_ALL_ACCESS;
+        if full {
+            return Self {
+                read: true,
+                write: true,
+                execute: true,
+                list_dir: true,
+                delete: true,
+            };
+        }
+        let read = (mask & (NTFS_FILE_READ_DATA | NTFS_GENERIC_READ)) != 0;
+        let write =
+            (mask & (NTFS_FILE_WRITE_DATA | NTFS_FILE_APPEND_DATA | NTFS_GENERIC_WRITE)) != 0;
+        let execute = (mask & (NTFS_FILE_EXECUTE | NTFS_GENERIC_EXECUTE)) != 0;
+        let list_dir = if is_dir {
+            (mask & (NTFS_FILE_READ_DATA | NTFS_GENERIC_READ)) != 0
+        } else {
+            false
+        };
+        let delete = (mask & (NTFS_DELETE | NTFS_FILE_DELETE_CHILD)) != 0;
+        Self {
+            read,
+            write,
+            execute,
+            list_dir,
+            delete,
+        }
+    }
+
+    /// Converte as flags independentes de volta em `ACCESS_MASK` Win32 pronta para gravar na DACL.
+    #[must_use]
+    pub const fn to_win32_mask(self, is_dir: bool) -> u32 {
+        if self.is_full_control(is_dir) {
+            return NTFS_FILE_ALL_ACCESS;
+        }
+        let mut mask = 0u32;
+        if self.read {
+            mask |= NTFS_FILE_READ_DATA
+                | NTFS_FILE_READ_EA
+                | NTFS_FILE_READ_ATTRIBUTES
+                | NTFS_READ_CONTROL
+                | NTFS_SYNCHRONIZE;
+        }
+        if is_dir && self.list_dir {
+            mask |= NTFS_FILE_READ_DATA | NTFS_FILE_READ_ATTRIBUTES | NTFS_SYNCHRONIZE;
+        }
+        if self.write {
+            mask |= NTFS_FILE_WRITE_DATA
+                | NTFS_FILE_APPEND_DATA
+                | NTFS_FILE_WRITE_EA
+                | NTFS_FILE_WRITE_ATTRIBUTES
+                | NTFS_SYNCHRONIZE;
+        }
+        if self.execute {
+            mask |= NTFS_FILE_EXECUTE | NTFS_FILE_READ_ATTRIBUTES | NTFS_SYNCHRONIZE;
+        }
+        if self.delete {
+            mask |= NTFS_DELETE | NTFS_SYNCHRONIZE;
+            if is_dir {
+                mask |= NTFS_FILE_DELETE_CHILD;
+            }
+        }
+        mask
+    }
+}
+
+/// Entrada agregada de um usuário ou grupo na DACL NTFS de um arquivo/pasta no Windows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NtfsPrincipalAcl {
+    pub sid: String,
+    pub display_name: String,
+    pub domain: String,
+    pub is_group: bool,
+    pub is_inherited: bool,
+    pub allow: NtfsPermissionBits,
+    pub deny: NtfsPermissionBits,
+}
+
+/// Estado completo de segurança NTFS exibido/editado na aba Permissões no Windows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NtfsSecurityInfo {
+    pub owner: String,
+    pub inheritance_enabled: bool,
+    pub principals: Vec<NtfsPrincipalAcl>,
+}
+
+impl NtfsSecurityInfo {
+    /// Alterna um bit de permissão em `allow` (`is_allow = true`) ou `deny` (`is_allow = false`)
+    /// preservando independência entre Leitura, Gravar, Executar, Listar e Excluir.
+    pub fn toggle_bit(&mut self, sid: &str, is_allow: bool, kind: NtfsPermissionKind) -> bool {
+        let Some(p) = self.principals.iter_mut().find(|p| p.sid == sid) else {
+            return false;
+        };
+        p.is_inherited = false;
+        let current = if is_allow {
+            p.allow.get(kind, true)
+        } else {
+            p.deny.get(kind, true)
+        };
+        let next = !current;
+        if is_allow {
+            p.allow.set(kind, next);
+            if next {
+                p.deny.set(kind, false);
+            }
+        } else {
+            p.deny.set(kind, next);
+            if next {
+                p.allow.set(kind, false);
+            }
+        }
+        true
+    }
+}
+
 /// Tipo de dispositivo/volume exibido na barra lateral.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DriveKind {
@@ -1008,5 +1219,67 @@ mod tests {
         assert!(!drive_needs_disambiguation(&drives[2], &drives));
         assert!(!drive_needs_disambiguation(&drives[0], &drives));
         assert_eq!(drive_short_device_name(&drives[3]), Some("sdc1"));
+    }
+
+    #[test]
+    fn ntfs_permission_bits_support_independent_toggles_and_full_control() {
+        let mut info = NtfsSecurityInfo {
+            owner: "DESKTOP\\Educ1".to_owned(),
+            inheritance_enabled: true,
+            principals: vec![NtfsPrincipalAcl {
+                sid: "S-1-5-32-545".to_owned(),
+                display_name: "Usuários".to_owned(),
+                domain: "BUILTIN".to_owned(),
+                is_group: true,
+                is_inherited: true,
+                allow: NtfsPermissionBits {
+                    read: true,
+                    write: false,
+                    execute: true,
+                    list_dir: true,
+                    delete: false,
+                },
+                deny: NtfsPermissionBits::default(),
+            }],
+        };
+
+        // Ativar somente Gravar de forma independente não marca Delete nem Controle total.
+        assert!(info.toggle_bit("S-1-5-32-545", true, NtfsPermissionKind::Write));
+        let p = &info.principals[0];
+        assert!(!p.is_inherited);
+        assert!(p.allow.write);
+        assert!(p.allow.read);
+        assert!(!p.allow.delete);
+        assert!(!p.allow.is_full_control(true));
+
+        // Negar Gravar limpa Permitir Gravar de forma independente.
+        assert!(info.toggle_bit("S-1-5-32-545", false, NtfsPermissionKind::Write));
+        let p = &info.principals[0];
+        assert!(p.deny.write);
+        assert!(!p.allow.write);
+        assert!(p.allow.read);
+
+        // Controle total liga todos os bits em Permitir e limpa Negar.
+        assert!(info.toggle_bit("S-1-5-32-545", true, NtfsPermissionKind::FullControl));
+        let p = &info.principals[0];
+        assert!(p.allow.is_full_control(true));
+        assert!(p.deny.is_empty());
+
+        // Round-trip Win32 ACCESS_MASK.
+        let mask = p.allow.to_win32_mask(true);
+        assert_eq!(mask, NTFS_FILE_ALL_ACCESS);
+        let decoded = NtfsPermissionBits::from_win32_mask(mask, true);
+        assert!(decoded.is_full_control(true));
+
+        // Apenas Gravar gera máscara sem bit de Leitura.
+        let write_only = NtfsPermissionBits {
+            write: true,
+            ..Default::default()
+        };
+        let write_mask = write_only.to_win32_mask(false);
+        let decoded_write = NtfsPermissionBits::from_win32_mask(write_mask, false);
+        assert!(decoded_write.write);
+        assert!(!decoded_write.read);
+        assert!(!decoded_write.delete);
     }
 }

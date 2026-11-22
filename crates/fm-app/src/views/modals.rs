@@ -19,9 +19,9 @@ use lucide_icons::iced::{
     icon_clipboard_copy, icon_clipboard_paste, icon_copy, icon_disc_3, icon_external_link,
     icon_eye, icon_file_archive, icon_file_plus, icon_file_text, icon_filter, icon_folder,
     icon_folder_plus, icon_hard_drive, icon_info, icon_link_2, icon_lock, icon_monitor,
-    icon_pencil, icon_plug, icon_power, icon_rotate_ccw, icon_scissors, icon_search, icon_send,
-    icon_settings, icon_shield_alert, icon_shield_check, icon_sliders_horizontal, icon_star_off,
-    icon_terminal, icon_trash_2, icon_x,
+    icon_pencil, icon_plug, icon_plus, icon_power, icon_rotate_ccw, icon_scissors, icon_search,
+    icon_send, icon_settings, icon_shield_alert, icon_shield_check, icon_sliders_horizontal,
+    icon_star_off, icon_terminal, icon_trash_2, icon_x,
 };
 
 use crate::app::{
@@ -556,7 +556,7 @@ pub fn properties_window_view<'a>(
     let cancel_btn = button(text(strings.cancel).size(12).font(FONT_UI))
         .padding([7, 16])
         .style(styles::pill_secondary_button(palette))
-        .on_press(Message::ClosePropertiesWindow(win_id));
+        .on_press(Message::PropertiesCancel(win_id));
 
     let apply_active = dirty && !props.applying;
     let apply_btn = button(text(strings.prop_apply).size(12).font(if apply_active {
@@ -1693,7 +1693,27 @@ fn properties_permissions_tab<'a>(
         return perms_col.into();
     }
 
-    // Windows / fallback attributes
+    // Windows NTFS ACL UI (conforme mockup v2)
+    if props.ntfs_acl_loading {
+        return container(
+            text(strings.ntfs_loading)
+                .size(12)
+                .font(FONT_UI)
+                .color(palette.text_muted),
+        )
+        .width(Length::Fill)
+        .padding(16)
+        .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0))
+        .into();
+    }
+
+    if let Some(acl) = &props.ntfs_acl_draft {
+        return properties_ntfs_permissions_view(
+            win_id, props, acl, palette, strings, is_dir, editable,
+        );
+    }
+
+    // Fallback attributes (ex.: sistema de arquivos FAT32/exFAT sem DACL NTFS)
     let attrs_hex = match props.entry.permissions {
         PermissionsMeta::WinAttributes(a) => format!("0x{a:08X}"),
         PermissionsMeta::PosixMode(m) => format!("0o{m:04o}"),
@@ -1730,6 +1750,443 @@ fn properties_permissions_tab<'a>(
     .width(Length::Fill)
     .padding(14)
     .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0))
+    .into()
+}
+
+fn properties_ntfs_permissions_view<'a>(
+    win_id: window::Id,
+    props: &'a PropertiesWindowState,
+    acl: &'a fm_core::NtfsSecurityInfo,
+    palette: ThemePalette,
+    strings: Strings,
+    is_dir: bool,
+    editable: bool,
+) -> Element<'a, Message> {
+    let path_str = sanitize_single_line(&props.entry.path.to_string_lossy());
+    let object_bar = container(
+        row![
+            text(strings.ntfs_object_name)
+                .size(12)
+                .font(FONT_UI_SEMIBOLD)
+                .color(palette.text_muted),
+            container(
+                text(path_str)
+                    .size(12)
+                    .font(FONT_MONO)
+                    .color(palette.text_primary)
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(Length::Fill)
+            .clip(true),
+            button(icon_copy().size(13))
+                .padding([4, 7])
+                .style(styles::ghost_button(palette, 6.0))
+                .on_press(Message::CopyPath(props.entry.path.clone())),
+        ]
+        .spacing(8)
+        .align_y(Center),
+    )
+    .width(Length::Fill)
+    .padding([8, 12])
+    .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0));
+
+    let selected_sid = props
+        .ntfs_selected_sid
+        .as_deref()
+        .or_else(|| acl.principals.first().map(|p| p.sid.as_str()));
+
+    let mut principals_col = column![].spacing(3).width(Length::Fill);
+    for p in &acl.principals {
+        let is_sel = selected_sid == Some(p.sid.as_str());
+        let label = if p.domain.is_empty() {
+            p.display_name.clone()
+        } else {
+            format!("{} ({}\\{})", p.display_name, p.domain, p.display_name)
+        };
+        let badge_txt = if p.is_inherited {
+            strings.ntfs_inherited_badge
+        } else {
+            strings.ntfs_explicit_badge
+        };
+        let sid_clone = p.sid.clone();
+        principals_col = principals_col.push(
+            button(
+                row![
+                    icon_shield_check().size(14).color(if is_sel {
+                        palette.accent_primary
+                    } else {
+                        palette.text_muted
+                    }),
+                    container(
+                        text(label)
+                            .size(12)
+                            .font(if is_sel { FONT_UI_SEMIBOLD } else { FONT_UI })
+                            .color(palette.text_primary)
+                            .wrapping(text::Wrapping::None),
+                    )
+                    .width(Length::Fill)
+                    .clip(true),
+                    container(
+                        text(badge_txt)
+                            .size(10)
+                            .font(FONT_MONO)
+                            .color(palette.text_muted),
+                    )
+                    .padding([2, 6])
+                    .style(styles::badge_container(
+                        palette.surface_lowest,
+                        palette.text_muted,
+                        palette.border,
+                        9999.0,
+                    )),
+                ]
+                .spacing(8)
+                .align_y(Center),
+            )
+            .width(Length::Fill)
+            .padding([6, 10])
+            .style(styles::tab_button(palette, is_sel))
+            .on_press(Message::PropertiesNtfsSelectPrincipal(win_id, sid_clone)),
+        );
+    }
+
+    let principals_box = container(scrollable(principals_col).height(Length::Shrink))
+        .width(Length::Fill)
+        .max_height(136.0)
+        .padding(6)
+        .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0));
+
+    let active_principal = selected_sid.and_then(|s| acl.principals.iter().find(|p| p.sid == s));
+    let can_remove =
+        props.ntfs_edit_mode && editable && active_principal.is_some_and(|p| !p.is_inherited);
+
+    let mut edit_controls = row![].spacing(6).align_y(Center);
+    if props.ntfs_edit_mode {
+        edit_controls = edit_controls
+            .push(
+                button(
+                    row![icon_plus().size(12), text(strings.ntfs_add_btn).size(11)]
+                        .spacing(4)
+                        .align_y(Center),
+                )
+                .padding([5, 10])
+                .style(styles::pill_secondary_button(palette))
+                .on_press_maybe(
+                    editable.then_some(Message::PropertiesNtfsOpenAddPrincipal(win_id)),
+                ),
+            )
+            .push(
+                button(text(strings.ntfs_remove_btn).size(11).color(if can_remove {
+                    palette.status_error
+                } else {
+                    palette.text_muted
+                }))
+                .padding([5, 10])
+                .style(styles::pill_secondary_button(palette))
+                .on_press_maybe(
+                    can_remove.then_some(Message::PropertiesNtfsRemovePrincipal(win_id)),
+                ),
+            );
+    }
+    edit_controls = edit_controls.push(
+        button(
+            text(if props.ntfs_edit_mode {
+                strings.ntfs_done_edit_btn
+            } else {
+                strings.ntfs_edit_btn
+            })
+            .size(12)
+            .font(FONT_UI_SEMIBOLD),
+        )
+        .padding([5, 12])
+        .style(styles::pill_primary_button(palette))
+        .on_press_maybe(editable.then_some(Message::PropertiesNtfsToggleEditMode(win_id))),
+    );
+
+    let action_strip = row![
+        text(if props.ntfs_edit_mode {
+            strings.ntfs_edit_active_hint
+        } else {
+            strings.ntfs_edit_hint
+        })
+        .size(11)
+        .font(FONT_UI)
+        .color(palette.text_muted),
+        space::horizontal(),
+        edit_controls,
+    ]
+    .spacing(8)
+    .align_y(Center);
+
+    let mut main_col = column![
+        object_bar,
+        text(strings.ntfs_principals_label)
+            .size(12)
+            .font(FONT_UI_SEMIBOLD)
+            .color(palette.text_secondary),
+        principals_box,
+        action_strip,
+    ]
+    .spacing(8);
+
+    if let Some(add_draft) = &props.ntfs_add_input {
+        main_col = main_col.push(
+            container(
+                row![
+                    text_input(strings.ntfs_add_placeholder, add_draft)
+                        .size(12)
+                        .padding([6, 10])
+                        .width(Length::Fill)
+                        .style(styles::search_input_style(palette))
+                        .on_input(move |v| Message::PropertiesNtfsAddInputChanged(win_id, v))
+                        .on_submit(Message::PropertiesNtfsSubmitAddPrincipal(win_id)),
+                    button(text(strings.ntfs_add_btn).size(12).font(FONT_UI_SEMIBOLD))
+                        .padding([6, 12])
+                        .style(styles::pill_primary_button(palette))
+                        .on_press(Message::PropertiesNtfsSubmitAddPrincipal(win_id)),
+                ]
+                .spacing(8)
+                .align_y(Center),
+            )
+            .width(Length::Fill)
+            .padding(8)
+            .style(move |_| styles::panel_surface(palette.surface_low, palette.accent_border, 8.0)),
+        );
+    }
+
+    let principal_title = active_principal
+        .map(|p| format!("{} {}", strings.ntfs_permissions_for, p.display_name))
+        .unwrap_or_else(|| strings.ntfs_permissions_for.to_owned());
+
+    let mut acl_rows = column![
+        container(
+            row![
+                text(principal_title)
+                    .size(12)
+                    .font(FONT_UI_SEMIBOLD)
+                    .color(palette.text_secondary)
+                    .width(Length::Fill),
+                container(
+                    text(strings.ntfs_allow_col)
+                        .size(11)
+                        .font(FONT_UI_SEMIBOLD)
+                        .color(palette.text_secondary),
+                )
+                .width(Length::Fixed(72.0))
+                .align_x(Center),
+                container(
+                    text(strings.ntfs_deny_col)
+                        .size(11)
+                        .font(FONT_UI_SEMIBOLD)
+                        .color(palette.text_secondary),
+                )
+                .width(Length::Fixed(72.0))
+                .align_x(Center),
+            ]
+            .align_y(Center),
+        )
+        .width(Length::Fill)
+        .padding([7, 12])
+        .style(move |_| styles::panel_surface(
+            palette.surface_high,
+            Color::TRANSPARENT,
+            0.0
+        )),
+    ]
+    .width(Length::Fill);
+
+    let mut perm_defs: Vec<(fm_core::NtfsPermissionKind, &'static str)> = vec![
+        (
+            fm_core::NtfsPermissionKind::FullControl,
+            strings.ntfs_full_control,
+        ),
+        (fm_core::NtfsPermissionKind::Read, strings.perm_read),
+        (fm_core::NtfsPermissionKind::Write, strings.perm_write),
+        (fm_core::NtfsPermissionKind::Execute, strings.perm_execute),
+    ];
+    if is_dir {
+        perm_defs.push((
+            fm_core::NtfsPermissionKind::ListDir,
+            strings.ntfs_list_folder,
+        ));
+    }
+    perm_defs.push((
+        fm_core::NtfsPermissionKind::Delete,
+        strings.ntfs_delete_modify,
+    ));
+
+    let can_toggle = props.ntfs_edit_mode && editable && active_principal.is_some();
+    for (kind, label) in perm_defs {
+        let allow_checked = active_principal.is_some_and(|p| p.allow.get(kind, is_dir));
+        let deny_checked = active_principal.is_some_and(|p| p.deny.get(kind, is_dir));
+        let inherited = active_principal.is_some_and(|p| p.is_inherited);
+        let allow_box = ntfs_checkbox_box(allow_checked, false, inherited, palette);
+        let deny_box = ntfs_checkbox_box(deny_checked, true, false, palette);
+
+        acl_rows = acl_rows
+            .push(
+                container(Space::new().width(Length::Fill).height(1))
+                    .style(styles::divider_line(palette)),
+            )
+            .push(
+                container(
+                    row![
+                        text(label)
+                            .size(12)
+                            .font(if kind == fm_core::NtfsPermissionKind::FullControl {
+                                FONT_UI_SEMIBOLD
+                            } else {
+                                FONT_UI
+                            })
+                            .color(palette.text_primary)
+                            .width(Length::Fill),
+                        container(
+                            button(allow_box)
+                                .padding(3)
+                                .style(styles::ghost_button(palette, 6.0))
+                                .on_press_maybe(can_toggle.then_some(
+                                    Message::PropertiesNtfsToggleBit {
+                                        window_id: win_id,
+                                        is_allow: true,
+                                        kind,
+                                    },
+                                )),
+                        )
+                        .width(Length::Fixed(72.0))
+                        .align_x(Center),
+                        container(
+                            button(deny_box)
+                                .padding(3)
+                                .style(styles::ghost_button(palette, 6.0))
+                                .on_press_maybe(can_toggle.then_some(
+                                    Message::PropertiesNtfsToggleBit {
+                                        window_id: win_id,
+                                        is_allow: false,
+                                        kind,
+                                    },
+                                )),
+                        )
+                        .width(Length::Fixed(72.0))
+                        .align_x(Center),
+                    ]
+                    .align_y(Center),
+                )
+                .width(Length::Fill)
+                .padding([5, 12]),
+            );
+    }
+
+    let acl_card = container(acl_rows)
+        .width(Length::Fill)
+        .clip(true)
+        .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0));
+
+    let inheritance_card = container(
+        row![
+            column![
+                text(strings.ntfs_owner_label)
+                    .size(10)
+                    .font(FONT_MONO_BOLD)
+                    .color(palette.text_muted),
+                text(acl.owner.as_str())
+                    .size(12)
+                    .font(FONT_MONO)
+                    .color(palette.text_primary),
+            ]
+            .spacing(2)
+            .width(Length::FillPortion(1)),
+            row![
+                column![
+                    text(strings.ntfs_inheritance_label)
+                        .size(10)
+                        .font(FONT_MONO_BOLD)
+                        .color(palette.text_muted),
+                    text(if acl.inheritance_enabled {
+                        strings.ntfs_inheritance_on
+                    } else {
+                        strings.ntfs_inheritance_off
+                    })
+                    .size(11)
+                    .font(FONT_UI)
+                    .color(palette.text_primary),
+                ]
+                .spacing(2)
+                .width(Length::Fill),
+                button(
+                    text(if acl.inheritance_enabled { "ON" } else { "OFF" })
+                        .size(11)
+                        .font(FONT_MONO_BOLD),
+                )
+                .padding([4, 10])
+                .style(styles::tab_button(palette, acl.inheritance_enabled))
+                .on_press_maybe(
+                    (props.ntfs_edit_mode && editable)
+                        .then_some(Message::PropertiesNtfsToggleInheritance(win_id)),
+                ),
+            ]
+            .spacing(8)
+            .align_y(Center)
+            .width(Length::FillPortion(1)),
+        ]
+        .spacing(12)
+        .align_y(Center),
+    )
+    .width(Length::Fill)
+    .padding([10, 12])
+    .style(move |_| styles::panel_surface(palette.surface_low, palette.border, 10.0));
+
+    main_col.push(acl_card).push(inheritance_card).into()
+}
+
+fn ntfs_checkbox_box<'a>(
+    active: bool,
+    is_deny: bool,
+    is_inherited: bool,
+    palette: ThemePalette,
+) -> Element<'a, Message> {
+    let (bg, border, icon_color) = if !active {
+        (
+            palette.surface_lowest,
+            palette.border_strong,
+            palette.on_accent,
+        )
+    } else if is_deny {
+        (
+            palette.status_error,
+            palette.status_error,
+            palette.on_accent,
+        )
+    } else if is_inherited {
+        (
+            palette.surface_high,
+            palette.border_strong,
+            palette.text_muted,
+        )
+    } else {
+        (
+            palette.accent_primary,
+            palette.accent_primary,
+            palette.on_accent,
+        )
+    };
+    container(if active {
+        Element::from(icon_check().size(11).color(icon_color))
+    } else {
+        Space::new().width(11).height(11).into()
+    })
+    .width(Length::Fixed(18.0))
+    .height(Length::Fixed(18.0))
+    .align_x(Center)
+    .align_y(Center)
+    .style(move |_| container::Style {
+        background: Some(Background::Color(bg)),
+        border: Border {
+            color: border,
+            width: 1.0,
+            radius: Radius::from(4.0),
+        },
+        ..Default::default()
+    })
     .into()
 }
 

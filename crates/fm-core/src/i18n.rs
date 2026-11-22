@@ -474,6 +474,28 @@ pub struct Strings {
     pub prefs_startup_location_label: &'static str,
     pub startup_home: &'static str,
     pub startup_last_visited: &'static str,
+    pub ntfs_object_name: &'static str,
+    pub ntfs_principals_label: &'static str,
+    pub ntfs_edit_hint: &'static str,
+    pub ntfs_edit_active_hint: &'static str,
+    pub ntfs_edit_btn: &'static str,
+    pub ntfs_done_edit_btn: &'static str,
+    pub ntfs_add_btn: &'static str,
+    pub ntfs_remove_btn: &'static str,
+    pub ntfs_permissions_for: &'static str,
+    pub ntfs_allow_col: &'static str,
+    pub ntfs_deny_col: &'static str,
+    pub ntfs_full_control: &'static str,
+    pub ntfs_list_folder: &'static str,
+    pub ntfs_delete_modify: &'static str,
+    pub ntfs_inherited_badge: &'static str,
+    pub ntfs_explicit_badge: &'static str,
+    pub ntfs_owner_label: &'static str,
+    pub ntfs_inheritance_label: &'static str,
+    pub ntfs_inheritance_on: &'static str,
+    pub ntfs_inheritance_off: &'static str,
+    pub ntfs_add_placeholder: &'static str,
+    pub ntfs_loading: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -1124,6 +1146,28 @@ impl Strings {
         let prefs_startup_location_label = resolve("prefs-startup-location-label");
         let startup_home = resolve("startup-home");
         let startup_last_visited = resolve("startup-last-visited");
+        let ntfs_object_name = resolve("ntfs-object-name");
+        let ntfs_principals_label = resolve("ntfs-principals-label");
+        let ntfs_edit_hint = resolve("ntfs-edit-hint");
+        let ntfs_edit_active_hint = resolve("ntfs-edit-active-hint");
+        let ntfs_edit_btn = resolve("ntfs-edit-btn");
+        let ntfs_done_edit_btn = resolve("ntfs-done-edit-btn");
+        let ntfs_add_btn = resolve("ntfs-add-btn");
+        let ntfs_remove_btn = resolve("ntfs-remove-btn");
+        let ntfs_permissions_for = resolve("ntfs-permissions-for");
+        let ntfs_allow_col = resolve("ntfs-allow-col");
+        let ntfs_deny_col = resolve("ntfs-deny-col");
+        let ntfs_full_control = resolve("ntfs-full-control");
+        let ntfs_list_folder = resolve("ntfs-list-folder");
+        let ntfs_delete_modify = resolve("ntfs-delete-modify");
+        let ntfs_inherited_badge = resolve("ntfs-inherited-badge");
+        let ntfs_explicit_badge = resolve("ntfs-explicit-badge");
+        let ntfs_owner_label = resolve("ntfs-owner-label");
+        let ntfs_inheritance_label = resolve("ntfs-inheritance-label");
+        let ntfs_inheritance_on = resolve("ntfs-inheritance-on");
+        let ntfs_inheritance_off = resolve("ntfs-inheritance-off");
+        let ntfs_add_placeholder = resolve("ntfs-add-placeholder");
+        let ntfs_loading = resolve("ntfs-loading");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -1567,6 +1611,28 @@ impl Strings {
             prefs_startup_location_label,
             startup_home,
             startup_last_visited,
+            ntfs_object_name,
+            ntfs_principals_label,
+            ntfs_edit_hint,
+            ntfs_edit_active_hint,
+            ntfs_edit_btn,
+            ntfs_done_edit_btn,
+            ntfs_add_btn,
+            ntfs_remove_btn,
+            ntfs_permissions_for,
+            ntfs_allow_col,
+            ntfs_deny_col,
+            ntfs_full_control,
+            ntfs_list_folder,
+            ntfs_delete_modify,
+            ntfs_inherited_badge,
+            ntfs_explicit_badge,
+            ntfs_owner_label,
+            ntfs_inheritance_label,
+            ntfs_inheritance_on,
+            ntfs_inheritance_off,
+            ntfs_add_placeholder,
+            ntfs_loading,
         }
     }
 }

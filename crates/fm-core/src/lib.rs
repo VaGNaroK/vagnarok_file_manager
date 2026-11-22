@@ -33,14 +33,15 @@ pub use bulk_rename::{
 pub use domain::{
     ClipboardTransfer, ConflictPolicy, CopyMode, DirectorySnapshot, DirectoryTelemetry, DriveInfo,
     DriveKind, EntryExtraInfo, EntryId, EntryKind, FileEntry, FolderSummary, JobProgress, JobState,
-    LocalTimestampKind, LocaleFormatSpec, OpenWithApp, OpenWithAssociation, OpenWithCatalog,
-    PermissionsMeta, RecursiveSize, SelectedFileTelemetry, SortDirection, SortField, SortSpec,
-    SystemIconBucket, SystemIconKey, SystemIconPayload, SystemPlaceKind, UserPlaces,
-    VIRTUAL_RECENT_PATH, VIRTUAL_TRASH_PATH, ViewMode, VolumeSpace, compute_entry_id,
-    drive_needs_disambiguation, drive_short_device_name, format_bytes, format_grouped_u64,
-    is_mountable_disk_image, is_posix_executable, is_virtual_readonly_dir, is_virtual_recent_path,
-    is_virtual_trash_path, local_timestamp_kind, open_with_type_key, sort_drives_for_display,
-    suggest_shortcut_name, toggle_posix_executable_mode,
+    LocalTimestampKind, LocaleFormatSpec, NtfsPermissionBits, NtfsPermissionKind, NtfsPrincipalAcl,
+    NtfsSecurityInfo, OpenWithApp, OpenWithAssociation, OpenWithCatalog, PermissionsMeta,
+    RecursiveSize, SelectedFileTelemetry, SortDirection, SortField, SortSpec, SystemIconBucket,
+    SystemIconKey, SystemIconPayload, SystemPlaceKind, UserPlaces, VIRTUAL_RECENT_PATH,
+    VIRTUAL_TRASH_PATH, ViewMode, VolumeSpace, compute_entry_id, drive_needs_disambiguation,
+    drive_short_device_name, format_bytes, format_grouped_u64, is_mountable_disk_image,
+    is_posix_executable, is_virtual_readonly_dir, is_virtual_recent_path, is_virtual_trash_path,
+    local_timestamp_kind, open_with_type_key, sort_drives_for_display, suggest_shortcut_name,
+    toggle_posix_executable_mode,
 };
 pub use i18n::Strings;
 pub use state::{

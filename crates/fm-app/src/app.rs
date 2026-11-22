@@ -175,6 +175,12 @@ pub struct PropertiesWindowState {
     pub initial_hidden: bool,
     pub posix_mode_draft: Option<u32>,
     pub initial_posix_mode: Option<u32>,
+    pub ntfs_acl_loading: bool,
+    pub ntfs_acl_initial: Option<fm_core::NtfsSecurityInfo>,
+    pub ntfs_acl_draft: Option<fm_core::NtfsSecurityInfo>,
+    pub ntfs_selected_sid: Option<String>,
+    pub ntfs_edit_mode: bool,
+    pub ntfs_add_input: Option<String>,
     pub applying: bool,
     pub open_with_loading: bool,
     pub open_with_catalog: Option<OpenWithCatalog>,
@@ -210,6 +216,25 @@ impl PropertiesWindowState {
             || self.readonly_draft != self.initial_readonly
             || self.hidden_draft != self.initial_hidden
             || self.posix_mode_draft != self.initial_posix_mode
+            || self.ntfs_acl_draft != self.ntfs_acl_initial
+    }
+
+    pub fn revert_drafts(&mut self) {
+        self.draft_name = self.entry.name.to_string();
+        self.readonly_draft = self.initial_readonly;
+        self.hidden_draft = self.initial_hidden;
+        self.posix_mode_draft = self.initial_posix_mode;
+        self.ntfs_acl_draft = self.ntfs_acl_initial.clone();
+        self.ntfs_edit_mode = false;
+        self.ntfs_add_input = None;
+        if let Some(acl) = &self.ntfs_acl_draft
+            && self
+                .ntfs_selected_sid
+                .as_deref()
+                .is_none_or(|sid| !acl.principals.iter().any(|p| p.sid == sid))
+        {
+            self.ntfs_selected_sid = acl.principals.first().map(|p| p.sid.clone());
+        }
     }
 }
 
@@ -654,6 +679,28 @@ pub enum Message {
     PropertiesToggleHidden(window::Id),
     PropertiesTogglePosixBit(window::Id, u32),
     PropertiesToggleExecutable(window::Id),
+    PropertiesCancel(window::Id),
+    PropertiesNtfsAclLoaded {
+        window_id: window::Id,
+        path: PathBuf,
+        result: Result<Option<fm_core::NtfsSecurityInfo>, FsError>,
+    },
+    PropertiesNtfsSelectPrincipal(window::Id, String),
+    PropertiesNtfsToggleEditMode(window::Id),
+    PropertiesNtfsToggleBit {
+        window_id: window::Id,
+        is_allow: bool,
+        kind: fm_core::NtfsPermissionKind,
+    },
+    PropertiesNtfsToggleInheritance(window::Id),
+    PropertiesNtfsOpenAddPrincipal(window::Id),
+    PropertiesNtfsAddInputChanged(window::Id, String),
+    PropertiesNtfsSubmitAddPrincipal(window::Id),
+    PropertiesNtfsAccountResolved {
+        window_id: window::Id,
+        result: Result<fm_core::NtfsPrincipalAcl, FsError>,
+    },
+    PropertiesNtfsRemovePrincipal(window::Id),
     ToggleEntryExecutable {
         path: PathBuf,
         next_mode: u32,
@@ -3595,6 +3642,9 @@ impl App {
                 if tab == PropertiesTab::OpenWith {
                     return self.maybe_load_open_with_catalog(window_id);
                 }
+                if tab == PropertiesTab::Permissions {
+                    return self.maybe_load_ntfs_acl(window_id);
+                }
                 Task::none()
             }
             Message::PropertiesNameChanged(window_id, val) => {
@@ -3673,6 +3723,162 @@ impl App {
                 {
                     *mode = fm_core::toggle_posix_executable_mode(*mode);
                     props.readonly_draft = (*mode & 0o222) == 0;
+                }
+                Task::none()
+            }
+            Message::PropertiesCancel(window_id) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id) {
+                    if props.applying {
+                        return Task::none();
+                    }
+                    if props.is_dirty() {
+                        props.revert_drafts();
+                        return Task::none();
+                    }
+                }
+                self.update(Message::ClosePropertiesWindow(window_id))
+            }
+            Message::PropertiesNtfsAclLoaded {
+                window_id,
+                path,
+                result,
+            } => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && props.entry.path == path
+                {
+                    props.ntfs_acl_loading = false;
+                    match result {
+                        Ok(Some(info)) => {
+                            props.ntfs_selected_sid =
+                                info.principals.first().map(|p| p.sid.clone());
+                            props.ntfs_acl_initial = Some(info.clone());
+                            props.ntfs_acl_draft = Some(info);
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            self.status_notice = Some(err.to_string());
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::PropertiesNtfsSelectPrincipal(window_id, sid) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id) {
+                    props.ntfs_selected_sid = Some(sid);
+                }
+                Task::none()
+            }
+            Message::PropertiesNtfsToggleEditMode(window_id) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && !props.applying
+                    && !props.is_archive()
+                {
+                    props.ntfs_edit_mode = !props.ntfs_edit_mode;
+                    if !props.ntfs_edit_mode {
+                        props.ntfs_add_input = None;
+                    }
+                }
+                Task::none()
+            }
+            Message::PropertiesNtfsToggleBit {
+                window_id,
+                is_allow,
+                kind,
+            } => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && props.ntfs_edit_mode
+                    && !props.applying
+                    && !props.is_archive()
+                    && let Some(sid) = props.ntfs_selected_sid.clone()
+                    && let Some(acl) = &mut props.ntfs_acl_draft
+                {
+                    acl.toggle_bit(&sid, is_allow, kind);
+                }
+                Task::none()
+            }
+            Message::PropertiesNtfsToggleInheritance(window_id) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && props.ntfs_edit_mode
+                    && !props.applying
+                    && !props.is_archive()
+                    && let Some(acl) = &mut props.ntfs_acl_draft
+                {
+                    acl.inheritance_enabled = !acl.inheritance_enabled;
+                    if !acl.inheritance_enabled {
+                        for p in &mut acl.principals {
+                            p.is_inherited = false;
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::PropertiesNtfsOpenAddPrincipal(window_id) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && props.ntfs_edit_mode
+                    && !props.applying
+                {
+                    props.ntfs_add_input = if props.ntfs_add_input.is_some() {
+                        None
+                    } else {
+                        Some(String::new())
+                    };
+                }
+                Task::none()
+            }
+            Message::PropertiesNtfsAddInputChanged(window_id, val) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && let Some(draft) = &mut props.ntfs_add_input
+                {
+                    *draft = val;
+                }
+                Task::none()
+            }
+            Message::PropertiesNtfsSubmitAddPrincipal(window_id) => {
+                let query = self
+                    .properties_windows
+                    .get(&window_id)
+                    .and_then(|p| p.ntfs_add_input.as_deref())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToOwned::to_owned);
+                let Some(name) = query else {
+                    return Task::none();
+                };
+                Task::perform(fm_fs::lookup_ntfs_account(name), move |result| {
+                    Message::PropertiesNtfsAccountResolved { window_id, result }
+                })
+            }
+            Message::PropertiesNtfsAccountResolved { window_id, result } => {
+                match result {
+                    Ok(principal) => {
+                        if let Some(props) = self.properties_windows.get_mut(&window_id)
+                            && let Some(acl) = &mut props.ntfs_acl_draft
+                        {
+                            let sid = principal.sid.clone();
+                            if !acl.principals.iter().any(|p| p.sid == sid) {
+                                acl.principals.push(principal);
+                            }
+                            props.ntfs_selected_sid = Some(sid);
+                            props.ntfs_add_input = None;
+                        }
+                    }
+                    Err(err) => {
+                        self.status_notice = Some(err.to_string());
+                    }
+                }
+                Task::none()
+            }
+            Message::PropertiesNtfsRemovePrincipal(window_id) => {
+                if let Some(props) = self.properties_windows.get_mut(&window_id)
+                    && props.ntfs_edit_mode
+                    && !props.applying
+                    && let Some(sid) = props.ntfs_selected_sid.clone()
+                    && let Some(acl) = &mut props.ntfs_acl_draft
+                {
+                    acl.principals.retain(|p| p.sid != sid || p.is_inherited);
+                    if !acl.principals.iter().any(|p| p.sid == sid) {
+                        props.ntfs_selected_sid = acl.principals.first().map(|p| p.sid.clone());
+                    }
                 }
                 Task::none()
             }
@@ -3759,6 +3965,9 @@ impl App {
                 let posix_mode = (props.posix_mode_draft != props.initial_posix_mode)
                     .then_some(props.posix_mode_draft)
                     .flatten();
+                let ntfs_acl = (props.ntfs_acl_draft != props.ntfs_acl_initial)
+                    .then_some(props.ntfs_acl_draft.clone())
+                    .flatten();
                 props.applying = true;
 
                 let vfs = Arc::clone(&self.vfs);
@@ -3794,6 +4003,13 @@ impl App {
                             {
                                 return (original_path, Err(err));
                             }
+                        }
+
+                        if let Some(acl_info) = ntfs_acl
+                            && let Err(err) =
+                                fm_fs::apply_ntfs_security(target_path.clone(), acl_info).await
+                        {
+                            return (original_path, Err(err));
                         }
 
                         match fm_fs::stat_entry(target_path.clone()).await {
@@ -3838,8 +4054,13 @@ impl App {
                         {
                             cancel.cancel();
                         }
-                        window::close(window_id)
+                        if window_id != self.main_window_id {
+                            window::close(window_id)
+                        } else {
+                            Task::none()
+                        }
                     } else {
+                        let mut reload_acl = Task::none();
                         if let Some(props) = self.properties_windows.get_mut(&window_id)
                             && props.entry.path == original_path
                         {
@@ -3859,11 +4080,23 @@ impl App {
                             props.initial_readonly = ro;
                             props.posix_mode_draft = pm;
                             props.initial_posix_mode = pm;
+                            props.ntfs_edit_mode = false;
+                            props.ntfs_add_input = None;
+                            if props.ntfs_acl_draft.is_some() {
+                                props.ntfs_acl_initial = props.ntfs_acl_draft.clone();
+                            }
                             props.entry = updated_entry;
                             props.extra = Some(updated_extra);
                             props.applying = false;
+                            if props.active_tab == PropertiesTab::Permissions
+                                && props.posix_mode_draft.is_none()
+                            {
+                                props.ntfs_acl_draft = None;
+                                props.ntfs_acl_initial = None;
+                                reload_acl = self.maybe_load_ntfs_acl(window_id);
+                            }
                         }
-                        Task::none()
+                        reload_acl
                     };
                     self.pending_select_path = Some(select_path);
                     let refresh_task = self.update(Message::RefreshActiveTab);
@@ -5244,6 +5477,12 @@ impl App {
                 initial_hidden: false,
                 posix_mode_draft: None,
                 initial_posix_mode: None,
+                ntfs_acl_loading: false,
+                ntfs_acl_initial: None,
+                ntfs_acl_draft: None,
+                ntfs_selected_sid: None,
+                ntfs_edit_mode: false,
+                ntfs_add_input: None,
                 applying: false,
                 open_with_loading: false,
                 open_with_catalog: None,
@@ -5448,6 +5687,12 @@ impl App {
                 initial_hidden,
                 posix_mode_draft: initial_posix_mode,
                 initial_posix_mode,
+                ntfs_acl_loading: false,
+                ntfs_acl_initial: None,
+                ntfs_acl_draft: None,
+                ntfs_selected_sid: None,
+                ntfs_edit_mode: false,
+                ntfs_add_input: None,
                 applying: false,
                 open_with_loading: false,
                 open_with_catalog: None,
@@ -5459,8 +5704,37 @@ impl App {
         );
         if active_tab == PropertiesTab::OpenWith {
             tasks.push(self.maybe_load_open_with_catalog(win_id));
+        } else if active_tab == PropertiesTab::Permissions {
+            tasks.push(self.maybe_load_ntfs_acl(win_id));
         }
         Task::batch(tasks)
+    }
+
+    fn maybe_load_ntfs_acl(&mut self, window_id: window::Id) -> Task<Message> {
+        let Some(props) = self.properties_windows.get_mut(&window_id) else {
+            return Task::none();
+        };
+        if props.is_multi()
+            || props.is_archive()
+            || props.posix_mode_draft.is_some()
+            || props.ntfs_acl_loading
+            || props.ntfs_acl_draft.is_some()
+        {
+            return Task::none();
+        }
+        props.ntfs_acl_loading = true;
+        let path = props.entry.path.clone();
+        Task::perform(
+            async move {
+                let result = fm_fs::read_ntfs_security(path.clone()).await;
+                (path, result)
+            },
+            move |(path, result)| Message::PropertiesNtfsAclLoaded {
+                window_id,
+                path,
+                result,
+            },
+        )
     }
 
     fn resolve_open_with_default_for_path(

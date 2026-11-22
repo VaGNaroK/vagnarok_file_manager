@@ -31,6 +31,8 @@ use linux as platform;
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
+mod windows_acl;
+#[cfg(target_os = "windows")]
 use windows as platform;
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
@@ -815,6 +817,77 @@ pub async fn apply_entry_properties(path: PathBuf, patch: PropertyPatch) -> Resu
             path: PathBuf::new(),
             message: err.to_string(),
         })?
+}
+
+/// Lê a ACL NTFS (usuários/grupos, permissões Permitir/Negar, proprietário e herança) no Windows.
+/// Em sistemas não-Windows retorna `Ok(None)`.
+pub async fn read_ntfs_security(
+    path: PathBuf,
+) -> Result<Option<fm_core::NtfsSecurityInfo>, FsError> {
+    #[cfg(target_os = "windows")]
+    {
+        let err_path = path.clone();
+        tokio::task::spawn_blocking(move || {
+            windows_acl::read_ntfs_security_blocking(&path).map(Some)
+        })
+        .await
+        .map_err(|err| FsError::Io {
+            path: err_path,
+            message: err.to_string(),
+        })?
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        Ok(None)
+    }
+}
+
+/// Aplica a ACL NTFS e herança editadas no Windows. Em sistemas não-Windows é no-op.
+pub async fn apply_ntfs_security(
+    path: PathBuf,
+    info: fm_core::NtfsSecurityInfo,
+) -> Result<(), FsError> {
+    #[cfg(target_os = "windows")]
+    {
+        let err_path = path.clone();
+        tokio::task::spawn_blocking(move || windows_acl::apply_ntfs_security_blocking(&path, &info))
+            .await
+            .map_err(|err| FsError::Io {
+                path: err_path,
+                message: err.to_string(),
+            })?
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (path, info);
+        Ok(())
+    }
+}
+
+/// Resolve um nome de conta/grupo do Windows (ex.: `Usuários`, `Everyone`) para adicionar à ACL NTFS.
+pub async fn lookup_ntfs_account(
+    account_name: String,
+) -> Result<fm_core::NtfsPrincipalAcl, FsError> {
+    #[cfg(target_os = "windows")]
+    {
+        tokio::task::spawn_blocking(move || {
+            windows_acl::lookup_ntfs_account_blocking(&account_name)
+        })
+        .await
+        .map_err(|err| FsError::Io {
+            path: PathBuf::new(),
+            message: err.to_string(),
+        })?
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = account_name;
+        Err(FsError::Io {
+            path: PathBuf::new(),
+            message: "NTFS ACL disponível apenas no Windows".to_owned(),
+        })
+    }
 }
 
 /// Consulta metadados atualizados de um único arquivo/diretório no sistema local.
