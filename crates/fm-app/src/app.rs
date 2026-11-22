@@ -641,6 +641,7 @@ pub enum Message {
         key: SystemIconKey,
         bucket: SystemIconBucket,
         rgba: Option<Arc<ThumbnailRgba>>,
+        cancelled: bool,
     },
     ToggleDirsFirst,
     ToggleWindowDecorations,
@@ -2851,6 +2852,7 @@ impl App {
                 key,
                 bucket,
                 rgba,
+                cancelled,
             } => {
                 self.in_flight_system_icons.remove(&(key.clone(), bucket));
                 if generation != self.system_icon_generation {
@@ -2858,12 +2860,17 @@ impl App {
                 }
                 if let Some(thumb) = rgba {
                     self.system_icon_misses.remove(&(key.clone(), bucket));
-                    if self.gpu_system_icons.len() >= fm_preview::DEFAULT_ICON_CACHE_CAPACITY {
+                    let cleared =
+                        self.gpu_system_icons.len() >= fm_preview::DEFAULT_ICON_CACHE_CAPACITY;
+                    if cleared {
                         self.gpu_system_icons.clear();
                     }
                     self.gpu_system_icons
                         .insert((key, bucket), rgba_arc_to_handle(thumb));
-                } else {
+                    if cleared {
+                        return self.queue_visible_system_icons();
+                    }
+                } else if !cancelled {
                     self.system_icon_misses.insert((key, bucket));
                 }
                 Task::none()
@@ -3252,6 +3259,9 @@ impl App {
                     IconThemeMode::Bundled => IconThemeMode::HostSystem,
                     IconThemeMode::HostSystem => IconThemeMode::Bundled,
                 };
+                if self.config.icon_theme_mode == IconThemeMode::HostSystem {
+                    self.system_icon_misses.clear();
+                }
                 let persist = self.persist_config_task();
                 let queue = self.queue_visible_system_icons();
                 Task::batch([persist, queue])
@@ -6905,11 +6915,9 @@ impl App {
         }
 
         let generation = self.system_icon_generation;
-        let cancel = self
-            .tab_cancels
-            .get(&self.active_tab_id())
-            .cloned()
-            .unwrap_or_default();
+        // Ícones do sistema são globais (compartilhados entre todas as abas/painéis); não devem
+        // ser cancelados ao navegar entre pastas para evitar envenenar `system_icon_misses`.
+        let cancel = CancellationToken::new();
 
         let mut tasks = Vec::new();
         for (key, bucket) in needed {
@@ -6937,13 +6945,15 @@ impl App {
                     .await
                     .ok()
                     .flatten();
-                    (generation, key, bucket, rgba)
+                    let cancelled = cancel.is_cancelled();
+                    (generation, key, bucket, rgba, cancelled)
                 },
-                |(generation, key, bucket, rgba)| Message::SystemIconReady {
+                |(generation, key, bucket, rgba, cancelled)| Message::SystemIconReady {
                     generation,
                     key,
                     bucket,
                     rgba,
+                    cancelled,
                 },
             ));
         }
@@ -8965,5 +8975,32 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&existing_dir);
+    }
+
+    #[test]
+    fn host_system_icons_resolve_for_directory_and_generic_file() {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        for (key, bucket) in [
+            (
+                fm_core::SystemIconKey::Directory,
+                fm_core::SystemIconBucket::Large64,
+            ),
+            (
+                fm_core::SystemIconKey::Directory,
+                fm_core::SystemIconBucket::Small24,
+            ),
+            (
+                fm_core::SystemIconKey::GenericFile,
+                fm_core::SystemIconBucket::Large64,
+            ),
+        ] {
+            if let Some(payload) = fm_fs::resolve_system_icon(&key, bucket) {
+                let rgba = fm_preview::rasterize_system_icon(payload, bucket, &cancel);
+                assert!(
+                    rgba.is_some(),
+                    "falha ao rasterizar ícone do sistema para {key:?} ({bucket:?})"
+                );
+            }
+        }
     }
 }

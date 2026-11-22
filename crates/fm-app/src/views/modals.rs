@@ -33,7 +33,7 @@ use crate::app::{
 use crate::archive_jobs::ArchiveUiMsg;
 use crate::duplicate_finder::DuplicateFinderMsg;
 use crate::views::{
-    entry_icon, modal_overlay_backdrop, modal_overlay_backdrop_at, sanitize_single_line,
+    modal_overlay_backdrop, modal_overlay_backdrop_at, render_entry_icon, sanitize_single_line,
     with_tooltip, wrap_text_input_context_menu,
 };
 
@@ -520,7 +520,9 @@ pub fn properties_window_view<'a>(
 
     // 3. Conteúdo da aba ativa
     let tab_body: Element<'a, Message> = match props.active_tab {
-        PropertiesTab::General => properties_general_tab(win_id, props, palette, strings, is_dir),
+        PropertiesTab::General => {
+            properties_general_tab(app, win_id, props, palette, strings, is_dir)
+        }
         PropertiesTab::Security => properties_security_tab(props, palette, strings, is_dir),
         PropertiesTab::History => properties_history_tab(props, palette, strings),
         PropertiesTab::Metadata => properties_metadata_tab(props, palette, strings, is_dir),
@@ -665,6 +667,7 @@ fn grip_dot<'a>(palette: ThemePalette) -> Element<'a, Message> {
 }
 
 fn properties_general_tab<'a>(
+    app: &'a App,
     win_id: window::Id,
     props: &'a PropertiesWindowState,
     palette: ThemePalette,
@@ -690,7 +693,7 @@ fn properties_general_tab<'a>(
                 .into()
         }
     } else {
-        entry_icon(entry, palette, 28.0).0.into()
+        render_entry_icon(app, entry, palette, 28.0)
     };
 
     // Caixa Hero (ícone 52x52 + nome / resumo de seleção)
