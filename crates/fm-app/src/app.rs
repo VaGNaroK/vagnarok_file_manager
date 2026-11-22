@@ -1936,9 +1936,7 @@ impl App {
                 self.context_menu = None;
                 let drag_info = self.pane_tab_mut(pane).and_then(|tab| {
                     let entry = tab.visible_entries.get(index)?;
-                    if fm_core::is_virtual_trash_path(&entry.path)
-                        || fm_fs::archive::is_inside_archive_path(&entry.path)
-                    {
+                    if fm_core::is_virtual_trash_path(&entry.path) {
                         return None;
                     }
                     if !tab.selection.selected_ids.contains(&entry.id) {
@@ -5949,7 +5947,12 @@ impl App {
     }
 
     pub(crate) fn current_drag_mode(&self) -> CopyMode {
-        if self.current_modifiers.control() {
+        let from_archive = self.entry_drag.as_ref().is_some_and(|d| {
+            d.paths
+                .iter()
+                .any(|p| fm_fs::archive::is_inside_archive_path(p))
+        });
+        if self.current_modifiers.control() || from_archive {
             CopyMode::Copy
         } else {
             CopyMode::Move
@@ -5997,6 +6000,33 @@ impl App {
         dest_dir: PathBuf,
         policy: ConflictPolicy,
     ) -> Task<Message> {
+        let mut archive_groups: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+        let mut normal_sources: Vec<PathBuf> = Vec::new();
+        for src in sources {
+            if let Some((arch_path, inner_rel, _)) = fm_fs::archive::split_archive_path(&src)
+                && !inner_rel.is_empty()
+            {
+                archive_groups.entry(arch_path).or_default().push(inner_rel);
+            } else {
+                normal_sources.push(src);
+            }
+        }
+        let mut archive_tasks = Vec::new();
+        for (arch_path, inner_paths) in archive_groups {
+            archive_tasks.push(crate::archive_jobs::dispatch_extract_entries_job(
+                self,
+                arch_path,
+                inner_paths,
+                dest_dir.clone(),
+                policy,
+                None,
+            ));
+        }
+        if normal_sources.is_empty() {
+            return Task::batch(archive_tasks);
+        }
+        let sources = normal_sources;
+
         if let Some(prev) = self.transfer_cancel.take() {
             prev.cancel();
         }
@@ -7736,11 +7766,7 @@ pub(crate) fn collect_drag_paths(
     let paths: Vec<PathBuf> = if selected_ids.contains(&clicked.id) {
         visible_entries
             .iter()
-            .filter(|e| {
-                selected_ids.contains(&e.id)
-                    && !fm_core::is_virtual_trash_path(&e.path)
-                    && !fm_fs::archive::is_inside_archive_path(&e.path)
-            })
+            .filter(|e| selected_ids.contains(&e.id) && !fm_core::is_virtual_trash_path(&e.path))
             .map(|e| e.path.clone())
             .collect()
     } else {
@@ -7769,7 +7795,9 @@ pub(crate) fn resolve_internal_drop_destination(
         }
     };
 
-    if fm_core::is_virtual_readonly_dir(&dest) || fm_fs::archive::is_inside_archive_path(&dest) {
+    if fm_core::is_virtual_readonly_dir(&dest)
+        || fm_fs::archive::split_archive_path(&dest).is_some()
+    {
         return None;
     }
 

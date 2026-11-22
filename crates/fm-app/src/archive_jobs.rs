@@ -4,7 +4,7 @@ use fm_core::{
     ArchiveFormat, ArchiveJobKind, ArchiveJobProgress, CompressionLevel, ConflictPolicy,
     ExtractTargetMode, FsError, JobState, is_virtual_trash_path, suggest_archive_base_name,
 };
-use fm_fs::{run_compress_job, run_extract_job};
+use fm_fs::{run_compress_job, run_extract_entries_job, run_extract_job};
 use iced::futures::SinkExt;
 use iced::widget::operation;
 use iced::{Point, Size, Task, stream};
@@ -18,6 +18,13 @@ pub const COMPRESS_MODAL_W: f32 = 540.0;
 pub const COMPRESS_MODAL_EST_H: f32 = 430.0;
 
 #[derive(Debug, Clone)]
+pub struct ArchiveEntriesSelection {
+    pub inner_paths: Vec<String>,
+    pub dest_dir: PathBuf,
+    pub conflict: ConflictPolicy,
+}
+
+#[derive(Debug, Clone)]
 pub enum ArchiveUiMsg {
     OpenCompressDialog,
     QuickAddSevenZ,
@@ -29,6 +36,7 @@ pub enum ArchiveUiMsg {
         job_id: u64,
         archive_path: PathBuf,
         mode: ExtractTargetMode,
+        selection: Option<ArchiveEntriesSelection>,
         wrong_password: bool,
     },
     PasswordChanged(String),
@@ -53,6 +61,7 @@ pub enum ArchiveUiMsg {
 pub struct ArchivePasswordModalState {
     pub archive_path: PathBuf,
     pub mode: ExtractTargetMode,
+    pub selection: Option<ArchiveEntriesSelection>,
     pub password: String,
     pub show_password: bool,
     pub wrong_password: bool,
@@ -195,6 +204,7 @@ pub fn handle_archive_msg(app: &mut App, msg: ArchiveUiMsg) -> Task<Message> {
             job_id,
             archive_path,
             mode,
+            selection,
             wrong_password,
         } => {
             app.archive_jobs.remove(&job_id);
@@ -208,6 +218,7 @@ pub fn handle_archive_msg(app: &mut App, msg: ArchiveUiMsg) -> Task<Message> {
             app.archive_password_modal = Some(ArchivePasswordModalState {
                 archive_path,
                 mode,
+                selection,
                 password: String::new(),
                 show_password: false,
                 wrong_password,
@@ -235,7 +246,18 @@ pub fn handle_archive_msg(app: &mut App, msg: ArchiveUiMsg) -> Task<Message> {
                 app.archive_password_modal = Some(modal);
                 return operation::focus(archive_password_input_id());
             }
-            dispatch_extract_job(app, modal.archive_path, modal.mode, Some(modal.password))
+            if let Some(sel) = modal.selection {
+                dispatch_extract_entries_job(
+                    app,
+                    modal.archive_path,
+                    sel.inner_paths,
+                    sel.dest_dir,
+                    sel.conflict,
+                    Some(modal.password),
+                )
+            } else {
+                dispatch_extract_job(app, modal.archive_path, modal.mode, Some(modal.password))
+            }
         }
         ArchiveUiMsg::ClosePasswordModal => {
             app.archive_password_modal = None;
@@ -389,10 +411,12 @@ pub fn handle_archive_msg(app: &mut App, msg: ArchiveUiMsg) -> Task<Message> {
                         ArchiveJobKind::Extract { .. } => app.strings().arch_done_extract,
                     };
                     app.status_notice = Some(format!("{done_prefix}: {}", progress.title));
-                    if app
-                        .current_tab()
-                        .is_some_and(|t| t.current_path == progress.dest_dir)
-                    {
+                    let dest_visible = app
+                        .tabs
+                        .iter()
+                        .chain(app.split_view.iter().map(|s| &s.right_tab))
+                        .any(|t| t.current_path == progress.dest_dir);
+                    if dest_visible {
                         app.pending_select_path = Some(progress.output_path.clone());
                     }
                     app.reload_matching_dir_tabs(&progress.dest_dir)
@@ -516,6 +540,7 @@ fn dispatch_extract_job(
                         job_id,
                         archive_path: archive_for_prompt,
                         mode,
+                        selection: None,
                         wrong_password: false,
                     }))
                     .await;
@@ -526,6 +551,106 @@ fn dispatch_extract_job(
                         job_id,
                         archive_path: archive_for_prompt,
                         mode,
+                        selection: None,
+                        wrong_password: true,
+                    }))
+                    .await;
+            }
+            _ => {}
+        }
+    });
+    Task::run(worker_stream, std::convert::identity)
+}
+
+/// Extrai seletivamente entradas internas (`inner_paths`) de um arquivo compactado aberto para `dest_dir`.
+pub fn dispatch_extract_entries_job(
+    app: &mut App,
+    archive_path: PathBuf,
+    inner_paths: Vec<String>,
+    dest_dir: PathBuf,
+    conflict: ConflictPolicy,
+    password: Option<String>,
+) -> Task<Message> {
+    if inner_paths.is_empty() {
+        return Task::none();
+    }
+    let title = archive_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let job_id = app.next_job_id;
+    app.next_job_id = app.next_job_id.wrapping_add(1).max(1);
+    let cancel = CancellationToken::new();
+
+    let initial = ArchiveJobProgress {
+        job_id,
+        kind: ArchiveJobKind::Extract {
+            mode: ExtractTargetMode::Here,
+        },
+        title: title.into(),
+        bytes_done: 0,
+        bytes_total: 0,
+        items_done: 0,
+        items_total: inner_paths.len(),
+        current_item: "...".into(),
+        dest_dir: dest_dir.clone(),
+        output_path: dest_dir.clone(),
+        state: JobState::Running,
+    };
+    app.archive_jobs.insert(
+        job_id,
+        ArchiveJobRuntime {
+            progress: initial,
+            cancel: cancel.clone(),
+        },
+    );
+
+    let archive_for_prompt = archive_path.clone();
+    let sel_for_prompt = ArchiveEntriesSelection {
+        inner_paths: inner_paths.clone(),
+        dest_dir: dest_dir.clone(),
+        conflict,
+    };
+    let worker_stream = stream::channel(32, async move |mut output| {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = tokio::spawn(async move {
+            run_extract_entries_job(
+                job_id,
+                archive_path,
+                inner_paths,
+                dest_dir,
+                conflict,
+                password,
+                cancel,
+                tx,
+            )
+            .await
+        });
+        while let Some(progress) = rx.recv().await {
+            let _ = output
+                .send(Message::Archive(ArchiveUiMsg::Progress(progress)))
+                .await;
+        }
+        match handle.await {
+            Ok(Err(FsError::PasswordRequired(_))) => {
+                let _ = output
+                    .send(Message::Archive(ArchiveUiMsg::ExtractNeedsPassword {
+                        job_id,
+                        archive_path: archive_for_prompt,
+                        mode: ExtractTargetMode::Here,
+                        selection: Some(sel_for_prompt),
+                        wrong_password: false,
+                    }))
+                    .await;
+            }
+            Ok(Err(FsError::InvalidPassword(_))) => {
+                let _ = output
+                    .send(Message::Archive(ArchiveUiMsg::ExtractNeedsPassword {
+                        job_id,
+                        archive_path: archive_for_prompt,
+                        mode: ExtractTargetMode::Here,
+                        selection: Some(sel_for_prompt),
                         wrong_password: true,
                     }))
                     .await;

@@ -94,6 +94,37 @@ pub async fn run_extract_job(
     })?
 }
 
+/// Extrai apenas um subconjunto de entradas internas (`inner_paths`) de `archive_path` para `dest_dir`.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_extract_entries_job(
+    job_id: u64,
+    archive_path: PathBuf,
+    inner_paths: Vec<String>,
+    dest_dir: PathBuf,
+    conflict: ConflictPolicy,
+    password: Option<String>,
+    cancel: CancellationToken,
+    progress_tx: UnboundedSender<ArchiveJobProgress>,
+) -> Result<PathBuf, FsError> {
+    tokio::task::spawn_blocking(move || {
+        extract_entries_blocking(
+            job_id,
+            &archive_path,
+            &inner_paths,
+            &dest_dir,
+            conflict,
+            password.as_deref(),
+            &cancel,
+            &progress_tx,
+        )
+    })
+    .await
+    .map_err(|err| FsError::Io {
+        path: PathBuf::new(),
+        message: format!("falha na tarefa de extração seletiva: {err}"),
+    })?
+}
+
 struct TempFileGuard {
     path: PathBuf,
     armed: bool,
@@ -737,14 +768,42 @@ fn extract_blocking(
     tracker.emit_force(JobState::Running);
 
     let res = match kind {
-        ArchiveKind::Zip => extract_zip(archive_path, &dest_root, conflict, password, &mut tracker),
-        ArchiveKind::Tar => extract_tar(archive_path, &dest_root, false, conflict, &mut tracker),
-        ArchiveKind::TarGz => extract_tar(archive_path, &dest_root, true, conflict, &mut tracker),
-        ArchiveKind::SevenZ => {
-            extract_sevenz(archive_path, &dest_root, conflict, password, &mut tracker)
+        ArchiveKind::Zip => extract_zip(
+            archive_path,
+            &dest_root,
+            None,
+            conflict,
+            password,
+            &mut tracker,
+        ),
+        ArchiveKind::Tar => extract_tar(
+            archive_path,
+            &dest_root,
+            None,
+            false,
+            conflict,
+            &mut tracker,
+        ),
+        ArchiveKind::TarGz => {
+            extract_tar(archive_path, &dest_root, None, true, conflict, &mut tracker)
         }
+        ArchiveKind::SevenZ => extract_sevenz(
+            archive_path,
+            &dest_root,
+            None,
+            conflict,
+            password,
+            &mut tracker,
+        ),
         #[cfg(feature = "rar-extract")]
-        ArchiveKind::Rar => extract_rar(archive_path, &dest_root, conflict, password, &mut tracker),
+        ArchiveKind::Rar => extract_rar(
+            archive_path,
+            &dest_root,
+            None,
+            conflict,
+            password,
+            &mut tracker,
+        ),
     };
 
     match res {
@@ -772,6 +831,167 @@ fn extract_blocking(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn extract_entries_blocking(
+    job_id: u64,
+    archive_path: &Path,
+    inner_paths: &[String],
+    dest_dir: &Path,
+    conflict: ConflictPolicy,
+    password: Option<&str>,
+    cancel: &CancellationToken,
+    tx: &UnboundedSender<ArchiveJobProgress>,
+) -> Result<PathBuf, FsError> {
+    if cancel.is_cancelled() {
+        return Err(FsError::Cancelled);
+    }
+    let kind = detect_archive_kind(archive_path).ok_or_else(|| FsError::Io {
+        path: archive_path.to_path_buf(),
+        message: "formato de arquivo não suportado para extração".to_owned(),
+    })?;
+
+    let archive_name = archive_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let output_path = if inner_paths.len() == 1
+        && let Some(first_leaf) = normalize_inner_archive_path(&inner_paths[0])
+            .rsplit('/')
+            .next()
+            .filter(|s| !s.is_empty())
+    {
+        dest_dir.join(first_leaf)
+    } else {
+        dest_dir.to_path_buf()
+    };
+
+    let mut tracker = ProgressTracker::new(
+        job_id,
+        ArchiveJobKind::Extract {
+            mode: ExtractTargetMode::Here,
+        },
+        archive_name,
+        dest_dir.to_path_buf(),
+        output_path.clone(),
+        cancel,
+        tx,
+    );
+    tracker.emit_force(JobState::Running);
+
+    let filter = Some(inner_paths);
+    let res = match kind {
+        ArchiveKind::Zip => extract_zip(
+            archive_path,
+            dest_dir,
+            filter,
+            conflict,
+            password,
+            &mut tracker,
+        ),
+        ArchiveKind::Tar => extract_tar(
+            archive_path,
+            dest_dir,
+            filter,
+            false,
+            conflict,
+            &mut tracker,
+        ),
+        ArchiveKind::TarGz => {
+            extract_tar(archive_path, dest_dir, filter, true, conflict, &mut tracker)
+        }
+        ArchiveKind::SevenZ => extract_sevenz(
+            archive_path,
+            dest_dir,
+            filter,
+            conflict,
+            password,
+            &mut tracker,
+        ),
+        #[cfg(feature = "rar-extract")]
+        ArchiveKind::Rar => extract_rar(
+            archive_path,
+            dest_dir,
+            filter,
+            conflict,
+            password,
+            &mut tracker,
+        ),
+    };
+
+    match res {
+        Ok(()) => {
+            tracker.emit_force(JobState::Completed);
+            Ok(output_path)
+        }
+        Err(FsError::Cancelled) => {
+            tracker.emit_force(JobState::Cancelled);
+            Err(FsError::Cancelled)
+        }
+        Err(err @ (FsError::PasswordRequired(_) | FsError::InvalidPassword(_))) => Err(err),
+        Err(err) => {
+            tracker.emit_force(JobState::Failed(err.to_string()));
+            Err(err)
+        }
+    }
+}
+
+fn normalize_inner_archive_path(raw: &str) -> String {
+    let trimmed = raw
+        .trim_matches('/')
+        .trim_start_matches("./")
+        .replace('\\', "/");
+    trimmed
+        .split('/')
+        .filter(|s| !s.is_empty() && *s != ".")
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Mapeia o nome bruto de uma entrada do arquivo compactado para o caminho relativo de destino
+/// quando ela coincide com um dos caminhos selecionados (`selected_inner_paths`), removendo o prefixo pai.
+pub(crate) fn map_selected_archive_entry_rel_path(
+    entry_raw_name: &str,
+    selected_inner_paths: &[String],
+) -> Option<PathBuf> {
+    let norm = normalize_inner_archive_path(entry_raw_name);
+    if norm.is_empty() {
+        return None;
+    }
+    for target in selected_inner_paths {
+        let target_norm = normalize_inner_archive_path(target);
+        if target_norm.is_empty() {
+            continue;
+        }
+        let matches = norm == target_norm
+            || norm
+                .strip_prefix(&target_norm)
+                .is_some_and(|rest| rest.starts_with('/'));
+        if !matches {
+            continue;
+        }
+        let mapped = match target_norm.rsplit_once('/') {
+            Some((parent, _)) if !parent.is_empty() => norm
+                .strip_prefix(parent)
+                .and_then(|r| r.strip_prefix('/'))
+                .unwrap_or(&norm),
+            _ => norm.as_str(),
+        };
+        return sanitize_archive_rel_path(mapped);
+    }
+    None
+}
+
+fn resolve_entry_rel_path(
+    entry_raw_name: &str,
+    selected_inner_paths: Option<&[String]>,
+) -> Option<PathBuf> {
+    match selected_inner_paths {
+        Some(targets) => map_selected_archive_entry_rel_path(entry_raw_name, targets),
+        None => sanitize_archive_rel_path(entry_raw_name),
+    }
+}
+
 fn is_zip_decrypt_io_error(err: &FsError) -> bool {
     let FsError::Io { message, .. } = err else {
         return false;
@@ -789,6 +1009,7 @@ fn is_zip_decrypt_io_error(err: &FsError) -> bool {
 fn extract_zip(
     archive_path: &Path,
     dest_root: &Path,
+    selected_inner_paths: Option<&[String]>,
     conflict: ConflictPolicy,
     password: Option<&str>,
     tracker: &mut ProgressTracker<'_>,
@@ -800,28 +1021,52 @@ fn extract_zip(
             message: format!("arquivo ZIP inválido: {e}"),
         })?;
 
-    tracker.items_total = archive.len();
+    let mut matched_items = 0usize;
     let mut total_bytes = 0u64;
     let mut has_encrypted = false;
     for i in 0..archive.len() {
-        if let Ok(entry) = archive.by_index_data(i)
-            && !entry.is_dir()
-        {
-            total_bytes = total_bytes.saturating_add(entry.size());
-            if entry.encrypted() {
-                has_encrypted = true;
+        if let Ok(entry) = archive.by_index_data(i) {
+            if selected_inner_paths.is_some() {
+                let Ok(name_cow) = entry.name() else {
+                    continue;
+                };
+                if resolve_entry_rel_path(&name_cow, selected_inner_paths).is_none() {
+                    continue;
+                }
+            }
+            matched_items += 1;
+            if !entry.is_dir() {
+                total_bytes = total_bytes.saturating_add(entry.size());
+                if entry.encrypted() {
+                    has_encrypted = true;
+                }
             }
         }
     }
     if has_encrypted && password.is_none() {
         return Err(FsError::PasswordRequired(archive_path.to_path_buf()));
     }
+    tracker.items_total = matched_items;
     tracker.bytes_total = total_bytes;
     tracker.emit_force(JobState::Running);
 
     for i in 0..archive.len() {
         if tracker.cancel.is_cancelled() {
             return Err(FsError::Cancelled);
+        }
+        if selected_inner_paths.is_some() {
+            let should_extract = archive
+                .by_index_data(i)
+                .ok()
+                .and_then(|e| {
+                    e.name()
+                        .ok()
+                        .and_then(|n| resolve_entry_rel_path(&n, selected_inner_paths))
+                })
+                .is_some();
+            if !should_extract {
+                continue;
+            }
         }
         let open_res = match password {
             Some(pw) => archive.by_index_decrypt(i, pw.as_bytes()),
@@ -845,8 +1090,7 @@ fn extract_zip(
 
         let entry_encrypted = entry.encrypted();
         let raw_name = entry.name().unwrap_or_default().into_owned();
-        let Some(rel_path) = sanitize_archive_rel_path(&raw_name) else {
-            tracker.items_done += 1;
+        let Some(rel_path) = resolve_entry_rel_path(&raw_name, selected_inner_paths) else {
             continue;
         };
 
@@ -870,6 +1114,7 @@ fn extract_zip(
 fn extract_tar(
     archive_path: &Path,
     dest_root: &Path,
+    selected_inner_paths: Option<&[String]>,
     gzip: bool,
     conflict: ConflictPolicy,
     tracker: &mut ProgressTracker<'_>,
@@ -878,10 +1123,24 @@ fn extract_tar(
     let reader = BufReader::with_capacity(IO_BUF_BYTES, file);
     if gzip {
         let mut archive = TarArchive::new(GzDecoder::new(reader));
-        extract_tar_stream(&mut archive, archive_path, dest_root, conflict, tracker)
+        extract_tar_stream(
+            &mut archive,
+            archive_path,
+            dest_root,
+            selected_inner_paths,
+            conflict,
+            tracker,
+        )
     } else {
         let mut archive = TarArchive::new(reader);
-        extract_tar_stream(&mut archive, archive_path, dest_root, conflict, tracker)
+        extract_tar_stream(
+            &mut archive,
+            archive_path,
+            dest_root,
+            selected_inner_paths,
+            conflict,
+            tracker,
+        )
     }
 }
 
@@ -889,6 +1148,7 @@ fn extract_tar_stream<R: Read>(
     archive: &mut TarArchive<R>,
     archive_path: &Path,
     dest_root: &Path,
+    selected_inner_paths: Option<&[String]>,
     conflict: ConflictPolicy,
     tracker: &mut ProgressTracker<'_>,
 ) -> Result<(), FsError> {
@@ -911,7 +1171,7 @@ fn extract_tar_stream<R: Read>(
             .map_err(|e| map_io_err(archive_path, e))?
             .to_string_lossy()
             .into_owned();
-        let Some(rel_path) = sanitize_archive_rel_path(&raw_path) else {
+        let Some(rel_path) = resolve_entry_rel_path(&raw_path, selected_inner_paths) else {
             continue;
         };
         tracker.set_current_item(&raw_path);
@@ -969,6 +1229,7 @@ fn map_sevenz_error(
 fn extract_sevenz(
     archive_path: &Path,
     dest_root: &Path,
+    selected_inner_paths: Option<&[String]>,
     conflict: ConflictPolicy,
     password: Option<&str>,
     tracker: &mut ProgressTracker<'_>,
@@ -989,14 +1250,18 @@ fn extract_sevenz(
         return Err(FsError::PasswordRequired(archive_path.to_path_buf()));
     }
 
-    tracker.items_total = reader.archive().files.len();
-    tracker.bytes_total = reader
-        .archive()
-        .files
-        .iter()
-        .filter(|f| !f.is_directory)
-        .map(|f| f.size)
-        .sum();
+    let mut items_total = 0usize;
+    let mut bytes_total = 0u64;
+    for f in &reader.archive().files {
+        if resolve_entry_rel_path(f.name(), selected_inner_paths).is_some() {
+            items_total += 1;
+            if !f.is_directory {
+                bytes_total = bytes_total.saturating_add(f.size);
+            }
+        }
+    }
+    tracker.items_total = items_total;
+    tracker.bytes_total = bytes_total;
     tracker.emit_force(JobState::Running);
 
     reader
@@ -1005,11 +1270,9 @@ fn extract_sevenz(
                 return Ok(false);
             }
             if entry.is_anti_item {
-                tracker.items_done += 1;
                 return Ok(true);
             }
-            let Some(rel_path) = sanitize_archive_rel_path(entry.name()) else {
-                tracker.items_done += 1;
+            let Some(rel_path) = resolve_entry_rel_path(entry.name(), selected_inner_paths) else {
                 return Ok(true);
             };
             tracker.set_current_item(entry.name());
@@ -1063,6 +1326,7 @@ fn map_rar_error(err: unrar_rs::RarError, archive_path: &Path, had_password: boo
 fn extract_rar(
     archive_path: &Path,
     dest_root: &Path,
+    selected_inner_paths: Option<&[String]>,
     conflict: ConflictPolicy,
     password: Option<&str>,
     tracker: &mut ProgressTracker<'_>,
@@ -1070,16 +1334,26 @@ fn extract_rar(
     let mut archive = open_rar_archive_with_volumes(archive_path, password)?;
     let members: Vec<_> = archive.entries().collect();
 
-    if password.is_none() && members.iter().any(|m| m.is_encrypted) {
+    let mut items_total = 0usize;
+    let mut bytes_total = 0u64;
+    let mut has_encrypted = false;
+    for m in &members {
+        if resolve_entry_rel_path(&m.raw_name, selected_inner_paths).is_some() {
+            items_total += 1;
+            if m.is_encrypted {
+                has_encrypted = true;
+            }
+            if !m.is_directory {
+                bytes_total = bytes_total.saturating_add(m.unpacked_size.unwrap_or(0));
+            }
+        }
+    }
+    if password.is_none() && has_encrypted {
         return Err(FsError::PasswordRequired(archive_path.to_path_buf()));
     }
 
-    tracker.items_total = members.len();
-    tracker.bytes_total = members
-        .iter()
-        .filter(|m| !m.is_directory)
-        .map(|m| m.unpacked_size.unwrap_or(0))
-        .sum();
+    tracker.items_total = items_total;
+    tracker.bytes_total = bytes_total;
     tracker.emit_force(JobState::Running);
 
     for (idx, member) in members.iter().enumerate() {
@@ -1087,11 +1361,9 @@ fn extract_rar(
             return Err(FsError::Cancelled);
         }
         if member.is_symlink || member.is_hardlink {
-            tracker.items_done += 1;
             continue;
         }
-        let Some(rel_path) = sanitize_archive_rel_path(&member.raw_name) else {
-            tracker.items_done += 1;
+        let Some(rel_path) = resolve_entry_rel_path(&member.raw_name, selected_inner_paths) else {
             continue;
         };
         tracker.set_current_item(&member.raw_name);
@@ -1649,6 +1921,69 @@ mod tests {
             fs::read(extracted.join("dados.txt")).expect("read dados"),
             b"payload cifrado 7z"
         );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_selected_entries_strips_parent_prefix_and_extracts_only_targets() {
+        let targets = vec![
+            "pasta/sub/relatorio.txt".to_owned(),
+            "pasta/assets".to_owned(),
+        ];
+        assert_eq!(
+            map_selected_archive_entry_rel_path("pasta/sub/relatorio.txt", &targets),
+            Some(PathBuf::from("relatorio.txt"))
+        );
+        assert_eq!(
+            map_selected_archive_entry_rel_path("pasta/assets/logo.png", &targets),
+            Some(PathBuf::from("assets").join("logo.png"))
+        );
+        assert_eq!(
+            map_selected_archive_entry_rel_path("pasta/ignorado.txt", &targets),
+            None
+        );
+
+        let root = temp_workspace("selective_extract");
+        let src_dir = root.join("src_tree");
+        fs::create_dir_all(src_dir.join("sub")).expect("mkdir sub");
+        fs::write(src_dir.join("sub").join("alvo.txt"), b"extraido no drag").expect("write alvo");
+        fs::write(src_dir.join("outro.txt"), b"nao deve sair").expect("write outro");
+
+        let (tx_c, _rx_c) = mpsc::unbounded_channel();
+        let zip_path = run_async(run_compress_job(
+            30,
+            vec![src_dir],
+            root.clone(),
+            "pacote".to_owned(),
+            ArchiveFormat::Zip,
+            CompressionLevel::Normal,
+            ConflictPolicy::Overwrite,
+            CancellationToken::new(),
+            tx_c,
+        ))
+        .expect("compress zip");
+
+        let dest_dir = root.join("painel_direito");
+        fs::create_dir_all(&dest_dir).expect("mkdir dest");
+        let (tx_e, _rx_e) = mpsc::unbounded_channel();
+        run_async(run_extract_entries_job(
+            31,
+            zip_path,
+            vec!["src_tree/sub/alvo.txt".to_owned()],
+            dest_dir.clone(),
+            ConflictPolicy::RenameAuto,
+            None,
+            CancellationToken::new(),
+            tx_e,
+        ))
+        .expect("selective extract ok");
+
+        assert_eq!(
+            fs::read(dest_dir.join("alvo.txt")).expect("read alvo"),
+            b"extraido no drag"
+        );
+        assert!(!dest_dir.join("outro.txt").exists());
 
         let _ = fs::remove_dir_all(&root);
     }
