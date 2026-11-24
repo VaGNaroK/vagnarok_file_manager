@@ -1,6 +1,7 @@
 use std::collections::HashSet;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs::{File, Metadata};
+use std::io::Read;
 use std::mem::MaybeUninit;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
@@ -260,7 +261,83 @@ fn spawn_terminal_cmd(bin: &str, path: &Path, in_flatpak: bool) -> bool {
     spawn_detached(&mut cmd).is_ok()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectLaunchKind {
+    NotExecutable,
+    ExecuteDirectly,
+    AppImageMissingExecBit,
+}
+
+fn is_appimage_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("appimage"))
+}
+
+fn has_elf_magic(path: &Path) -> bool {
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let mut magic = [0u8; 4];
+    file.read_exact(&mut magic).is_ok() && magic == *b"\x7fELF"
+}
+
+/// Classifica se o arquivo deve ser executado diretamente (AppImage ou binário ELF com `+x`).
+/// Arquivos comuns com bit `+x` (ex.: montagens FAT32/NTFS) continuam abrindo via MIME/sistema.
+fn classify_linux_launch(path: &Path) -> DirectLaunchKind {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return DirectLaunchKind::NotExecutable;
+    };
+    if !meta.is_file() {
+        return DirectLaunchKind::NotExecutable;
+    }
+    let is_exec = fm_core::is_posix_executable(meta.permissions().mode());
+    let is_appimage = is_appimage_path(path);
+    if is_appimage && !is_exec {
+        return DirectLaunchKind::AppImageMissingExecBit;
+    }
+    if is_exec && (is_appimage || has_elf_magic(path)) {
+        return DirectLaunchKind::ExecuteDirectly;
+    }
+    DirectLaunchKind::NotExecutable
+}
+
+fn spawn_executable_detached(path: &Path) -> Result<(), FsError> {
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+    let mut cmd = if std::env::var_os("FLATPAK_ID").is_some() {
+        let mut c = Command::new("flatpak-spawn");
+        c.arg("--host");
+        if let Some(dir) = parent {
+            let mut dir_arg = OsString::from("--directory=");
+            dir_arg.push(dir.as_os_str());
+            c.arg(dir_arg);
+        }
+        c.arg("--").arg(path);
+        c
+    } else {
+        let mut c = Command::new(path);
+        if let Some(dir) = parent {
+            c.current_dir(dir);
+        }
+        c
+    };
+    spawn_detached(&mut cmd).map_err(|e| map_io_err(path, e))
+}
+
 pub fn open_default(path: &Path) -> Result<(), FsError> {
+    match classify_linux_launch(path) {
+        DirectLaunchKind::ExecuteDirectly => return spawn_executable_detached(path),
+        DirectLaunchKind::AppImageMissingExecBit => {
+            return Err(FsError::Io {
+                path: path.to_path_buf(),
+                message:
+                    "AppImage sem permissão de execução — ative 'Permitir execução' em Propriedades"
+                        .to_owned(),
+            });
+        }
+        DirectLaunchKind::NotExecutable => {}
+    }
+
     if std::env::var_os("FLATPAK_ID").is_some() {
         // No Flatpak, `open::that_detached` aciona o shim `/usr/bin/xdg-open` do sandbox
         // (org.freedesktop.portal.OpenURI), que ignora `~/.config/mimeapps.list` e abre
@@ -1725,5 +1802,46 @@ mod tests {
             sid, parent_sid,
             "processo desacoplado deve rodar em uma nova sessão POSIX"
         );
+    }
+
+    #[test]
+    fn classifies_appimage_and_elf_executables_without_executing_regular_docs() {
+        let dir = std::env::temp_dir().join(format!("vagnarok_launch_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+
+        let appimage = dir.join("DemoApp.AppImage");
+        std::fs::write(&appimage, b"\x7fELFdummy").expect("write appimage");
+        std::fs::set_permissions(&appimage, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod 644");
+        assert_eq!(
+            classify_linux_launch(&appimage),
+            DirectLaunchKind::AppImageMissingExecBit
+        );
+        assert!(open_default(&appimage).is_err());
+
+        std::fs::set_permissions(&appimage, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod 755");
+        assert_eq!(
+            classify_linux_launch(&appimage),
+            DirectLaunchKind::ExecuteDirectly
+        );
+
+        let elf_bin = dir.join("my_tool");
+        std::fs::write(&elf_bin, b"\x7fELF\x02\x01\x01\x00").expect("write elf");
+        std::fs::set_permissions(&elf_bin, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod 755");
+        assert_eq!(
+            classify_linux_launch(&elf_bin),
+            DirectLaunchKind::ExecuteDirectly
+        );
+
+        // Arquivo comum com +x (ex.: partição FAT32/NTFS) não deve ser executado diretamente.
+        let doc = dir.join("relatorio.pdf");
+        std::fs::write(&doc, b"%PDF-1.7\n").expect("write pdf");
+        std::fs::set_permissions(&doc, std::fs::Permissions::from_mode(0o755)).expect("chmod 755");
+        assert_eq!(classify_linux_launch(&doc), DirectLaunchKind::NotExecutable);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
