@@ -50,6 +50,8 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
   - Para symlinks e atalhos `.lnk` (inclusive na Área de Trabalho), navega diretamente para a pasta onde o destino real está armazenado e já o deixa selecionado (com resolução via `IShellLinkW` no Windows e `canonicalize` no Linux).
 
 ### Melhorado e Corrigido
+- **Breadcrumbs de navegação maiores no Analisador de Espaço em Disco**:
+  - Aumentado o tamanho da fonte (`13px`), espaçamento e área de clique dos breadcrumbs de *drill-down* em chips com quebra automática de linha para facilitar a navegação entre níveis.
 - **Execução direta de `.AppImage` e binários ELF no Linux**:
   - `open_default` agora executa diretamente arquivos `.AppImage` e binários ELF marcados com permissão de execução (`+x`) em processo desacoplado, exibindo feedback claro se faltar permissão de execução e mantendo documentos comuns (inclusive em montagens FAT32/NTFS) abrindo via aplicativo padrão.
 
