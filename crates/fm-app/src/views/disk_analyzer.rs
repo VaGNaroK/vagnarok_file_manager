@@ -245,50 +245,77 @@ fn render_results_view<'a>(
         return Space::new().into();
     };
 
-    let mut crumbs = row![
+    let crumb_btn = |label: String, is_active: bool, msg: Message| -> Element<'a, Message> {
         button(
-            text(format!(
-                "{} ({})",
-                strings.disk_root_crumb,
-                format_bytes(res.total_bytes)
-            ))
-            .size(11)
-            .font(FONT_UI_SEMIBOLD)
-            .color(if modal.current_node_id.is_none() {
-                palette.accent_primary
-            } else {
-                palette.text_secondary
-            }),
+            text(label)
+                .size(13)
+                .font(FONT_UI_SEMIBOLD)
+                .color(if is_active {
+                    palette.accent_primary
+                } else {
+                    palette.text_primary
+                }),
         )
-        .padding([3, 8])
-        .style(styles::ghost_button(palette, 6.0))
-        .on_press(Message::DiskAnalyzer(DiskAnalyzerMsg::DrillRoot)),
-    ]
-    .spacing(4)
-    .align_y(Center);
+        .padding([5, 11])
+        .style(move |_, status| {
+            let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+            button::Style {
+                background: Some(Background::Color(if is_active {
+                    palette.accent_surface
+                } else if hovered {
+                    palette.surface_high
+                } else {
+                    palette.surface_low
+                })),
+                text_color: if is_active {
+                    palette.accent_primary
+                } else {
+                    palette.text_primary
+                },
+                border: Border {
+                    color: if is_active {
+                        palette.accent_border
+                    } else if hovered {
+                        palette.border_strong
+                    } else {
+                        palette.border
+                    },
+                    width: 1.0,
+                    radius: 8.0.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .on_press(msg)
+        .into()
+    };
+
+    let mut crumb_items: Vec<Element<'a, Message>> = vec![crumb_btn(
+        format!(
+            "{} ({})",
+            strings.disk_root_crumb,
+            format_bytes(res.total_bytes)
+        ),
+        modal.current_node_id.is_none(),
+        Message::DiskAnalyzer(DiskAnalyzerMsg::DrillRoot),
+    )];
 
     for (nid_opt, label) in modal.breadcrumb_nodes() {
         if let Some(nid) = nid_opt {
             let is_cur = modal.current_node_id == Some(nid);
-            crumbs = crumbs
-                .push(text("›").size(12).color(palette.text_muted))
-                .push(
-                    button(
-                        text(sanitize_single_line(&label))
-                            .size(11)
-                            .font(FONT_UI_SEMIBOLD)
-                            .color(if is_cur {
-                                palette.accent_primary
-                            } else {
-                                palette.text_secondary
-                            }),
-                    )
-                    .padding([3, 8])
-                    .style(styles::ghost_button(palette, 6.0))
-                    .on_press(Message::DiskAnalyzer(DiskAnalyzerMsg::DrillIntoNode(nid))),
-                );
+            crumb_items.push(
+                container(text("›").size(14).color(palette.text_muted))
+                    .padding([4, 2])
+                    .into(),
+            );
+            crumb_items.push(crumb_btn(
+                sanitize_single_line(&label),
+                is_cur,
+                Message::DiskAnalyzer(DiskAnalyzerMsg::DrillIntoNode(nid)),
+            ));
         }
     }
+    let crumbs = iced::widget::row(crumb_items).spacing(4).wrap();
 
     let header_drag = mouse_area(
         row![
@@ -302,20 +329,16 @@ fn render_results_view<'a>(
                     palette.status_warning,
                     8.0
                 )),
-            column![
-                text(format!(
-                    "{} — {} ({} {})",
-                    strings.disk_results_title,
-                    format_bytes(res.total_bytes),
-                    format_grouped_u64(res.total_files, '.'),
-                    strings.files.to_ascii_lowercase()
-                ))
-                .size(14)
-                .font(FONT_UI_SEMIBOLD)
-                .color(palette.text_primary),
-                crumbs,
-            ]
-            .spacing(3)
+            text(format!(
+                "{} — {} ({} {})",
+                strings.disk_results_title,
+                format_bytes(res.total_bytes),
+                format_grouped_u64(res.total_files, '.'),
+                strings.files.to_ascii_lowercase()
+            ))
+            .size(15)
+            .font(FONT_UI_SEMIBOLD)
+            .color(palette.text_primary)
             .width(Length::Fill),
         ]
         .spacing(10)
@@ -472,6 +495,7 @@ fn render_results_view<'a>(
     container(
         column![
             header,
+            crumbs,
             container(Space::new().width(Length::Fill).height(1))
                 .style(styles::divider_line(palette)),
             body,
