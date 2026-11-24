@@ -4291,6 +4291,15 @@ pub fn context_menu_overlay<'a>(
                     palette,
                 ));
             }
+            if !fm_core::is_virtual_readonly_dir(path) {
+                items = items.push(ctx_item(
+                    icon_search().size(14).color(palette.status_warning).into(),
+                    strings.analyze_space,
+                    palette.text_primary,
+                    Message::DiskAnalyzer(DiskAnalyzerMsg::OpenForPaths(vec![path.clone()])),
+                    palette,
+                ));
+            }
             items = items.push(ctx_item(
                 icon_clipboard_copy()
                     .size(14)
@@ -4783,12 +4792,12 @@ pub fn context_menu_overlay<'a>(
         ContextMenuKind::SidebarPlace {
             path, is_favorite, ..
         } => {
-            if fm_core::is_virtual_trash_path(path) {
+            if fm_core::is_virtual_readonly_dir(path) {
                 186.0
             } else if *is_favorite {
-                186.0 + root_extra
+                216.0 + root_extra
             } else {
-                150.0 + root_extra
+                180.0 + root_extra
             }
         }
         ContextMenuKind::Drive {
