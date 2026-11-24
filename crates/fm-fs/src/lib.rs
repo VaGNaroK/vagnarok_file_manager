@@ -1018,6 +1018,17 @@ fn stat_entry_blocking(entry_path: &Path) -> Result<FileEntry, FsError> {
     ))
 }
 
+/// Resolve em background o caminho real apontado por um link simbólico ou atalho (`.lnk`).
+pub async fn resolve_shortcut_target(path: PathBuf) -> Result<PathBuf, FsError> {
+    let err_path = path.clone();
+    tokio::task::spawn_blocking(move || platform::resolve_shortcut_target(&path))
+        .await
+        .map_err(|err| FsError::Io {
+            path: err_path,
+            message: err.to_string(),
+        })?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -94,6 +94,7 @@ pub enum ContextMenuKind {
         index: usize,
         path: PathBuf,
         is_dir: bool,
+        is_shortcut: bool,
         posix_mode: Option<u32>,
     },
     SidebarPlace {
@@ -858,6 +859,8 @@ pub enum Message {
     ClearRecentFiles,
     RemoveFromRecent(PathBuf),
     OpenEntryParentLocation(PathBuf),
+    OpenShortcutTargetLocation(PathBuf),
+    ShortcutTargetResolved(Result<PathBuf, FsError>),
 }
 
 pub struct App {
@@ -3424,7 +3427,8 @@ impl App {
                     } else {
                         None
                     };
-                    target_meta = Some((entry.path.clone(), is_dir, posix_mode));
+                    let is_shortcut = views::is_shortcut_entry(entry);
+                    target_meta = Some((entry.path.clone(), is_dir, is_shortcut, posix_mode));
                     if !already_selected {
                         tab.selection.select_single(index, &tab.visible_entries);
                         let single = tab.selection.single_selected(&tab.visible_entries).cloned();
@@ -3432,12 +3436,13 @@ impl App {
                         side_task = self.dispatch_selection_side_effects(single.as_ref());
                     }
                 }
-                if let Some((path, is_dir, posix_mode)) = target_meta {
+                if let Some((path, is_dir, is_shortcut, posix_mode)) = target_meta {
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::Entry {
                             index,
                             path,
                             is_dir,
+                            is_shortcut,
                             posix_mode,
                         },
                         position: self.cursor_position,
@@ -4921,6 +4926,25 @@ impl App {
                     self.active_sidebar = None;
                     return self.navigate_active_tab(parent);
                 }
+                Task::none()
+            }
+            Message::OpenShortcutTargetLocation(path) => {
+                self.context_menu = None;
+                Task::perform(
+                    fm_fs::resolve_shortcut_target(path),
+                    Message::ShortcutTargetResolved,
+                )
+            }
+            Message::ShortcutTargetResolved(Ok(target)) => {
+                self.active_sidebar = None;
+                if let Some(parent) = target.parent().map(PathBuf::from) {
+                    self.pending_select_path = Some(target);
+                    return self.navigate_active_tab(parent);
+                }
+                self.navigate_active_tab(target)
+            }
+            Message::ShortcutTargetResolved(Err(err)) => {
+                self.status_notice = Some(err.to_string());
                 Task::none()
             }
             Message::WindowResized { window_id, size } => {

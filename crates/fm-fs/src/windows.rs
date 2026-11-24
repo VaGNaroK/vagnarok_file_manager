@@ -806,6 +806,57 @@ pub fn create_shortcut(target: &Path, dest_dir: &Path) -> Result<PathBuf, FsErro
     Ok(candidate)
 }
 
+/// Resolve o destino real de um symlink ou atalho `.lnk` no Windows.
+pub fn resolve_shortcut_target(path: &Path) -> Result<PathBuf, FsError> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| map_io_err(path, e))?;
+    if meta.file_type().is_symlink() {
+        let resolved = std::fs::canonicalize(path).map_err(|e| map_io_err(path, e))?;
+        return Ok(strip_verbatim_prefix(&resolved));
+    }
+
+    if !path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("lnk"))
+    {
+        return Err(FsError::Io {
+            path: path.to_path_buf(),
+            message: "o item selecionado não é um atalho".to_owned(),
+        });
+    }
+
+    let _com = ComGuard::init(path)?;
+    // SAFETY: COM inicializado nesta thread; `ShellLink` é CLSID nativo do Windows.
+    let link: IShellLinkW = unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }
+        .map_err(|e| map_io_err(path, win_err_to_io(e)))?;
+    let persist: IPersistFile = link
+        .cast()
+        .map_err(|e| map_io_err(path, win_err_to_io(e)))?;
+
+    let src_w = to_long_wide(path);
+    // SAFETY: `src_w` é UTF-16 terminado em NUL; `STGM(0)` equivale a `STGM_READ`.
+    unsafe { persist.Load(PCWSTR(src_w.as_ptr()), windows::Win32::System::Com::STGM(0)) }
+        .map_err(|e| map_io_err(path, win_err_to_io(e)))?;
+
+    let mut buf = [0u16; 4096];
+    // SAFETY: `buf` é buffer UTF-16 mutável válido na stack.
+    unsafe { link.GetPath(&mut buf, std::ptr::null_mut(), 0) }
+        .map_err(|e| map_io_err(path, win_err_to_io(e)))?;
+
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    if len == 0 {
+        return Err(FsError::Io {
+            path: path.to_path_buf(),
+            message: "o atalho não aponta para um caminho local válido".to_owned(),
+        });
+    }
+    let target = PathBuf::from(OsString::from_wide(&buf[..len]));
+    if !target.exists() {
+        return Err(FsError::NotFound(target));
+    }
+    Ok(target)
+}
+
 /// Remove prefixo verbatim `\\?\` para compatibilidade com `IShellLinkW::SetPath`.
 fn strip_verbatim_prefix(path: &Path) -> PathBuf {
     let units: Vec<u16> = path.as_os_str().encode_wide().collect();

@@ -493,6 +493,18 @@ pub fn create_shortcut(target: &Path, dest_dir: &Path) -> Result<PathBuf, FsErro
     })
 }
 
+/// Resolve o destino real de um link simbólico no Linux.
+pub fn resolve_shortcut_target(path: &Path) -> Result<PathBuf, FsError> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| map_io_err(path, e))?;
+    if !meta.file_type().is_symlink() {
+        return Err(FsError::Io {
+            path: path.to_path_buf(),
+            message: "o item selecionado não é um link simbólico".to_owned(),
+        });
+    }
+    std::fs::canonicalize(path).map_err(|e| map_io_err(path, e))
+}
+
 /// Resolve caminho absoluto preservando o componente final (não segue symlink do próprio alvo).
 fn resolve_absolute_target(target: &Path) -> PathBuf {
     if let (Some(parent), Some(file_name)) = (target.parent(), target.file_name()) {
@@ -1841,6 +1853,36 @@ mod tests {
         std::fs::write(&doc, b"%PDF-1.7\n").expect("write pdf");
         std::fs::set_permissions(&doc, std::fs::Permissions::from_mode(0o755)).expect("chmod 755");
         assert_eq!(classify_linux_launch(&doc), DirectLaunchKind::NotExecutable);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolves_relative_and_absolute_symlinks_and_rejects_broken_links() {
+        let dir = std::env::temp_dir().join(format!("vagnarok_symlink_res_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let real_parent = dir.join("real_parent");
+        let real_folder = real_parent.join("Lyra");
+        let desktop = dir.join("Desktop");
+        std::fs::create_dir_all(&real_folder).expect("create real folder");
+        std::fs::create_dir_all(&desktop).expect("create desktop");
+
+        let link_path = desktop.join("Lyra");
+        std::os::unix::fs::symlink(Path::new("../real_parent/Lyra"), &link_path)
+            .expect("create symlink");
+        let resolved = resolve_shortcut_target(&link_path).expect("resolve symlink");
+        assert_eq!(
+            resolved,
+            std::fs::canonicalize(&real_folder).expect("canonical target")
+        );
+
+        let broken_link = desktop.join("Broken");
+        std::os::unix::fs::symlink(
+            Path::new("/tmp/definitely_missing_target_xyz"),
+            &broken_link,
+        )
+        .expect("create broken symlink");
+        assert!(resolve_shortcut_target(&broken_link).is_err());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

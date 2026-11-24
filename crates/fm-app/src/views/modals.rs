@@ -3806,6 +3806,7 @@ pub fn context_menu_overlay<'a>(
             index,
             path,
             is_dir,
+            is_shortcut,
             posix_mode,
         } => {
             let close_sub_on_hover = menu.send_to_open;
@@ -3887,8 +3888,37 @@ pub fn context_menu_overlay<'a>(
                     ));
                     offset_y += ROW_STEP;
                 }
+                if *is_shortcut
+                    && !fm_core::is_virtual_trash_path(path)
+                    && !fm_fs::archive::is_inside_archive_path(path)
+                {
+                    items = items.push(ctx_entry_item(
+                        icon_folder().size(14).color(palette.accent_primary).into(),
+                        strings.open_target_location,
+                        palette.text_primary,
+                        Message::OpenShortcutTargetLocation(path.clone()),
+                        palette,
+                        close_sub_on_hover,
+                    ));
+                    offset_y += ROW_STEP;
+                }
             } else {
                 let sel_count_preview = app.current_tab().map(|t| t.selection.count()).unwrap_or(0);
+                if *is_shortcut
+                    && sel_count_preview <= 1
+                    && !fm_core::is_virtual_trash_path(path)
+                    && !fm_fs::archive::is_inside_archive_path(path)
+                {
+                    items = items.push(ctx_entry_item(
+                        icon_folder().size(14).color(palette.accent_primary).into(),
+                        strings.open_target_location,
+                        palette.text_primary,
+                        Message::OpenShortcutTargetLocation(path.clone()),
+                        palette,
+                        close_sub_on_hover,
+                    ));
+                    offset_y += ROW_STEP;
+                }
                 if sel_count_preview <= 1
                     && !fm_core::is_virtual_trash_path(path)
                     && !fm_fs::archive::is_inside_archive_path(path)
@@ -4648,13 +4678,22 @@ pub fn context_menu_overlay<'a>(
         ContextMenuKind::Entry {
             path,
             is_dir,
+            is_shortcut,
             posix_mode,
             ..
         } => {
+            let shortcut_extra = if *is_shortcut
+                && !fm_core::is_virtual_trash_path(path)
+                && !fm_fs::archive::is_inside_archive_path(path)
+            {
+                30.0
+            } else {
+                0.0
+            };
             if app.is_current_tab_trash() {
                 192.0
             } else if *is_dir {
-                416.0 + root_extra
+                416.0 + root_extra + shortcut_extra
             } else {
                 let archive_extra = if fm_fs::archive::detect_archive_kind(path).is_some() {
                     60.0
@@ -4684,7 +4723,12 @@ pub fn context_menu_overlay<'a>(
                         }
                     })
                     .unwrap_or(0.0);
-                416.0 + archive_extra + disk_image_extra + perm_extra + open_tab_extra
+                416.0
+                    + archive_extra
+                    + disk_image_extra
+                    + perm_extra
+                    + open_tab_extra
+                    + shortcut_extra
             }
         }
         ContextMenuKind::SidebarPlace {

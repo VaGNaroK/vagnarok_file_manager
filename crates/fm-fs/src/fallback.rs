@@ -110,3 +110,7 @@ pub fn create_shortcut(target: &Path, _dest_dir: &Path) -> Result<std::path::Pat
         message: "criação de atalhos não suportada nesta plataforma".to_owned(),
     })
 }
+
+pub fn resolve_shortcut_target(path: &Path) -> Result<std::path::PathBuf, FsError> {
+    std::fs::canonicalize(path).map_err(|e| crate::map_io_err(path, e))
+}

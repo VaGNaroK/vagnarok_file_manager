@@ -471,6 +471,7 @@ pub struct Strings {
     pub clear_recent_files: &'static str,
     pub remove_from_recent: &'static str,
     pub open_file_location: &'static str,
+    pub open_target_location: &'static str,
     pub prefs_startup_location_label: &'static str,
     pub startup_home: &'static str,
     pub startup_last_visited: &'static str,
@@ -1159,6 +1160,7 @@ impl Strings {
         let clear_recent_files = resolve("clear-recent-files");
         let remove_from_recent = resolve("remove-from-recent");
         let open_file_location = resolve("open-file-location");
+        let open_target_location = resolve("open-target-location");
         let prefs_startup_location_label = resolve("prefs-startup-location-label");
         let startup_home = resolve("startup-home");
         let startup_last_visited = resolve("startup-last-visited");
@@ -1640,6 +1642,7 @@ impl Strings {
             clear_recent_files,
             remove_from_recent,
             open_file_location,
+            open_target_location,
             prefs_startup_location_label,
             startup_home,
             startup_last_visited,

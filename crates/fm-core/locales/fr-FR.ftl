@@ -509,6 +509,7 @@ prefs-recent-files-label = Afficher les fichiers récents
 clear-recent-files = Effacer les récents
 remove-from-recent = Retirer des récents
 open-file-location = Ouvrir l'emplacement du fichier
+open-target-location = Ouvrir l'emplacement de la cible
 prefs-startup-location-label = Dossier de démarrage
 startup-home = Dossier personnel
 startup-last-visited = Dernier dossier ouvert

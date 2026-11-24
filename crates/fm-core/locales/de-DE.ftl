@@ -509,6 +509,7 @@ prefs-recent-files-label = Zuletzt verwendete Dateien anzeigen
 clear-recent-files = Verlauf löschen
 remove-from-recent = Aus Verlauf entfernen
 open-file-location = Dateipfad öffnen
+open-target-location = Zielpfad öffnen
 prefs-startup-location-label = Startordner beim Öffnen
 startup-home = Benutzerordner
 startup-last-visited = Zuletzt geöffneter Ordner
