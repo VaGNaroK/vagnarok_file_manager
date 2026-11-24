@@ -33,6 +33,25 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-20 | **Alpha 9 (`v0.1.0-alpha.9`), Extração com Senha (ZIP/7z/RAR), Propriedades Multi-Seleção, UX de Unidades & Contraste `AetherLight`** | Modal de senha e descriptografia 100% Rust para `.zip` (WinZip AES + ZipCrypto), `.7z` (AES-256) e `.rar` (RAR4/RAR5), soma recursiva de tamanho e itens em **Propriedades** com seleção múltipla, barra lateral de **Unidades** sem duplicação disco/partição com ordenação inteligente e tooltips de hardware, texto mais escuro (WCAG AA+) no tema `AetherLight`, remoção de Colunas Miller (mantendo Grade e Tabela) e reset de filtro de extensão com `Esc` | 125 unitários |
 | 2026-11-20 | **Alpha 10 (`v0.1.0-alpha.10`), Dual-Pane Split View, Arquivos Recentes (`recent://`), Verificador de Atualizações Estáveis, Performance NVMe & UX Estilo Nemo** | Tela dividida (**Dual-Pane Split View** `F3`) com navegação independente e drag & drop interno, visão virtual de **Arquivos Recentes (`recent://`)** com controle em Preferências, **verificador de atualizações estáveis** via GitHub Releases, **otimização de cópia em NVMe** (buffers de 4 MiB, throttling de progresso a 30 Hz e suspensão de reloads do watcher), menu de contexto em caixas de texto, busca profunda BFS precisa e seleção/rótulos multi-linha estilo Nemo no Grid | 136 unitários |
 | 2026-11-22 | **Alpha 11 (`v0.1.0-alpha.11`), Propriedades Flutuantes Simultâneas, Permissões Nativas Windows NTFS & Linux POSIX, Dual-Panel Simétrico & Processos Desacoplados** | **Janelas de Propriedades flutuantes não-bloqueantes** (múltiplas janelas simultâneas lado a lado com fundo interativo), **editor nativo de ACL NTFS (Win32)** no Windows e **editor POSIX modernizado** no Linux (proprietário/grupo, presets, octal ao vivo, bits especiais e aplicação recursiva), fechamento de **qualquer painel** no Dual-Pane com promoção do painel direito, arrastar/copiar itens de **dentro de arquivos compactados** para outro painel, troca de abas com scroll do mouse, aba única inicial na Home com última pasta visitada, desacoplamento de apps externos (`setsid` / Win32 process group) e correções de ícones do sistema e seleção em caixa (marquee) | 147 unitários |
+| 2026-11-24 | **Próxima Versão (em desenvolvimento), Analisador de Espaço em Disco, AppImages/ELF, Emblema de Atalhos & Abrir Local do Destino** | **Analisador de Espaço em Disco** com botão contextual no topo, menu de contexto em pastas/discos/Acesso Rápido, progresso em tempo real e gráficos interativos (*Treemap*, barras, categorias, filtros e limpeza segura para Lixeira/permanente), execução direta de **`.AppImage` e binários ELF**, **emblema de seta** em symlinks/atalhos `.lnk` e ação **"Abrir local do destino"** no menu de contexto | 153 unitários |
+
+---
+
+## [Próxima Versão] — Em Desenvolvimento
+
+### Adicionado
+- **Analisador de Espaço em Disco & Arquivos Grandes**:
+  - Botão contextual **`Analisar espaço`** na barra superior do canvas ao selecionar uma ou mais pastas, além de acesso pelo menu de contexto de pastas, fundo do diretório, discos/unidades e Acesso Rápido/Favoritos da barra lateral.
+  - **Janela de varredura em tempo real**: anel animado, card *Item atual*, barra de progresso, métricas (*Arquivos verificados*, *Dados verificados*, *Tempo decorrido*), minimização para pill no rodapé e cancelamento imediato.
+  - **Visão pós-varredura com gráficos e limpeza**: mapa proporcional (*Treemap*) clicável, gráfico de barras horizontais com *drill-down* e breadcrumbs, distribuição por tipo de arquivo, lista virtualizada com checkboxes, filtros por tamanho (`Todos`, `>100MB`, `>1GB`, `>5GB`) e busca, totalizador ao vivo de espaço a liberar e exclusão via **Mover para Lixeira** (com `Ctrl+Z`) ou **Excluir permanentemente**.
+- **Emblema de seta em links simbólicos e atalhos (`.lnk`)**:
+  - Ícones de pastas, arquivos e miniaturas que são symlinks ou atalhos `.lnk` agora exibem o emblema circular com seta no canto inferior direito (nos modos de ícones padrão e do sistema).
+- **Ação `"Abrir local do destino"` no menu de contexto**:
+  - Para symlinks e atalhos `.lnk` (inclusive na Área de Trabalho), navega diretamente para a pasta onde o destino real está armazenado e já o deixa selecionado (com resolução via `IShellLinkW` no Windows e `canonicalize` no Linux).
+
+### Melhorado e Corrigido
+- **Execução direta de `.AppImage` e binários ELF no Linux**:
+  - `open_default` agora executa diretamente arquivos `.AppImage` e binários ELF marcados com permissão de execução (`+x`) em processo desacoplado, exibindo feedback claro se faltar permissão de execução e mantendo documentos comuns (inclusive em montagens FAT32/NTFS) abrindo via aplicativo padrão.
 
 ---
 
