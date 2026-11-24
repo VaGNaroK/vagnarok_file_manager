@@ -38,7 +38,9 @@ use crate::views::virtualized::{
     compute_band_window_with_row_height, compute_fixed_window, compute_grid_layout_metrics,
     grid_bands_total_height, grid_card_height, grid_columns_for_width, grid_preview_box_size,
 };
-use crate::views::{render_entry_icon, sanitize_single_line, with_tooltip};
+use crate::views::{
+    is_shortcut_entry, render_entry_icon, sanitize_single_line, with_shortcut_emblem, with_tooltip,
+};
 
 pub fn view<'a>(
     app: &'a App,
@@ -1477,11 +1479,17 @@ fn grid_item_card<'a>(
     palette: ThemePalette,
 ) -> Element<'a, Message> {
     let preview_widget: Element<'a, Message> = if let Some(handle) = thumb {
-        image(handle.clone())
-            .width(preview_box - 4.0)
-            .height(preview_box - 4.0)
+        let thumb_box = preview_box - 4.0;
+        let img: Element<'a, Message> = image(handle.clone())
+            .width(thumb_box)
+            .height(thumb_box)
             .content_fit(ContentFit::Contain)
-            .into()
+            .into();
+        if is_shortcut_entry(entry) {
+            with_shortcut_emblem(img, thumb_box, palette)
+        } else {
+            img
+        }
     } else {
         let icon_px = (preview_box * 0.68).clamp(28.0, 72.0);
         let icon_widget = render_entry_icon(app, entry, palette, icon_px);

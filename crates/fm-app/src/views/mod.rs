@@ -10,7 +10,8 @@ pub mod sidebar;
 pub mod virtualized;
 
 use fm_core::{
-    DriveInfo, FileEntry, IconThemeMode, SystemIconBucket, SystemIconKey, SystemPlaceKind,
+    DriveInfo, EntryKind, FileEntry, IconThemeMode, SystemIconBucket, SystemIconKey,
+    SystemPlaceKind,
 };
 use fm_theme::{FONT_UI, ThemePalette, styles};
 use iced::advanced::layout;
@@ -18,14 +19,14 @@ use iced::advanced::renderer;
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, overlay};
 use iced::mouse;
-use iced::widget::{Text, container, image, opaque, text, text_input, tooltip};
+use iced::widget::{Text, container, image, opaque, stack, text, text_input, tooltip};
 use iced::{
-    Alignment::Center, Color, ContentFit, Element, Event, Length, Padding, Rectangle, Size, Vector,
-    window,
+    Alignment::Center, Background, Border, Color, ContentFit, Element, Event, Length, Padding,
+    Rectangle, Size, Vector, window,
 };
 use lucide_icons::iced::{
     icon_file_archive, icon_file_code, icon_file_json, icon_file_text, icon_folder, icon_image,
-    icon_terminal,
+    icon_redo_2, icon_terminal,
 };
 
 use crate::app::{App, Message, TextInputTarget};
@@ -58,6 +59,50 @@ pub fn render_system_or_fallback<'a>(
     fallback.into()
 }
 
+/// Retorna `true` se a entrada representa um link simbólico ou atalho (`.lnk`).
+#[must_use]
+pub fn is_shortcut_entry(entry: &FileEntry) -> bool {
+    matches!(entry.kind, EntryKind::Symlink { .. })
+        || entry
+            .extension
+            .as_deref()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("lnk"))
+}
+
+/// Sobrepõe o emblema circular com seta no canto inferior direito do ícone para links/atalhos.
+pub fn with_shortcut_emblem<'a>(
+    base: Element<'a, Message>,
+    size: f32,
+    palette: ThemePalette,
+) -> Element<'a, Message> {
+    let badge_d = (size * 0.36).round().clamp(10.0, 22.0);
+    let arrow_px = (badge_d * 0.62).round().max(7.0);
+    let border_w = if badge_d >= 14.0 { 1.5 } else { 1.0 };
+
+    let badge = container(icon_redo_2().size(arrow_px).color(Color::WHITE))
+        .width(Length::Fixed(badge_d))
+        .height(Length::Fixed(badge_d))
+        .align_x(Center)
+        .align_y(Center)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x43, 0x4C, 0x5E))),
+            border: Border {
+                color: palette.canvas,
+                width: border_w,
+                radius: (badge_d * 0.5).into(),
+            },
+            ..Default::default()
+        });
+
+    let overlay = container(badge)
+        .width(Length::Fixed(size))
+        .height(Length::Fixed(size))
+        .align_x(iced::alignment::Horizontal::Right)
+        .align_y(iced::alignment::Vertical::Bottom);
+
+    stack![base, overlay].into()
+}
+
 /// Renderiza o ícone de uma entrada de arquivo/pasta respeitando o modo de ícones configurado.
 pub fn render_entry_icon<'a>(
     app: &'a App,
@@ -66,11 +111,17 @@ pub fn render_entry_icon<'a>(
     size: f32,
 ) -> Element<'a, Message> {
     let (fallback, _) = entry_icon(entry, palette, size);
-    if app.config.icon_theme_mode == IconThemeMode::Bundled {
-        return fallback.into();
+    let base: Element<'a, Message> = if app.config.icon_theme_mode == IconThemeMode::Bundled {
+        fallback.into()
+    } else {
+        let key = SystemIconKey::for_entry(entry, fm_fs::is_archive_file(&entry.path));
+        render_system_or_fallback(app, &key, fallback, size)
+    };
+    if is_shortcut_entry(entry) {
+        with_shortcut_emblem(base, size, palette)
+    } else {
+        base
     }
-    let key = SystemIconKey::for_entry(entry, fm_fs::is_archive_file(&entry.path));
-    render_system_or_fallback(app, &key, fallback, size)
 }
 
 /// Renderiza o ícone de um local especial da barra lateral respeitando o modo de ícones configurado.
@@ -566,7 +617,27 @@ impl Widget<Message, iced::Theme, iced::Renderer> for ContextMenuTextInput<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_single_line;
+    use super::{is_shortcut_entry, sanitize_single_line};
+    use compact_str::CompactString;
+    use fm_core::{EntryId, EntryKind, FileEntry, PermissionsMeta};
+    use std::path::PathBuf;
+
+    fn dummy_entry(kind: EntryKind, ext: Option<&str>) -> FileEntry {
+        FileEntry {
+            id: EntryId(1),
+            name: CompactString::from("item"),
+            path: PathBuf::from("/tmp/item"),
+            kind,
+            size_bytes: 0,
+            child_count: None,
+            modified_at: None,
+            created_at: None,
+            permissions: PermissionsMeta::PosixMode(0o755),
+            is_hidden: false,
+            extension: ext.map(CompactString::from),
+            mime_badge: None,
+        }
+    }
 
     #[test]
     fn sanitizes_embedded_newlines_into_single_spaces() {
@@ -579,5 +650,30 @@ mod tests {
             "/home/user/Crash Team Racing Turbocharged"
         );
         assert_eq!(sanitize_single_line("normal_dir"), "normal_dir");
+    }
+
+    #[test]
+    fn detects_symlinks_and_lnk_shortcuts_for_emblem_overlay() {
+        assert!(is_shortcut_entry(&dummy_entry(
+            EntryKind::Symlink {
+                target_is_dir: true
+            },
+            None
+        )));
+        assert!(is_shortcut_entry(&dummy_entry(
+            EntryKind::Symlink {
+                target_is_dir: false
+            },
+            None
+        )));
+        assert!(is_shortcut_entry(&dummy_entry(
+            EntryKind::File,
+            Some("lnk")
+        )));
+        assert!(!is_shortcut_entry(&dummy_entry(EntryKind::Directory, None)));
+        assert!(!is_shortcut_entry(&dummy_entry(
+            EntryKind::File,
+            Some("txt")
+        )));
     }
 }
