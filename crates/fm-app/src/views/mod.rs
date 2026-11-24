@@ -1,6 +1,7 @@
 pub mod archive_modal;
 pub mod bulk_rename;
 pub mod canvas;
+pub mod disk_analyzer;
 pub mod duplicate_finder;
 pub mod footer;
 pub mod header;

@@ -153,6 +153,13 @@ pub fn view<'a>(
         .style(move |_| styles::panel_surface(palette.accent_surface, palette.accent_border, 6.0));
         right = right.push(pill);
     }
+    if let Some(modal) = &app.disk_analyzer
+        && modal.minimized
+    {
+        right = right.push(crate::views::disk_analyzer::disk_analyzer_minimized_pill(
+            modal, palette, strings,
+        ));
+    }
     if let Some(modal) = &app.compress_modal
         && modal.minimized
         && modal.running_job_id.is_none()

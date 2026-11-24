@@ -31,6 +31,7 @@ use crate::app::{
     properties_name_input_id, resolve_open_in_new_tab_targets,
 };
 use crate::archive_jobs::ArchiveUiMsg;
+use crate::disk_analyzer::DiskAnalyzerMsg;
 use crate::duplicate_finder::DuplicateFinderMsg;
 use crate::views::{
     floating_window_at, modal_overlay_backdrop, render_entry_icon, sanitize_single_line,
@@ -3871,6 +3872,39 @@ pub fn context_menu_overlay<'a>(
             }
 
             if *is_dir {
+                if !fm_core::is_virtual_trash_path(path)
+                    && !fm_fs::archive::is_inside_archive_path(path)
+                {
+                    let selected_dirs: Vec<std::path::PathBuf> = app
+                        .current_tab()
+                        .map(|t| {
+                            t.visible_entries
+                                .iter()
+                                .filter(|e| {
+                                    t.selection.selected_ids.contains(&e.id)
+                                        && e.kind.is_dir_like()
+                                        && !fm_core::is_virtual_readonly_dir(&e.path)
+                                        && fm_fs::archive::split_archive_path(&e.path).is_none()
+                                })
+                                .map(|e| e.path.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let analyze_targets = if selected_dirs.is_empty() {
+                        vec![path.clone()]
+                    } else {
+                        selected_dirs
+                    };
+                    items = items.push(ctx_entry_item(
+                        icon_search().size(14).color(palette.status_warning).into(),
+                        strings.analyze_space,
+                        palette.text_primary,
+                        Message::DiskAnalyzer(DiskAnalyzerMsg::OpenForPaths(analyze_targets)),
+                        palette,
+                        close_sub_on_hover,
+                    ));
+                    offset_y += ROW_STEP;
+                }
                 if show_open_as_root
                     && !fm_core::is_virtual_trash_path(path)
                     && !fm_fs::archive::is_inside_archive_path(path)
@@ -4342,6 +4376,13 @@ pub fn context_menu_overlay<'a>(
                         palette,
                     ));
                 }
+                items = items.push(ctx_item(
+                    icon_search().size(14).color(palette.status_warning).into(),
+                    strings.analyze_space,
+                    palette.text_primary,
+                    Message::DiskAnalyzer(DiskAnalyzerMsg::OpenForPaths(vec![mount_path.clone()])),
+                    palette,
+                ));
                 items = items
                     .push(ctx_item(
                         icon_clipboard_copy()
@@ -4635,13 +4676,21 @@ pub fn context_menu_overlay<'a>(
                 let can_scan_dups = !fm_core::is_virtual_readonly_dir(&tab.current_path)
                     && fm_fs::archive::split_archive_path(&tab.current_path).is_none();
                 if can_scan_dups {
-                    items = items.push(ctx_item(
-                        icon_search().size(14).color(palette.accent_primary).into(),
-                        strings.dup_menu_action,
-                        palette.text_primary,
-                        Message::DuplicateFinder(DuplicateFinderMsg::OpenForCurrentDir),
-                        palette,
-                    ));
+                    items = items
+                        .push(ctx_item(
+                            icon_search().size(14).color(palette.accent_primary).into(),
+                            strings.dup_menu_action,
+                            palette.text_primary,
+                            Message::DuplicateFinder(DuplicateFinderMsg::OpenForCurrentDir),
+                            palette,
+                        ))
+                        .push(ctx_item(
+                            icon_search().size(14).color(palette.status_warning).into(),
+                            strings.analyze_space,
+                            palette.text_primary,
+                            Message::DiskAnalyzer(DiskAnalyzerMsg::OpenForCurrentDir),
+                            palette,
+                        ));
                 }
                 if show_open_as_root && can_scan_dups {
                     items = items.push(ctx_item(

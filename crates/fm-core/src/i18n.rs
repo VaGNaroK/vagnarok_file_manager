@@ -513,6 +513,32 @@ pub struct Strings {
     pub posix_quick_action_header: &'static str,
     pub posix_recursive_header: &'static str,
     pub posix_apply_recursive: &'static str,
+    pub analyze_space: &'static str,
+    pub tip_analyze_space: &'static str,
+    pub disk_scan_eyebrow: &'static str,
+    pub disk_scan_title: &'static str,
+    pub disk_scan_current_item: &'static str,
+    pub disk_scan_files_checked: &'static str,
+    pub disk_scan_data_checked: &'static str,
+    pub disk_scan_elapsed: &'static str,
+    pub disk_scan_hint: &'static str,
+    pub disk_results_title: &'static str,
+    pub disk_root_crumb: &'static str,
+    pub disk_treemap_title: &'static str,
+    pub disk_top_consumers: &'static str,
+    pub disk_by_type: &'static str,
+    pub disk_mark_cleanup: &'static str,
+    pub disk_reanalyze: &'static str,
+    pub disk_clear_selection: &'static str,
+    pub disk_reclaim_suffix: &'static str,
+    pub disk_mode_files: &'static str,
+    pub disk_mode_folders: &'static str,
+    pub disk_cat_iso: &'static str,
+    pub disk_cat_build: &'static str,
+    pub disk_cat_archives: &'static str,
+    pub disk_cat_media: &'static str,
+    pub disk_cat_docs: &'static str,
+    pub disk_cat_other: &'static str,
 }
 
 impl std::fmt::Debug for Strings {
@@ -1202,6 +1228,32 @@ impl Strings {
         let posix_quick_action_header = resolve("posix-quick-action-header");
         let posix_recursive_header = resolve("posix-recursive-header");
         let posix_apply_recursive = resolve("posix-apply-recursive");
+        let analyze_space = resolve("analyze-space");
+        let tip_analyze_space = resolve("tip-analyze-space");
+        let disk_scan_eyebrow = resolve("disk-scan-eyebrow");
+        let disk_scan_title = resolve("disk-scan-title");
+        let disk_scan_current_item = resolve("disk-scan-current-item");
+        let disk_scan_files_checked = resolve("disk-scan-files-checked");
+        let disk_scan_data_checked = resolve("disk-scan-data-checked");
+        let disk_scan_elapsed = resolve("disk-scan-elapsed");
+        let disk_scan_hint = resolve("disk-scan-hint");
+        let disk_results_title = resolve("disk-results-title");
+        let disk_root_crumb = resolve("disk-root-crumb");
+        let disk_treemap_title = resolve("disk-treemap-title");
+        let disk_top_consumers = resolve("disk-top-consumers");
+        let disk_by_type = resolve("disk-by-type");
+        let disk_mark_cleanup = resolve("disk-mark-cleanup");
+        let disk_reanalyze = resolve("disk-reanalyze");
+        let disk_clear_selection = resolve("disk-clear-selection");
+        let disk_reclaim_suffix = resolve("disk-reclaim-suffix");
+        let disk_mode_files = resolve("disk-mode-files");
+        let disk_mode_folders = resolve("disk-mode-folders");
+        let disk_cat_iso = resolve("disk-cat-iso");
+        let disk_cat_build = resolve("disk-cat-build");
+        let disk_cat_archives = resolve("disk-cat-archives");
+        let disk_cat_media = resolve("disk-cat-media");
+        let disk_cat_docs = resolve("disk-cat-docs");
+        let disk_cat_other = resolve("disk-cat-other");
 
         let inner = Box::leak(Box::new(StringsInner {
             language: lang,
@@ -1684,6 +1736,32 @@ impl Strings {
             posix_quick_action_header,
             posix_recursive_header,
             posix_apply_recursive,
+            analyze_space,
+            tip_analyze_space,
+            disk_scan_eyebrow,
+            disk_scan_title,
+            disk_scan_current_item,
+            disk_scan_files_checked,
+            disk_scan_data_checked,
+            disk_scan_elapsed,
+            disk_scan_hint,
+            disk_results_title,
+            disk_root_crumb,
+            disk_treemap_title,
+            disk_top_consumers,
+            disk_by_type,
+            disk_mark_cleanup,
+            disk_reanalyze,
+            disk_clear_selection,
+            disk_reclaim_suffix,
+            disk_mode_files,
+            disk_mode_folders,
+            disk_cat_iso,
+            disk_cat_build,
+            disk_cat_archives,
+            disk_cat_media,
+            disk_cat_docs,
+            disk_cat_other,
         }
     }
 }

@@ -4,6 +4,7 @@
 
 pub mod archive_job;
 pub mod bulk_rename;
+pub mod disk_analyzer;
 pub mod domain;
 pub mod duplicates;
 pub mod i18n;
@@ -14,6 +15,11 @@ pub mod vfs;
 pub use archive_job::{
     ArchiveFormat, ArchiveJobKind, ArchiveJobProgress, CompressionLevel, ExtractTargetMode,
     sanitize_archive_rel_path, strip_known_archive_suffix, suggest_archive_base_name,
+};
+
+pub use disk_analyzer::{
+    DiskCategory, DiskMinSizeFilter, DiskScanDirNode, DiskScanEvent, DiskScanFileEntry,
+    DiskScanProgress, DiskScanResult,
 };
 
 pub use duplicates::{

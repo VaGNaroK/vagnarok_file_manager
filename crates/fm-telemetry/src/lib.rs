@@ -1,5 +1,6 @@
 //! Workers canceláveis de telemetria contextual: Git (`gix`), SHA-256 (`sha2`), MIME (`infer`) e contagem rasa.
 
+pub mod disk_analyzer;
 pub mod duplicates;
 pub mod git;
 pub mod hardlink;
@@ -13,6 +14,7 @@ pub mod stats;
 
 use compact_str::CompactString;
 
+pub use disk_analyzer::run_disk_scan;
 pub use duplicates::run_duplicate_scan;
 pub use git::{detect_file_git_status, detect_git_branch};
 pub use hash::compute_sha256;

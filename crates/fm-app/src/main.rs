@@ -3,6 +3,7 @@
 mod app;
 mod archive_jobs;
 mod bulk_rename;
+mod disk_analyzer;
 mod duplicate_finder;
 mod updater;
 mod views;

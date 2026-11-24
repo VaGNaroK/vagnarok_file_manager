@@ -23,14 +23,16 @@ use iced::{
 use lucide_icons::iced::{
     icon_align_center, icon_align_left, icon_arrow_left, icon_arrow_right, icon_arrow_up,
     icon_arrow_up_down, icon_clipboard_paste, icon_copy, icon_eye, icon_eye_off, icon_filter,
-    icon_folder_tree, icon_info, icon_minus, icon_pencil, icon_plus, icon_rotate_ccw,
-    icon_scissors, icon_shapes, icon_shield_alert, icon_star, icon_terminal, icon_trash_2, icon_x,
+    icon_folder_tree, icon_info, icon_minus, icon_pencil, icon_pie_chart, icon_plus,
+    icon_rotate_ccw, icon_scissors, icon_shapes, icon_shield_alert, icon_star, icon_terminal,
+    icon_trash_2, icon_x,
 };
 
 use crate::app::{
     App, InternalEntryDrag, Message, SplitPane, SplitViewState, pane_scroll_id,
     selected_id_set_contains, thumbnail_key_for_entry,
 };
+use crate::disk_analyzer::DiskAnalyzerMsg;
 use crate::views::modals::format_transfer_summary;
 use crate::views::virtualized::{
     ContentRect, DETAIL_LIST_SIDE_PADDING, DETAIL_ROW_HEIGHT, DETAIL_ROW_STEP, GRID_BAND_SPACING,
@@ -1012,9 +1014,60 @@ fn action_bar<'a>(
         palette,
     );
 
+    let selected_dirs: Vec<std::path::PathBuf> = tab
+        .visible_entries
+        .iter()
+        .filter(|e| {
+            tab.selection.selected_ids.contains(&e.id)
+                && e.kind.is_dir_like()
+                && !fm_core::is_virtual_readonly_dir(&e.path)
+                && fm_fs::archive::split_archive_path(&e.path).is_none()
+        })
+        .map(|e| e.path.clone())
+        .collect();
+
     let mut toolbar_right = row![].spacing(8).align_y(Center);
     if !is_in_trash && !is_in_recent && !is_inside_archive {
         toolbar_right = toolbar_right.push(new_btn);
+    }
+    if !selected_dirs.is_empty() && !is_in_trash && !is_in_recent && !is_inside_archive {
+        let analyze_btn = with_tooltip(
+            button(
+                row![
+                    icon_pie_chart().size(13).color(palette.status_warning),
+                    text(strings.analyze_space)
+                        .size(12)
+                        .font(FONT_UI_SEMIBOLD)
+                        .color(palette.status_warning),
+                ]
+                .spacing(5)
+                .align_y(Center),
+            )
+            .padding([6, 11])
+            .style(move |_, _| button::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.14,
+                    ..palette.status_warning
+                })),
+                text_color: palette.status_warning,
+                border: Border {
+                    color: Color {
+                        a: 0.45,
+                        ..palette.status_warning
+                    },
+                    width: 1.0,
+                    radius: 9999.0.into(),
+                },
+                ..Default::default()
+            })
+            .on_press(Message::DiskAnalyzer(DiskAnalyzerMsg::OpenForPaths(
+                selected_dirs,
+            ))),
+            strings.tip_analyze_space,
+            tooltip::Position::Bottom,
+            palette,
+        );
+        toolbar_right = toolbar_right.push(analyze_btn);
     }
     toolbar_right = toolbar_right.push(ops_row);
 
