@@ -88,6 +88,24 @@ pub struct Strings {
     pub deep_search: &'static str,
     pub deep_search_title: &'static str,
     pub deep_search_empty: &'static str,
+    pub search_name_label: &'static str,
+    pub search_containing_label: &'static str,
+    pub search_containing_placeholder: &'static str,
+    pub search_size_label: &'static str,
+    pub search_date_label: &'static str,
+    pub search_type_label: &'static str,
+    pub search_hidden_label: &'static str,
+    pub search_streaming_hint: &'static str,
+    pub search_any: &'static str,
+    pub search_today: &'static str,
+    pub search_last_7d: &'static str,
+    pub search_last_30d: &'static str,
+    pub search_type_code: &'static str,
+    pub search_type_docs: &'static str,
+    pub search_type_images: &'static str,
+    pub search_type_audio: &'static str,
+    pub search_type_video: &'static str,
+    pub search_type_archives: &'static str,
     pub searching: &'static str,
     pub computing_hash: &'static str,
     pub new_folder: &'static str,
@@ -803,6 +821,24 @@ impl Strings {
         let deep_search = resolve("deep-search");
         let deep_search_title = resolve("deep-search-title");
         let deep_search_empty = resolve("deep-search-empty");
+        let search_name_label = resolve("search-name-label");
+        let search_containing_label = resolve("search-containing-label");
+        let search_containing_placeholder = resolve("search-containing-placeholder");
+        let search_size_label = resolve("search-size-label");
+        let search_date_label = resolve("search-date-label");
+        let search_type_label = resolve("search-type-label");
+        let search_hidden_label = resolve("search-hidden-label");
+        let search_streaming_hint = resolve("search-streaming-hint");
+        let search_any = resolve("search-any");
+        let search_today = resolve("search-today");
+        let search_last_7d = resolve("search-last-7d");
+        let search_last_30d = resolve("search-last-30d");
+        let search_type_code = resolve("search-type-code");
+        let search_type_docs = resolve("search-type-docs");
+        let search_type_images = resolve("search-type-images");
+        let search_type_audio = resolve("search-type-audio");
+        let search_type_video = resolve("search-type-video");
+        let search_type_archives = resolve("search-type-archives");
         let searching = resolve("searching");
         let computing_hash = resolve("computing-hash");
         let new_folder = resolve("new-folder");
@@ -1311,6 +1347,24 @@ impl Strings {
             deep_search,
             deep_search_title,
             deep_search_empty,
+            search_name_label,
+            search_containing_label,
+            search_containing_placeholder,
+            search_size_label,
+            search_date_label,
+            search_type_label,
+            search_hidden_label,
+            search_streaming_hint,
+            search_any,
+            search_today,
+            search_last_7d,
+            search_last_30d,
+            search_type_code,
+            search_type_docs,
+            search_type_images,
+            search_type_audio,
+            search_type_video,
+            search_type_archives,
             searching,
             computing_hash,
             new_folder,

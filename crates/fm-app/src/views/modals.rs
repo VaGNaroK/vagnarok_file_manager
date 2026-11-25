@@ -3904,6 +3904,15 @@ pub fn context_menu_overlay<'a>(
                         close_sub_on_hover,
                     ));
                     offset_y += ROW_STEP;
+                    items = items.push(ctx_entry_item(
+                        icon_file_text().size(14).color(palette.accent_primary).into(),
+                        strings.search_containing_label,
+                        palette.text_primary,
+                        Message::OpenDeepSearchIn(path.clone()),
+                        palette,
+                        close_sub_on_hover,
+                    ));
+                    offset_y += ROW_STEP;
                 }
                 if show_open_as_root
                     && !fm_core::is_virtual_trash_path(path)
@@ -4297,6 +4306,13 @@ pub fn context_menu_overlay<'a>(
                     strings.analyze_space,
                     palette.text_primary,
                     Message::DiskAnalyzer(DiskAnalyzerMsg::OpenForPaths(vec![path.clone()])),
+                    palette,
+                ));
+                items = items.push(ctx_item(
+                    icon_file_text().size(14).color(palette.accent_primary).into(),
+                    strings.search_containing_label,
+                    palette.text_primary,
+                    Message::OpenDeepSearchIn(path.clone()),
                     palette,
                 ));
             }

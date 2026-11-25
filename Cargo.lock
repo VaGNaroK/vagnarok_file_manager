@@ -1786,6 +1786,7 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "nucleo-matcher",
+ "regex",
  "tokio",
  "tokio-util",
 ]

@@ -1,16 +1,21 @@
 use fm_core::{Strings, TabState, ThemePreset, format_bytes};
+use fm_index::{DateFilter, FileTypeFilter, SizeFilter};
 use fm_theme::{
     FONT_MONO, FONT_MONO_BOLD, FONT_UI, FONT_UI_BOLD, FONT_UI_SEMIBOLD, Spacing, ThemePalette,
     styles,
 };
 use iced::Alignment::Center;
 use iced::widget::{
-    Space, button, column, container, image, row, scrollable, space, text, text_editor, text_input,
+    Space, button, column, container, image, pick_list, row, scrollable, space, text, text_editor,
+    text_input,
 };
 use iced::{ContentFit, Element, Length, Padding};
 use lucide_icons::iced::{icon_file_text, icon_folder, icon_search, icon_x};
 
-use crate::app::{App, Message, TextInputTarget, deep_search_input_id, thumbnail_key_for_entry};
+use crate::app::{
+    App, Message, TextInputTarget, deep_search_content_input_id, deep_search_input_id,
+    thumbnail_key_for_entry,
+};
 use crate::views::{
     modal_overlay_backdrop, render_entry_icon, sanitize_single_line, wrap_text_input_context_menu,
 };
@@ -302,6 +307,61 @@ pub fn quicklook_modal<'a>(
     modal_overlay_backdrop(card)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SearchOption<T: Copy + PartialEq> {
+    value: T,
+    label: &'static str,
+}
+
+impl<T: Copy + PartialEq> std::fmt::Display for SearchOption<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label)
+    }
+}
+
+fn toggle_chip<'a>(
+    label: &'a str,
+    active: bool,
+    msg: Message,
+    palette: ThemePalette,
+) -> Element<'a, Message> {
+    let fg = if active {
+        palette.accent_primary
+    } else {
+        palette.text_muted
+    };
+    let bg = if active {
+        palette.accent_surface
+    } else {
+        palette.surface_lowest
+    };
+    let border = if active {
+        palette.accent_border
+    } else {
+        palette.border_strong
+    };
+
+    button(
+        text(label)
+            .size(11)
+            .font(FONT_MONO_BOLD)
+            .color(fg),
+    )
+    .padding([4, 8])
+    .style(move |_, _| iced::widget::button::Style {
+        background: Some(iced::Background::Color(bg)),
+        border: iced::Border {
+            color: border,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        text_color: fg,
+        ..Default::default()
+    })
+    .on_press(msg)
+    .into()
+}
+
 pub fn deep_search_modal<'a>(
     app: &'a App,
     palette: ThemePalette,
@@ -310,6 +370,11 @@ pub fn deep_search_modal<'a>(
     let query_row = container(
         row![
             icon_search().size(15).color(palette.accent_primary),
+            text(strings.search_name_label)
+                .size(11)
+                .font(FONT_UI_SEMIBOLD)
+                .color(palette.text_muted)
+                .width(Length::Fixed(116.0)),
             wrap_text_input_context_menu(
                 text_input(strings.search_placeholder, &app.deep_search_query)
                     .id(deep_search_input_id())
@@ -322,12 +387,180 @@ pub fn deep_search_modal<'a>(
                 TextInputTarget::DeepSearchInput,
                 app.deep_search_query.clone(),
             ),
+            toggle_chip(
+                ".*",
+                app.deep_search_name_regex,
+                Message::DeepSearchToggleNameRegex,
+                palette,
+            ),
         ]
         .spacing(8)
         .align_y(Center),
     )
     .padding([4, 12])
     .style(move |_| styles::panel_surface(palette.surface_low, palette.accent_border, 10.0));
+
+    let content_row = container(
+        row![
+            icon_file_text().size(15).color(palette.accent_primary),
+            text(strings.search_containing_label)
+                .size(11)
+                .font(FONT_UI_SEMIBOLD)
+                .color(palette.accent_primary)
+                .width(Length::Fixed(116.0)),
+            wrap_text_input_context_menu(
+                text_input(
+                    strings.search_containing_placeholder,
+                    &app.deep_search_content_query,
+                )
+                .id(deep_search_content_input_id())
+                .on_input(Message::DeepSearchContentQueryChanged)
+                .size(13)
+                .padding([6, 8])
+                .style(styles::search_input_style(palette))
+                .into(),
+                app.main_window_id,
+                TextInputTarget::DeepSearchContentInput,
+                app.deep_search_content_query.clone(),
+            ),
+            toggle_chip(
+                "Aa",
+                app.deep_search_content_case_sensitive,
+                Message::DeepSearchToggleContentCase,
+                palette,
+            ),
+            toggle_chip(
+                ".*",
+                app.deep_search_content_regex,
+                Message::DeepSearchToggleContentRegex,
+                palette,
+            ),
+        ]
+        .spacing(8)
+        .align_y(Center),
+    )
+    .padding([4, 12])
+    .style(move |_| styles::panel_surface(palette.surface_low, palette.border_strong, 10.0));
+
+    let size_options = vec![
+        SearchOption {
+            value: SizeFilter::Any,
+            label: strings.search_any,
+        },
+        SearchOption {
+            value: SizeFilter::Gt(1024 * 1024),
+            label: "> 1 MB",
+        },
+        SearchOption {
+            value: SizeFilter::Gt(10 * 1024 * 1024),
+            label: "> 10 MB",
+        },
+        SearchOption {
+            value: SizeFilter::Lt(100 * 1024),
+            label: "< 100 KB",
+        },
+    ];
+    let selected_size = size_options
+        .iter()
+        .find(|o| o.value == app.deep_search_size_filter)
+        .copied();
+
+    let date_options = vec![
+        SearchOption {
+            value: DateFilter::Any,
+            label: strings.search_any,
+        },
+        SearchOption {
+            value: DateFilter::Today,
+            label: strings.search_today,
+        },
+        SearchOption {
+            value: DateFilter::Last7Days,
+            label: strings.search_last_7d,
+        },
+        SearchOption {
+            value: DateFilter::Last30Days,
+            label: strings.search_last_30d,
+        },
+    ];
+    let selected_date = date_options
+        .iter()
+        .find(|o| o.value == app.deep_search_date_filter)
+        .copied();
+
+    let type_options = vec![
+        SearchOption {
+            value: FileTypeFilter::Any,
+            label: strings.search_any,
+        },
+        SearchOption {
+            value: FileTypeFilter::Code,
+            label: strings.search_type_code,
+        },
+        SearchOption {
+            value: FileTypeFilter::Documents,
+            label: strings.search_type_docs,
+        },
+        SearchOption {
+            value: FileTypeFilter::Images,
+            label: strings.search_type_images,
+        },
+        SearchOption {
+            value: FileTypeFilter::Audio,
+            label: strings.search_type_audio,
+        },
+        SearchOption {
+            value: FileTypeFilter::Video,
+            label: strings.search_type_video,
+        },
+        SearchOption {
+            value: FileTypeFilter::Archives,
+            label: strings.search_type_archives,
+        },
+    ];
+    let selected_type = type_options
+        .iter()
+        .find(|o| o.value == app.deep_search_type_filter)
+        .copied();
+
+    let filters_row = row![
+        text(strings.search_size_label)
+            .size(11)
+            .color(palette.text_muted),
+        pick_list(size_options, selected_size, |opt| {
+            Message::DeepSearchSetSizeFilter(opt.value)
+        })
+        .text_size(11)
+        .padding([4, 8])
+        .style(styles::pick_list_style(palette)),
+        text(strings.search_date_label)
+            .size(11)
+            .color(palette.text_muted),
+        pick_list(date_options, selected_date, |opt| {
+            Message::DeepSearchSetDateFilter(opt.value)
+        })
+        .text_size(11)
+        .padding([4, 8])
+        .style(styles::pick_list_style(palette)),
+        text(strings.search_type_label)
+            .size(11)
+            .color(palette.text_muted),
+        pick_list(type_options, selected_type, |opt| {
+            Message::DeepSearchSetTypeFilter(opt.value)
+        })
+        .text_size(11)
+        .padding([4, 8])
+        .style(styles::pick_list_style(palette)),
+        space::horizontal(),
+        toggle_chip(
+            strings.search_hidden_label,
+            app.deep_search_include_hidden,
+            Message::DeepSearchToggleIncludeHidden,
+            palette,
+        ),
+    ]
+    .spacing(8)
+    .align_y(Center);
 
     let results_body: Element<'a, Message> = if app.deep_search_loading {
         container(
@@ -369,7 +602,15 @@ pub fn deep_search_modal<'a>(
             } else {
                 icon_file_text().size(15).color(palette.text_secondary)
             };
-            let hit_row = row![
+            let size_label = if hit.is_dir {
+                String::new()
+            } else {
+                hit.size_bytes
+                    .map(format_bytes)
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            let hit_header = row![
                 icon,
                 container(
                     column![
@@ -388,6 +629,11 @@ pub fn deep_search_modal<'a>(
                 )
                 .width(Length::Fill)
                 .clip(true),
+                text(size_label)
+                    .size(10)
+                    .font(FONT_MONO)
+                    .color(palette.text_secondary)
+                    .wrapping(text::Wrapping::None),
                 text(format!("#{}", hit.score))
                     .size(10)
                     .font(FONT_MONO)
@@ -397,8 +643,37 @@ pub fn deep_search_modal<'a>(
             .spacing(10)
             .align_y(Center);
 
+            let mut hit_col = column![hit_header].spacing(4);
+            if !hit.content_matches.is_empty() {
+                let mut snippets_col = column![].spacing(2).padding(Padding {
+                    top: 2.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 25.0,
+                });
+                for snippet in &hit.content_matches {
+                    snippets_col = snippets_col.push(
+                        row![
+                            text(format!("L{}", snippet.line_number))
+                                .size(11)
+                                .font(FONT_MONO_BOLD)
+                                .color(palette.accent_primary)
+                                .width(Length::Fixed(42.0)),
+                            text(sanitize_single_line(snippet.line_text.as_str()))
+                                .size(11)
+                                .font(FONT_MONO)
+                                .color(palette.text_secondary)
+                                .wrapping(text::Wrapping::None),
+                        ]
+                        .spacing(6)
+                        .align_y(Center),
+                    );
+                }
+                hit_col = hit_col.push(snippets_col);
+            }
+
             list = list.push(
-                button(hit_row)
+                button(hit_col)
                     .width(Length::Fill)
                     .padding([8, 10])
                     .style(styles::ghost_button(palette, 8.0))
@@ -409,9 +684,26 @@ pub fn deep_search_modal<'a>(
     };
 
     let root_path_display = app
-        .current_tab()
-        .map(|t| sanitize_single_line(&t.current_path.to_string_lossy()))
+        .deep_search_root_override
+        .as_ref()
+        .map(|p| sanitize_single_line(&p.to_string_lossy()))
+        .or_else(|| {
+            app.current_tab()
+                .map(|t| sanitize_single_line(&t.current_path.to_string_lossy()))
+        })
         .unwrap_or_default();
+
+    let status_bar = row![
+        text(format!("{} resultados", app.deep_search_results.len()))
+            .size(11)
+            .font(FONT_MONO)
+            .color(palette.text_muted),
+        space::horizontal(),
+        text(strings.search_streaming_hint)
+            .size(11)
+            .color(palette.status_success),
+    ]
+    .align_y(Center);
 
     let card = container(
         column![
@@ -440,10 +732,13 @@ pub fn deep_search_modal<'a>(
             ]
             .align_y(Center),
             query_row,
+            content_row,
+            filters_row,
+            status_bar,
             results_body,
         ]
-        .spacing(12)
-        .width(Length::Fixed(640.0)),
+        .spacing(10)
+        .width(Length::Fixed(720.0)),
     )
     .padding(20)
     .style(styles::modal_card(palette));

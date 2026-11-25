@@ -13,7 +13,7 @@ use fm_core::{
     VfsProvider, ViewMode, VolumeSpace, WindowDecorationsMode, should_auto_check_updates,
 };
 use fm_fs::LocalFs;
-use fm_index::SearchHit;
+use fm_index::{AdvancedSearchQuery, DateFilter, FileTypeFilter, SearchHit, SizeFilter};
 use fm_preview::{DiskThumbnailCache, ThumbnailKey, ThumbnailRgba, rasterize_system_icon};
 use fm_telemetry::{CachedFileTelemetry, DiskMetadataCache};
 use fm_theme::{Spacing, ThemePalette};
@@ -49,6 +49,10 @@ pub fn deep_search_input_id() -> Id {
     Id::new("fm_deep_search_input")
 }
 
+pub fn deep_search_content_input_id() -> Id {
+    Id::new("fm_deep_search_content_input")
+}
+
 pub fn dialog_input_id() -> Id {
     Id::new("fm_dialog_input")
 }
@@ -76,6 +80,7 @@ pub enum TextInputTarget {
     PropertiesName(window::Id),
     SearchBar,
     DeepSearchInput,
+    DeepSearchContentInput,
     PathDraft,
 }
 
@@ -575,8 +580,17 @@ pub enum Message {
     },
     ResolveConflict(ConflictPolicy),
     OpenDeepSearch,
+    OpenDeepSearchIn(PathBuf),
     CloseDeepSearch,
     DeepSearchQueryChanged(String),
+    DeepSearchContentQueryChanged(String),
+    DeepSearchToggleNameRegex,
+    DeepSearchToggleContentCase,
+    DeepSearchToggleContentRegex,
+    DeepSearchToggleIncludeHidden,
+    DeepSearchSetSizeFilter(SizeFilter),
+    DeepSearchSetDateFilter(DateFilter),
+    DeepSearchSetTypeFilter(FileTypeFilter),
     DeepSearchResults {
         request_id: u64,
         results: Vec<SearchHit>,
@@ -886,7 +900,16 @@ pub struct App {
     pub resizing_properties_modal: Option<(window::Id, Point, f32, f32, f32, f32)>,
     pub dragging_properties_modal: Option<(window::Id, Point, f32, f32)>,
     pub deep_search_open: bool,
+    pub deep_search_root_override: Option<PathBuf>,
     pub deep_search_query: String,
+    pub deep_search_name_regex: bool,
+    pub deep_search_content_query: String,
+    pub deep_search_content_case_sensitive: bool,
+    pub deep_search_content_regex: bool,
+    pub deep_search_size_filter: SizeFilter,
+    pub deep_search_date_filter: DateFilter,
+    pub deep_search_type_filter: FileTypeFilter,
+    pub deep_search_include_hidden: bool,
     pub deep_search_loading: bool,
     pub deep_search_results: Vec<SearchHit>,
     pub deep_search_request_id: u64,
@@ -1024,7 +1047,16 @@ impl App {
             resizing_properties_modal: None,
             dragging_properties_modal: None,
             deep_search_open: false,
+            deep_search_root_override: None,
             deep_search_query: String::new(),
+            deep_search_name_regex: false,
+            deep_search_content_query: String::new(),
+            deep_search_content_case_sensitive: false,
+            deep_search_content_regex: false,
+            deep_search_size_filter: SizeFilter::Any,
+            deep_search_date_filter: DateFilter::Any,
+            deep_search_type_filter: FileTypeFilter::Any,
+            deep_search_include_hidden: false,
             deep_search_loading: false,
             deep_search_results: Vec::new(),
             deep_search_request_id: 0,
@@ -1400,6 +1432,7 @@ impl App {
                 .map(|t| t.filter_query.clone())
                 .unwrap_or_default(),
             TextInputTarget::DeepSearchInput => self.deep_search_query.clone(),
+            TextInputTarget::DeepSearchContentInput => self.deep_search_content_query.clone(),
             TextInputTarget::PathDraft => self.path_draft.clone(),
         }
     }
@@ -1412,6 +1445,9 @@ impl App {
             }
             TextInputTarget::SearchBar => self.update(Message::FilterChanged(val)),
             TextInputTarget::DeepSearchInput => self.update(Message::DeepSearchQueryChanged(val)),
+            TextInputTarget::DeepSearchContentInput => {
+                self.update(Message::DeepSearchContentQueryChanged(val))
+            }
             TextInputTarget::PathDraft => self.update(Message::PathDraftChanged(val)),
         }
     }
@@ -2847,6 +2883,7 @@ impl App {
             }
             Message::OpenDeepSearch => {
                 self.deep_search_open = true;
+                self.deep_search_root_override = None;
                 if let Some(q) = self.current_tab().map(|t| t.filter_query.clone())
                     && !q.trim().is_empty()
                 {
@@ -2855,8 +2892,19 @@ impl App {
                 let search_task = self.spawn_deep_search_task();
                 Task::batch([operation::focus(deep_search_input_id()), search_task])
             }
+            Message::OpenDeepSearchIn(dir) => {
+                self.context_menu = None;
+                self.deep_search_open = true;
+                self.deep_search_root_override = Some(dir);
+                let search_task = self.spawn_deep_search_task();
+                Task::batch([
+                    operation::focus(deep_search_content_input_id()),
+                    search_task,
+                ])
+            }
             Message::CloseDeepSearch => {
                 self.deep_search_open = false;
+                self.deep_search_root_override = None;
                 self.deep_search_loading = false;
                 if let Some(cancel) = self.deep_search_cancel.take() {
                     cancel.cancel();
@@ -2865,6 +2913,39 @@ impl App {
             }
             Message::DeepSearchQueryChanged(query) => {
                 self.deep_search_query = query;
+                self.spawn_deep_search_task()
+            }
+            Message::DeepSearchContentQueryChanged(query) => {
+                self.deep_search_content_query = query;
+                self.spawn_deep_search_task()
+            }
+            Message::DeepSearchToggleNameRegex => {
+                self.deep_search_name_regex = !self.deep_search_name_regex;
+                self.spawn_deep_search_task()
+            }
+            Message::DeepSearchToggleContentCase => {
+                self.deep_search_content_case_sensitive =
+                    !self.deep_search_content_case_sensitive;
+                self.spawn_deep_search_task()
+            }
+            Message::DeepSearchToggleContentRegex => {
+                self.deep_search_content_regex = !self.deep_search_content_regex;
+                self.spawn_deep_search_task()
+            }
+            Message::DeepSearchToggleIncludeHidden => {
+                self.deep_search_include_hidden = !self.deep_search_include_hidden;
+                self.spawn_deep_search_task()
+            }
+            Message::DeepSearchSetSizeFilter(filter) => {
+                self.deep_search_size_filter = filter;
+                self.spawn_deep_search_task()
+            }
+            Message::DeepSearchSetDateFilter(filter) => {
+                self.deep_search_date_filter = filter;
+                self.spawn_deep_search_task()
+            }
+            Message::DeepSearchSetTypeFilter(filter) => {
+                self.deep_search_type_filter = filter;
                 self.spawn_deep_search_task()
             }
             Message::DeepSearchResults {
@@ -6821,20 +6902,37 @@ impl App {
         if let Some(prev) = self.deep_search_cancel.take() {
             prev.cancel();
         }
-        let query = self.deep_search_query.trim().to_owned();
-        if query.is_empty() {
+        let Some((tab_root, tab_hidden)) = self
+            .current_tab()
+            .map(|t| (t.current_path.clone(), t.show_hidden))
+        else {
+            return Task::none();
+        };
+        let root = self
+            .deep_search_root_override
+            .clone()
+            .unwrap_or(tab_root);
+
+        let adv_query = AdvancedSearchQuery {
+            name_query: self.deep_search_query.trim().to_owned(),
+            name_regex: self.deep_search_name_regex,
+            content_query: self.deep_search_content_query.trim().to_owned(),
+            content_case_sensitive: self.deep_search_content_case_sensitive,
+            content_regex: self.deep_search_content_regex,
+            size_filter: self.deep_search_size_filter,
+            date_filter: self.deep_search_date_filter,
+            type_filter: self.deep_search_type_filter,
+            include_hidden: self.deep_search_include_hidden
+                || tab_hidden
+                || self.deep_search_query.trim().starts_with('.'),
+            ..Default::default()
+        };
+
+        if adv_query.is_empty() {
             self.deep_search_loading = false;
             self.deep_search_results.clear();
             return Task::none();
         }
-        let Some((root, include_hidden)) = self.current_tab().map(|t| {
-            (
-                t.current_path.clone(),
-                t.show_hidden || query.starts_with('.'),
-            )
-        }) else {
-            return Task::none();
-        };
 
         self.deep_search_request_id += 1;
         let req_id = self.deep_search_request_id;
@@ -6845,8 +6943,7 @@ impl App {
         Task::perform(
             async move {
                 let results =
-                    fm_index::deep_search_with_hidden(&root, &query, 100, include_hidden, cancel)
-                        .await;
+                    fm_index::advanced_search(&root, adv_query, 100, cancel).await;
                 (req_id, results)
             },
             |(request_id, results)| Message::DeepSearchResults {
@@ -7828,7 +7925,7 @@ fn apply_tab_filter(tab: &mut TabState) {
         .cloned()
         .collect();
     base.sort_by(|a, b| tab.sort.compare(a, b));
-    let ranked = fm_index::fuzzy_rank_entries(&base, &tab.filter_query);
+    let ranked = fm_index::quick_filter_entries(&base, &tab.filter_query);
     tab.telemetry.folder_stats = FolderSummary::from_entries(&ranked);
     tab.visible_entries = ranked;
 
@@ -8523,6 +8620,7 @@ fn text_input_id_for_target(target: &TextInputTarget) -> Id {
         TextInputTarget::PropertiesName(win_id) => properties_name_input_id(*win_id),
         TextInputTarget::SearchBar => search_input_id(),
         TextInputTarget::DeepSearchInput => deep_search_input_id(),
+        TextInputTarget::DeepSearchContentInput => deep_search_content_input_id(),
         TextInputTarget::PathDraft => path_input_id(),
     }
 }
