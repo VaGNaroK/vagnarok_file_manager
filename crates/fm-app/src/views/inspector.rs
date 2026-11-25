@@ -14,8 +14,8 @@ use iced::{ContentFit, Element, Length, Padding, Point, Radians, Rectangle, Rend
 use lucide_icons::iced::{icon_file_text, icon_folder, icon_search, icon_x};
 
 use crate::app::{
-    App, Message, TextInputTarget, deep_search_content_input_id, deep_search_input_id,
-    thumbnail_key_for_entry,
+    App, Message, TextInputTarget, command_palette_input_id, deep_search_content_input_id,
+    deep_search_input_id, thumbnail_key_for_entry,
 };
 use crate::views::{
     modal_overlay_backdrop, render_entry_icon, sanitize_single_line, wrap_text_input_context_menu,
@@ -802,6 +802,215 @@ pub fn deep_search_modal<'a>(
         .width(Length::Fixed(720.0)),
     )
     .padding(20)
+    .style(styles::modal_card(palette));
+
+    modal_overlay_backdrop(card)
+}
+
+pub fn command_palette_modal<'a>(
+    app: &'a App,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let filtered = crate::command_palette::filter_commands(
+        crate::command_palette::build_catalog(app, strings),
+        &app.command_palette_query,
+        &app.command_palette_recent,
+    );
+    let selected_idx = if filtered.is_empty() {
+        0
+    } else {
+        app.command_palette_selected.min(filtered.len() - 1)
+    };
+
+    let query_row = container(
+        row![
+            text(">_")
+                .size(13)
+                .font(FONT_MONO_BOLD)
+                .color(palette.accent_primary),
+            wrap_text_input_context_menu(
+                text_input(strings.cmd_palette_placeholder, &app.command_palette_query)
+                    .id(command_palette_input_id())
+                    .on_input(Message::CommandPaletteQueryChanged)
+                    .on_submit(Message::CommandPaletteExecuteSelected)
+                    .size(13)
+                    .padding([6, 8])
+                    .style(styles::search_input_style(palette))
+                    .into(),
+                app.main_window_id,
+                TextInputTarget::CommandPaletteInput,
+                app.command_palette_query.clone(),
+            ),
+        ]
+        .spacing(8)
+        .align_y(Center),
+    )
+    .padding([4, 12])
+    .style(move |_| styles::panel_surface(palette.surface_low, palette.accent_border, 10.0));
+
+    let body: Element<'a, Message> = if filtered.is_empty() {
+        container(
+            text(strings.cmd_palette_empty)
+                .size(12)
+                .font(FONT_UI)
+                .color(palette.text_muted),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(260.0))
+        .align_x(Center)
+        .align_y(Center)
+        .into()
+    } else {
+        let mut list = column![].spacing(4).width(Length::Fill).padding(Padding {
+            top: 0.0,
+            right: 10.0,
+            bottom: 0.0,
+            left: 0.0,
+        });
+
+        for (idx, entry) in filtered.into_iter().take(50).enumerate() {
+            let is_selected = idx == selected_idx;
+            let title_color = if !entry.enabled {
+                palette.text_muted
+            } else if is_selected {
+                palette.accent_primary
+            } else {
+                palette.text_primary
+            };
+
+            let cat_badge = container(
+                text(entry.category)
+                    .size(10)
+                    .font(FONT_MONO_BOLD)
+                    .color(if is_selected {
+                        palette.accent_primary
+                    } else {
+                        palette.text_secondary
+                    }),
+            )
+            .padding([2, 7])
+            .style(move |_| {
+                styles::panel_surface(
+                    if is_selected {
+                        palette.accent_surface
+                    } else {
+                        palette.surface_high
+                    },
+                    if is_selected {
+                        palette.accent_border
+                    } else {
+                        palette.border
+                    },
+                    5.0,
+                )
+            });
+
+            let mut row_content = row![
+                cat_badge,
+                text(entry.title)
+                    .size(13)
+                    .font(if is_selected {
+                        FONT_UI_SEMIBOLD
+                    } else {
+                        FONT_UI
+                    })
+                    .color(title_color)
+                    .width(Length::Fill),
+            ]
+            .spacing(10)
+            .align_y(Center);
+
+            if !entry.shortcut.is_empty() {
+                row_content = row_content.push(
+                    container(
+                        text(entry.shortcut)
+                            .size(10)
+                            .font(FONT_MONO)
+                            .color(palette.text_muted),
+                    )
+                    .padding([2, 6])
+                    .style(move |_| {
+                        styles::panel_surface(palette.surface_low, palette.border_strong, 5.0)
+                    }),
+                );
+            }
+
+            let btn = button(row_content)
+                .width(Length::Fill)
+                .padding([8, 10])
+                .style(move |theme, status| {
+                    if is_selected {
+                        iced::widget::button::Style {
+                            background: Some(iced::Background::Color(palette.accent_surface)),
+                            border: iced::Border {
+                                color: palette.accent_border,
+                                width: 1.0,
+                                radius: 8.0.into(),
+                            },
+                            text_color: title_color,
+                            ..Default::default()
+                        }
+                    } else {
+                        styles::ghost_button(palette, 8.0)(theme, status)
+                    }
+                });
+
+            let btn = if entry.enabled {
+                btn.on_press(Message::CommandPaletteExecute(entry.id))
+            } else {
+                btn
+            };
+
+            list = list.push(btn);
+        }
+
+        scrollable(list).height(Length::Fixed(320.0)).into()
+    };
+
+    let card = container(
+        column![
+            row![
+                text(strings.cmd_palette_title)
+                    .size(14)
+                    .font(FONT_UI_SEMIBOLD)
+                    .color(palette.text_primary),
+                space::horizontal(),
+                container(
+                    text("Ctrl+Shift+P")
+                        .size(10)
+                        .font(FONT_MONO)
+                        .color(palette.text_muted),
+                )
+                .padding([3, 7])
+                .style(move |_| {
+                    styles::panel_surface(palette.surface_low, palette.border_strong, 5.0)
+                }),
+                button(
+                    row![icon_x().size(14), text(strings.close).size(12)]
+                        .spacing(4)
+                        .align_y(Center),
+                )
+                .padding([4, 10])
+                .style(styles::pill_secondary_button(palette))
+                .on_press(Message::CloseCommandPalette),
+            ]
+            .spacing(8)
+            .align_y(Center),
+            query_row,
+            body,
+            row![
+                text(strings.cmd_palette_hint)
+                    .size(11)
+                    .font(FONT_MONO)
+                    .color(palette.text_muted),
+            ]
+            .align_y(Center),
+        ]
+        .spacing(10)
+        .width(Length::Fixed(620.0)),
+    )
+    .padding(18)
     .style(styles::modal_card(palette));
 
     modal_overlay_backdrop(card)

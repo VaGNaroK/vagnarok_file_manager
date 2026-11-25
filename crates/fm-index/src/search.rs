@@ -148,6 +148,30 @@ pub fn fuzzy_rank_entries(entries: &[FileEntry], query: &str) -> Vec<FileEntry> 
         .collect()
 }
 
+/// Filtra e ordena índices de strings candidatas usando `nucleo-matcher`.
+pub fn fuzzy_rank_indices(candidates: &[&str], query: &str) -> Vec<usize> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return (0..candidates.len()).collect();
+    }
+
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let pattern = Pattern::parse(trimmed, CaseMatching::Smart, Normalization::Smart);
+    let mut buf = Vec::new();
+    let mut scored: Vec<(u32, usize)> = Vec::new();
+
+    for (idx, candidate) in candidates.iter().enumerate() {
+        buf.clear();
+        let haystack = Utf32Str::new(candidate, &mut buf);
+        if let Some(score) = pattern.score(haystack, &mut matcher) {
+            scored.push((score, idx));
+        }
+    }
+
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    scored.into_iter().map(|(_, idx)| idx).collect()
+}
+
 /// Executa busca profunda em subpastas (por padrão ignorando diretórios/arquivos ocultos).
 pub async fn deep_search(
     root: &Path,

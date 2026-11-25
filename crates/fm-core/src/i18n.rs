@@ -106,6 +106,22 @@ pub struct Strings {
     pub search_type_audio: &'static str,
     pub search_type_video: &'static str,
     pub search_type_archives: &'static str,
+    pub cmd_palette_title: &'static str,
+    pub cmd_palette_placeholder: &'static str,
+    pub cmd_palette_empty: &'static str,
+    pub cmd_palette_hint: &'static str,
+    pub cmd_cat_nav: &'static str,
+    pub cmd_cat_search: &'static str,
+    pub cmd_cat_files: &'static str,
+    pub cmd_cat_view: &'static str,
+    pub cmd_cat_tools: &'static str,
+    pub cmd_focus_quick_filter: &'static str,
+    pub cmd_search_containing: &'static str,
+    pub cmd_clear_filters: &'static str,
+    pub cmd_check_updates: &'static str,
+    pub cmd_toggle_theme: &'static str,
+    pub cmd_view_grid: &'static str,
+    pub cmd_view_list: &'static str,
     pub searching: &'static str,
     pub computing_hash: &'static str,
     pub new_folder: &'static str,
@@ -839,6 +855,22 @@ impl Strings {
         let search_type_audio = resolve("search-type-audio");
         let search_type_video = resolve("search-type-video");
         let search_type_archives = resolve("search-type-archives");
+        let cmd_palette_title = resolve("cmd-palette-title");
+        let cmd_palette_placeholder = resolve("cmd-palette-placeholder");
+        let cmd_palette_empty = resolve("cmd-palette-empty");
+        let cmd_palette_hint = resolve("cmd-palette-hint");
+        let cmd_cat_nav = resolve("cmd-cat-nav");
+        let cmd_cat_search = resolve("cmd-cat-search");
+        let cmd_cat_files = resolve("cmd-cat-files");
+        let cmd_cat_view = resolve("cmd-cat-view");
+        let cmd_cat_tools = resolve("cmd-cat-tools");
+        let cmd_focus_quick_filter = resolve("cmd-focus-quick-filter");
+        let cmd_search_containing = resolve("cmd-search-containing");
+        let cmd_clear_filters = resolve("cmd-clear-filters");
+        let cmd_check_updates = resolve("cmd-check-updates");
+        let cmd_toggle_theme = resolve("cmd-toggle-theme");
+        let cmd_view_grid = resolve("cmd-view-grid");
+        let cmd_view_list = resolve("cmd-view-list");
         let searching = resolve("searching");
         let computing_hash = resolve("computing-hash");
         let new_folder = resolve("new-folder");
@@ -1365,6 +1397,22 @@ impl Strings {
             search_type_audio,
             search_type_video,
             search_type_archives,
+            cmd_palette_title,
+            cmd_palette_placeholder,
+            cmd_palette_empty,
+            cmd_palette_hint,
+            cmd_cat_nav,
+            cmd_cat_search,
+            cmd_cat_files,
+            cmd_cat_view,
+            cmd_cat_tools,
+            cmd_focus_quick_filter,
+            cmd_search_containing,
+            cmd_clear_filters,
+            cmd_check_updates,
+            cmd_toggle_theme,
+            cmd_view_grid,
+            cmd_view_list,
             searching,
             computing_hash,
             new_folder,

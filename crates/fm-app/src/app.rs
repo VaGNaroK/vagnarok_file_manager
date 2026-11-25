@@ -53,6 +53,10 @@ pub fn deep_search_content_input_id() -> Id {
     Id::new("fm_deep_search_content_input")
 }
 
+pub fn command_palette_input_id() -> Id {
+    Id::new("fm_command_palette_input")
+}
+
 pub fn dialog_input_id() -> Id {
     Id::new("fm_dialog_input")
 }
@@ -81,6 +85,7 @@ pub enum TextInputTarget {
     SearchBar,
     DeepSearchInput,
     DeepSearchContentInput,
+    CommandPaletteInput,
     PathDraft,
 }
 
@@ -582,6 +587,14 @@ pub enum Message {
     OpenDeepSearch,
     OpenDeepSearchIn(PathBuf),
     CloseDeepSearch,
+    OpenCommandPalette,
+    CloseCommandPalette,
+    CommandPaletteQueryChanged(String),
+    CommandPaletteMoveSelection(isize),
+    CommandPaletteExecuteSelected,
+    CommandPaletteExecute(&'static str),
+    FocusQuickFilter,
+    ClearTabFilters,
     DeepSearchQueryChanged(String),
     DeepSearchContentQueryChanged(String),
     DeepSearchToggleNameRegex,
@@ -916,6 +929,10 @@ pub struct App {
     pub deep_search_results: Vec<SearchHit>,
     pub deep_search_request_id: u64,
     pub deep_search_cancel: Option<CancellationToken>,
+    pub command_palette_open: bool,
+    pub command_palette_query: String,
+    pub command_palette_selected: usize,
+    pub command_palette_recent: Vec<&'static str>,
     pub active_dialog: Option<ActiveDialog>,
     pub bulk_rename_modal: Option<BulkRenameModalState>,
     pub last_bulk_rename_undo: Option<Vec<(PathBuf, PathBuf)>>,
@@ -1064,6 +1081,10 @@ impl App {
             deep_search_results: Vec::new(),
             deep_search_request_id: 0,
             deep_search_cancel: None,
+            command_palette_open: false,
+            command_palette_query: String::new(),
+            command_palette_selected: 0,
+            command_palette_recent: Vec::new(),
             active_dialog: None,
             bulk_rename_modal: None,
             last_bulk_rename_undo: None,
@@ -1436,6 +1457,7 @@ impl App {
                 .unwrap_or_default(),
             TextInputTarget::DeepSearchInput => self.deep_search_query.clone(),
             TextInputTarget::DeepSearchContentInput => self.deep_search_content_query.clone(),
+            TextInputTarget::CommandPaletteInput => self.command_palette_query.clone(),
             TextInputTarget::PathDraft => self.path_draft.clone(),
         }
     }
@@ -1450,6 +1472,9 @@ impl App {
             TextInputTarget::DeepSearchInput => self.update(Message::DeepSearchQueryChanged(val)),
             TextInputTarget::DeepSearchContentInput => {
                 self.update(Message::DeepSearchContentQueryChanged(val))
+            }
+            TextInputTarget::CommandPaletteInput => {
+                self.update(Message::CommandPaletteQueryChanged(val))
             }
             TextInputTarget::PathDraft => self.update(Message::PathDraftChanged(val)),
         }
@@ -2911,6 +2936,75 @@ impl App {
                 self.deep_search_loading = false;
                 if let Some(cancel) = self.deep_search_cancel.take() {
                     cancel.cancel();
+                }
+                Task::none()
+            }
+            Message::OpenCommandPalette => {
+                self.context_menu = None;
+                self.command_palette_open = true;
+                self.command_palette_query.clear();
+                self.command_palette_selected = 0;
+                operation::focus(command_palette_input_id())
+            }
+            Message::CloseCommandPalette => {
+                self.command_palette_open = false;
+                Task::none()
+            }
+            Message::CommandPaletteQueryChanged(query) => {
+                self.command_palette_query = query;
+                self.command_palette_selected = 0;
+                Task::none()
+            }
+            Message::CommandPaletteMoveSelection(delta) => {
+                let strings = self.strings();
+                let entries = crate::command_palette::filter_commands(
+                    crate::command_palette::build_catalog(self, strings),
+                    &self.command_palette_query,
+                    &self.command_palette_recent,
+                );
+                self.command_palette_selected = crate::command_palette::move_selection(
+                    self.command_palette_selected,
+                    delta,
+                    entries.len(),
+                );
+                Task::none()
+            }
+            Message::CommandPaletteExecuteSelected => {
+                let strings = self.strings();
+                let entries = crate::command_palette::filter_commands(
+                    crate::command_palette::build_catalog(self, strings),
+                    &self.command_palette_query,
+                    &self.command_palette_recent,
+                );
+                if let Some(entry) = entries.get(self.command_palette_selected).cloned()
+                    && entry.enabled
+                {
+                    self.command_palette_open = false;
+                    self.command_palette_recent.retain(|&id| id != entry.id);
+                    self.command_palette_recent.insert(0, entry.id);
+                    self.command_palette_recent.truncate(8);
+                    return self.update(entry.message);
+                }
+                Task::none()
+            }
+            Message::CommandPaletteExecute(target_id) => {
+                let strings = self.strings();
+                let catalog = crate::command_palette::build_catalog(self, strings);
+                if let Some(entry) = catalog.into_iter().find(|e| e.id == target_id && e.enabled) {
+                    self.command_palette_open = false;
+                    self.command_palette_recent.retain(|&id| id != entry.id);
+                    self.command_palette_recent.insert(0, entry.id);
+                    self.command_palette_recent.truncate(8);
+                    return self.update(entry.message);
+                }
+                Task::none()
+            }
+            Message::FocusQuickFilter => operation::focus(search_input_id()),
+            Message::ClearTabFilters => {
+                if let Some(tab) = self.current_tab_mut() {
+                    tab.filter_query.clear();
+                    tab.extension_filter = None;
+                    apply_tab_filter(tab);
                 }
                 Task::none()
             }
@@ -5429,6 +5523,10 @@ impl App {
             Some(views::inspector::quicklook_modal(
                 self, tab, palette, strings,
             ))
+        } else if self.command_palette_open {
+            Some(views::inspector::command_palette_modal(
+                self, palette, strings,
+            ))
         } else if self.deep_search_open {
             Some(views::inspector::deep_search_modal(self, palette, strings))
         } else if let Some((root, folders)) = &self.breadcrumb_menu {
@@ -7310,11 +7408,34 @@ impl App {
             || dup_modal_visible
             || disk_modal_visible
             || self.active_dialog.is_some()
+            || self.command_palette_open
             || self.deep_search_open
             || self.path_editing
             || self.prefs_open
             || filter_menu_open;
         if text_input_modal_active {
+            if self.command_palette_open {
+                match key.as_ref() {
+                    keyboard::Key::Named(Named::Escape) => {
+                        return self.update(Message::CloseCommandPalette);
+                    }
+                    keyboard::Key::Character("p")
+                        if modifiers.control() && modifiers.shift() =>
+                    {
+                        return self.update(Message::CloseCommandPalette);
+                    }
+                    keyboard::Key::Named(Named::ArrowUp) => {
+                        return self.update(Message::CommandPaletteMoveSelection(-1));
+                    }
+                    keyboard::Key::Named(Named::ArrowDown) => {
+                        return self.update(Message::CommandPaletteMoveSelection(1));
+                    }
+                    keyboard::Key::Named(Named::Enter) => {
+                        return self.update(Message::CommandPaletteExecuteSelected);
+                    }
+                    _ => return Task::none(),
+                }
+            }
             if matches!(key.as_ref(), keyboard::Key::Named(Named::Tab)) && self.path_editing {
                 return self.autocomplete_path_draft();
             }
@@ -7339,6 +7460,8 @@ impl App {
                     return self.update(Message::CloseDialog);
                 } else if self.prefs_open {
                     return self.update(Message::ClosePreferences);
+                } else if self.command_palette_open {
+                    return self.update(Message::CloseCommandPalette);
                 } else if self.deep_search_open {
                     return self.update(Message::CloseDeepSearch);
                 } else if filter_menu_open {
@@ -7417,6 +7540,9 @@ impl App {
             }
             keyboard::Key::Character("f") if modifiers.control() && modifiers.shift() => {
                 self.update(Message::OpenDeepSearch)
+            }
+            keyboard::Key::Character("p") if modifiers.control() && modifiers.shift() => {
+                self.update(Message::OpenCommandPalette)
             }
             keyboard::Key::Character("l") if modifiers.control() => {
                 self.update(Message::TogglePathEdit)
@@ -8637,6 +8763,7 @@ fn text_input_id_for_target(target: &TextInputTarget) -> Id {
         TextInputTarget::SearchBar => search_input_id(),
         TextInputTarget::DeepSearchInput => deep_search_input_id(),
         TextInputTarget::DeepSearchContentInput => deep_search_content_input_id(),
+        TextInputTarget::CommandPaletteInput => command_palette_input_id(),
         TextInputTarget::PathDraft => path_input_id(),
     }
 }
