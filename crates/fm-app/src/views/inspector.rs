@@ -5,11 +5,12 @@ use fm_theme::{
     styles,
 };
 use iced::Alignment::Center;
+use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke, stroke};
 use iced::widget::{
     Space, button, column, container, image, pick_list, row, scrollable, space, text, text_editor,
     text_input,
 };
-use iced::{ContentFit, Element, Length, Padding};
+use iced::{ContentFit, Element, Length, Padding, Point, Radians, Rectangle, Renderer, Theme};
 use lucide_icons::iced::{icon_file_text, icon_folder, icon_search, icon_x};
 
 use crate::app::{
@@ -362,6 +363,55 @@ fn toggle_chip<'a>(
     .into()
 }
 
+struct ProgressRingProgram {
+    phase: f32,
+    track_color: iced::Color,
+    arc_color: iced::Color,
+}
+
+impl canvas::Program<Message> for ProgressRingProgram {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let center = Point::new(bounds.width / 2.0, bounds.height / 2.0);
+        let radius = (bounds.width.min(bounds.height) / 2.0 - 3.0).max(4.0);
+
+        let track = Path::circle(center, radius);
+        frame.stroke(
+            &track,
+            Stroke::default()
+                .with_color(self.track_color)
+                .with_width(3.0),
+        );
+
+        let arc = Path::new(|b| {
+            b.arc(canvas::path::Arc {
+                center,
+                radius,
+                start_angle: Radians(self.phase),
+                end_angle: Radians(self.phase + std::f32::consts::PI * 1.25),
+            });
+        });
+        frame.stroke(
+            &arc,
+            Stroke::default()
+                .with_color(self.arc_color)
+                .with_width(3.0)
+                .with_line_cap(stroke::LineCap::Round),
+        );
+
+        vec![frame.into_geometry()]
+    }
+}
+
 pub fn deep_search_modal<'a>(
     app: &'a App,
     palette: ThemePalette,
@@ -564,10 +614,21 @@ pub fn deep_search_modal<'a>(
 
     let results_body: Element<'a, Message> = if app.deep_search_loading {
         container(
-            text(strings.searching)
-                .size(12)
-                .font(FONT_MONO)
-                .color(palette.text_secondary),
+            column![
+                text(strings.searching)
+                    .size(12)
+                    .font(FONT_MONO)
+                    .color(palette.text_secondary),
+                canvas::Canvas::new(ProgressRingProgram {
+                    phase: app.deep_search_spinner_phase,
+                    track_color: palette.border_strong,
+                    arc_color: palette.accent_primary,
+                })
+                .width(Length::Fixed(32.0))
+                .height(Length::Fixed(32.0)),
+            ]
+            .spacing(12)
+            .align_x(Center),
         )
         .width(Length::Fill)
         .height(Length::Fixed(300.0))

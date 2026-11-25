@@ -27,7 +27,7 @@ flate2 = "1.1"
 fluent-bundle = "0.16"
 fluent-syntax = "0.12"
 gix = { version = "0.90", default-features = false, features = ["sha1", "status"] }
-iced = { version = "0.14", features = ["wgpu", "tokio", "image", "svg", "highlighter", "advanced", "linux-theme-detection", "x11", "wayland"] }
+iced = { version = "0.14", features = ["wgpu", "tokio", "image", "svg", "canvas", "highlighter", "advanced", "linux-theme-detection", "x11", "wayland"] }
 ignore = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }
 infer = "0.22"

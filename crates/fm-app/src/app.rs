@@ -591,6 +591,7 @@ pub enum Message {
     DeepSearchSetSizeFilter(SizeFilter),
     DeepSearchSetDateFilter(DateFilter),
     DeepSearchSetTypeFilter(FileTypeFilter),
+    DeepSearchSpinnerTick,
     DeepSearchResults {
         request_id: u64,
         results: Vec<SearchHit>,
@@ -911,6 +912,7 @@ pub struct App {
     pub deep_search_type_filter: FileTypeFilter,
     pub deep_search_include_hidden: bool,
     pub deep_search_loading: bool,
+    pub deep_search_spinner_phase: f32,
     pub deep_search_results: Vec<SearchHit>,
     pub deep_search_request_id: u64,
     pub deep_search_cancel: Option<CancellationToken>,
@@ -1058,6 +1060,7 @@ impl App {
             deep_search_type_filter: FileTypeFilter::Any,
             deep_search_include_hidden: false,
             deep_search_loading: false,
+            deep_search_spinner_phase: 0.0,
             deep_search_results: Vec::new(),
             deep_search_request_id: 0,
             deep_search_cancel: None,
@@ -2947,6 +2950,13 @@ impl App {
             Message::DeepSearchSetTypeFilter(filter) => {
                 self.deep_search_type_filter = filter;
                 self.spawn_deep_search_task()
+            }
+            Message::DeepSearchSpinnerTick => {
+                if self.deep_search_open && self.deep_search_loading {
+                    self.deep_search_spinner_phase =
+                        (self.deep_search_spinner_phase + 0.16) % std::f32::consts::TAU;
+                }
+                Task::none()
             }
             Message::DeepSearchResults {
                 request_id,
@@ -5266,6 +5276,12 @@ impl App {
             .filter(|p| !fm_core::is_virtual_readonly_dir(p))
         {
             subs.push(Subscription::run_with(active_path, watch_directory_stream));
+        }
+        if self.deep_search_open && self.deep_search_loading {
+            subs.push(
+                iced::time::every(Duration::from_millis(32))
+                    .map(|_| Message::DeepSearchSpinnerTick),
+            );
         }
         Subscription::batch(subs)
     }
