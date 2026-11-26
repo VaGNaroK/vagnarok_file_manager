@@ -35,12 +35,19 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
 | 2026-11-22 | **Alpha 11 (`v0.1.0-alpha.11`), Propriedades Flutuantes Simultâneas, Permissões Nativas Windows NTFS & Linux POSIX, Dual-Panel Simétrico & Processos Desacoplados** | **Janelas de Propriedades flutuantes não-bloqueantes** (múltiplas janelas simultâneas lado a lado com fundo interativo), **editor nativo de ACL NTFS (Win32)** no Windows e **editor POSIX modernizado** no Linux (proprietário/grupo, presets, octal ao vivo, bits especiais e aplicação recursiva), fechamento de **qualquer painel** no Dual-Pane com promoção do painel direito, arrastar/copiar itens de **dentro de arquivos compactados** para outro painel, troca de abas com scroll do mouse, aba única inicial na Home com última pasta visitada, desacoplamento de apps externos (`setsid` / Win32 process group) e correções de ícones do sistema e seleção em caixa (marquee) | 147 unitários |
 | 2026-11-24 | **Próxima Versão (em desenvolvimento), Analisador de Espaço em Disco, AppImages/ELF, Emblema de Atalhos & Abrir Local do Destino** | **Analisador de Espaço em Disco** com botão contextual no topo, menu de contexto em pastas/discos/Acesso Rápido, progresso em tempo real e gráficos interativos (*Treemap*, barras, categorias, filtros e limpeza segura para Lixeira/permanente), execução direta de **`.AppImage` e binários ELF**, **emblema de seta** em symlinks/atalhos `.lnk` e ação **"Abrir local do destino"** no menu de contexto | 153 unitários |
 | 2026-11-25 | **Próxima Versão (em desenvolvimento), Busca Avançada, "Pesquisar contendo...", Filtros Rápidos (`Ctrl+K`) & Command Palette (`Ctrl+Shift+P`)** | Motor de busca avançada sem indexação (`fm-index`) com **Regex**, filtros por **tamanho**, **data** e **tipo/MIME (magic bytes)**, campo dedicado **"Pesquisar contendo..."** com leitura em streaming, skip de binários, trechos por linha (`L<n>`), anel de progresso animado, atalho no menu de contexto de pastas, tokens instantâneos em memória no filtro rápido (`Ctrl+K`) e **Command Palette (`Ctrl+Shift+P`)** com busca fuzzy e navegação por teclado | 157 unitários |
+| 2026-11-26 | **Próxima Versão (em desenvolvimento), Quick Jump (`Ctrl+P`), Busca Paralela Minimizável, Miniaturas & Ícones por Arquivo** | **Quick Jump (`Ctrl+P`)** em duas camadas (memória + BFS de diretórios), **botão Minimizar + pill no rodapé** e **scan paralelo com `rayon`** na busca de conteúdo, abertura do item selecionado com `Enter` no `Ctrl+K`, apps externos em primeiro plano no Linux, cache FIFO/LRU de miniaturas (`512` itens) em lotes contínuos e **ícones nativos por arquivo** (`.lnk`, `.exe`, `.ico`, `.url`, `.msi`, `.desktop`) | 162 unitários |
 
 ---
 
 ## [Próxima Versão] — Em Desenvolvimento
 
 ### Adicionado
+- **Quick Jump (`Ctrl+P`)**:
+  - Navegação instantânea para qualquer pasta pelo atalho `Ctrl+P` (ou pela Command Palette), combinando candidatos em memória (subpastas da aba atual, favoritos, locais do sistema, unidades, histórico e saltos recentes) com busca BFS assíncrona de diretórios no `fm-index`.
+  - Ranking fuzzy com prioridade por correspondência exata/prefixo e origem, suporte a `↑`/`↓`, `Enter` (aba atual) e `Ctrl+Enter` / botão **Nova aba**.
+- **Minimização da Busca Profunda / `"Pesquisar contendo..."` & Otimização Paralela**:
+  - Botão **Minimizar** no cabeçalho do modal de Busca Avançada com pill interativa no rodapé (`deep_search_minimized_pill`), permitindo navegar livremente pelo app enquanto a varredura continua em segundo plano.
+  - Varredura de conteúdo paralelizada com `rayon`, abertura única por arquivo, descarte antecipado de extensões binárias conhecidas e scan ASCII sem alocação por linha.
 - **Command Palette (`Ctrl+Shift+P`)**:
   - Paleta de comandos global acessível de qualquer tela pelo atalho `Ctrl+Shift+P` (ou fechável com `Esc` / `Ctrl+Shift+P`) para acionar ações de **Navegação**, **Busca**, **Arquivos**, **Visualização** e **Ferramentas** sem usar menus.
   - Busca fuzzy instantânea via `nucleo-matcher` sobre título, categoria, palavras-chave e atalhos, com priorização de ações recentes, habilitação contextual por estado (seleção, clipboard, desfazer, abas), badges de atalho (`kbd`) e navegação por teclado (`↑`/`↓` e `Enter`).
@@ -58,6 +65,13 @@ Todas as mudanças notáveis do projeto **Vagnarok File Manager** (gerenciador d
   - Para symlinks e atalhos `.lnk` (inclusive na Área de Trabalho), navega diretamente para a pasta onde o destino real está armazenado e já o deixa selecionado (com resolução via `IShellLinkW` no Windows e `canonicalize` no Linux).
 
 ### Melhorado e Corrigido
+- **Miniaturas de imagens em pastas médias e grandes**:
+  - Substituída a limpeza total do cache de miniaturas (`gpu_thumbnails.clear()`) por remoção incremental FIFO/LRU com limite ampliado para `512` entradas, e encadeamento automático de novos lotes ao concluir `in_flight_thumbs`, evitando miniaturas faltando ao abrir pastas com dezenas de fotos.
+- **Ícones reais por arquivo para atalhos e executáveis (Windows & Linux)**:
+  - `SystemIconKey::FilePath` passa a consultar o caminho real de `.lnk`, `.exe`, `.ico`, `.url`, `.msi` (via `SHGetFileInfoW` no Windows) e `.desktop` (via `Icon=` no Linux) em vez de usar um ícone genérico da extensão.
+- **Navegação `Ctrl+K` → `↓` → `Enter` e foco de aplicativos externos**:
+  - Pressionar `Enter` na barra de filtro rápido (`Ctrl+K`) após selecionar um item com `↓` agora abre a pasta/arquivo selecionado em vez de abrir a Busca Profunda.
+  - `spawn_detached` no Linux remove `DESKTOP_STARTUP_ID` e `XDG_ACTIVATION_TOKEN` herdados para que terminais e visualizadores externos abram em primeiro plano.
 - **Breadcrumbs de navegação maiores no Analisador de Espaço em Disco**:
   - Aumentado o tamanho da fonte (`13px`), espaçamento e área de clique dos breadcrumbs de *drill-down* em chips com quebra automática de linha para facilitar a navegação entre níveis.
 - **Execução direta de `.AppImage` e binários ELF no Linux**:
