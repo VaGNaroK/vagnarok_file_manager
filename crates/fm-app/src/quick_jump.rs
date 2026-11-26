@@ -261,7 +261,10 @@ mod tests {
 
         let ranked = rank_quick_jump_items(&mem, &disk, "vagnarok", 20);
         assert_eq!(ranked.len(), 2);
-        assert_eq!(ranked[0].path, PathBuf::from("/home/user/projetos/vagnarok"));
+        assert_eq!(
+            ranked[0].path,
+            PathBuf::from("/home/user/projetos/vagnarok")
+        );
         assert_eq!(ranked[0].source, QuickJumpSource::CurrentDir);
         assert_eq!(
             ranked[1].path,
@@ -292,7 +295,10 @@ mod tests {
     #[test]
     fn rank_quick_jump_path_separator_matches_full_path_and_localizes_labels() {
         let mem = vec![
-            (PathBuf::from("/home/user/docs/rust"), QuickJumpSource::Recent),
+            (
+                PathBuf::from("/home/user/docs/rust"),
+                QuickJumpSource::Recent,
+            ),
             (
                 PathBuf::from("/home/user/projetos/rust"),
                 QuickJumpSource::Favorite,

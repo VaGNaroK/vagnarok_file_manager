@@ -285,7 +285,9 @@ fn resolve_inline_query(base: &AdvancedSearchQuery) -> ResolvedQuery {
             }
         } else if let Some(exts) = lower.strip_prefix("ext:") {
             for ext in exts.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                resolved.extensions.push(ext.trim_start_matches('.').to_owned());
+                resolved
+                    .extensions
+                    .push(ext.trim_start_matches('.').to_owned());
             }
         } else if let Some(kind) = lower
             .strip_prefix("type:")
@@ -392,7 +394,10 @@ impl NameMatcher {
             return Some(Self::Any);
         }
         if use_regex {
-            let re = RegexBuilder::new(trimmed).case_insensitive(true).build().ok()?;
+            let re = RegexBuilder::new(trimmed)
+                .case_insensitive(true)
+                .build()
+                .ok()?;
             return Some(Self::Regex(re));
         }
 
@@ -1062,12 +1067,8 @@ fn advanced_search_blocking(
         let parallel_hits: Vec<(SearchHit, usize)> = candidates
             .into_par_iter()
             .filter_map(|cand| {
-                let (sz, mod_at, snippets) = search_file_content(
-                    &cand.path,
-                    resolved.max_file_size_bytes,
-                    cm,
-                    cancel,
-                )?;
+                let (sz, mod_at, snippets) =
+                    search_file_content(&cand.path, resolved.max_file_size_bytes, cm, cancel)?;
                 let boosted = cand.score.saturating_add((snippets.len() as u32) * 500);
                 Some((
                     SearchHit {
@@ -1346,7 +1347,8 @@ mod tests {
         )
         .expect("write txt");
         // Arquivo binário com byte NUL contendo a palavra-alvo (deve ser ignorado).
-        std::fs::write(dir.join("src/app.bin"), b"\x00\x01CancellationToken\x00").expect("write bin");
+        std::fs::write(dir.join("src/app.bin"), b"\x00\x01CancellationToken\x00")
+            .expect("write bin");
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()

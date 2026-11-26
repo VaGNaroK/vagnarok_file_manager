@@ -83,10 +83,7 @@ pub(super) fn resolve_system_icon(
             sh_icon_for_name(&synthetic, false, size_flag)
         }
         SystemIconKey::FilePath(path) => sh_icon_for_real_path(path, size_flag).or_else(|| {
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("bin");
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("bin");
             let synthetic = format!("item.{ext}");
             sh_icon_for_name(&synthetic, false, size_flag)
         }),

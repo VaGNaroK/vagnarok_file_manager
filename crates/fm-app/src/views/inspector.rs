@@ -342,25 +342,20 @@ fn toggle_chip<'a>(
         palette.border_strong
     };
 
-    button(
-        text(label)
-            .size(11)
-            .font(FONT_MONO_BOLD)
-            .color(fg),
-    )
-    .padding([4, 8])
-    .style(move |_, _| iced::widget::button::Style {
-        background: Some(iced::Background::Color(bg)),
-        border: iced::Border {
-            color: border,
-            width: 1.0,
-            radius: 6.0.into(),
-        },
-        text_color: fg,
-        ..Default::default()
-    })
-    .on_press(msg)
-    .into()
+    button(text(label).size(11).font(FONT_MONO_BOLD).color(fg))
+        .padding([4, 8])
+        .style(move |_, _| iced::widget::button::Style {
+            background: Some(iced::Background::Color(bg)),
+            border: iced::Border {
+                color: border,
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            text_color: fg,
+            ..Default::default()
+        })
+        .on_press(msg)
+        .into()
 }
 
 struct ProgressRingProgram {
@@ -884,16 +879,13 @@ pub fn command_palette_modal<'a>(
                 palette.text_primary
             };
 
-            let cat_badge = container(
-                text(entry.category)
-                    .size(10)
-                    .font(FONT_MONO_BOLD)
-                    .color(if is_selected {
-                        palette.accent_primary
-                    } else {
-                        palette.text_secondary
-                    }),
-            )
+            let cat_badge = container(text(entry.category).size(10).font(FONT_MONO_BOLD).color(
+                if is_selected {
+                    palette.accent_primary
+                } else {
+                    palette.text_secondary
+                },
+            ))
             .padding([2, 7])
             .style(move |_| {
                 styles::panel_surface(

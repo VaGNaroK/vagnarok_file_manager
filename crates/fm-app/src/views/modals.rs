@@ -3905,7 +3905,10 @@ pub fn context_menu_overlay<'a>(
                     ));
                     offset_y += ROW_STEP;
                     items = items.push(ctx_entry_item(
-                        icon_file_text().size(14).color(palette.accent_primary).into(),
+                        icon_file_text()
+                            .size(14)
+                            .color(palette.accent_primary)
+                            .into(),
                         strings.search_containing_label,
                         palette.text_primary,
                         Message::OpenDeepSearchIn(path.clone()),
@@ -4309,7 +4312,10 @@ pub fn context_menu_overlay<'a>(
                     palette,
                 ));
                 items = items.push(ctx_item(
-                    icon_file_text().size(14).color(palette.accent_primary).into(),
+                    icon_file_text()
+                        .size(14)
+                        .color(palette.accent_primary)
+                        .into(),
                     strings.search_containing_label,
                     palette.text_primary,
                     Message::OpenDeepSearchIn(path.clone()),

@@ -3124,8 +3124,9 @@ impl App {
                         50,
                     );
                     if !self.quick_jump_items.is_empty() {
-                        self.quick_jump_selected =
-                            self.quick_jump_selected.min(self.quick_jump_items.len() - 1);
+                        self.quick_jump_selected = self
+                            .quick_jump_selected
+                            .min(self.quick_jump_items.len() - 1);
                     } else {
                         self.quick_jump_selected = 0;
                     }
@@ -3169,8 +3170,7 @@ impl App {
                 self.spawn_deep_search_task()
             }
             Message::DeepSearchToggleContentCase => {
-                self.deep_search_content_case_sensitive =
-                    !self.deep_search_content_case_sensitive;
+                self.deep_search_content_case_sensitive = !self.deep_search_content_case_sensitive;
                 self.spawn_deep_search_task()
             }
             Message::DeepSearchToggleContentRegex => {
@@ -7179,12 +7179,8 @@ impl App {
             prev.cancel();
         }
         let mem = crate::quick_jump::collect_memory_candidates(self);
-        self.quick_jump_items = crate::quick_jump::rank_quick_jump_items(
-            &mem,
-            &[],
-            &self.quick_jump_query,
-            50,
-        );
+        self.quick_jump_items =
+            crate::quick_jump::rank_quick_jump_items(&mem, &[], &self.quick_jump_query, 50);
         self.quick_jump_selected = 0;
 
         let trimmed = self.quick_jump_query.trim().to_owned();
@@ -7232,10 +7228,7 @@ impl App {
         else {
             return Task::none();
         };
-        let root = self
-            .deep_search_root_override
-            .clone()
-            .unwrap_or(tab_root);
+        let root = self.deep_search_root_override.clone().unwrap_or(tab_root);
 
         let adv_query = AdvancedSearchQuery {
             name_query: self.deep_search_query.trim().to_owned(),
@@ -7266,8 +7259,7 @@ impl App {
 
         Task::perform(
             async move {
-                let results =
-                    fm_index::advanced_search(&root, adv_query, 100, cancel).await;
+                let results = fm_index::advanced_search(&root, adv_query, 100, cancel).await;
                 (req_id, results)
             },
             |(request_id, results)| Message::DeepSearchResults {
@@ -7631,9 +7623,7 @@ impl App {
                     keyboard::Key::Named(Named::Escape) => {
                         return self.update(Message::CloseQuickJump);
                     }
-                    keyboard::Key::Character("p")
-                        if modifiers.control() && !modifiers.shift() =>
-                    {
+                    keyboard::Key::Character("p") if modifiers.control() && !modifiers.shift() => {
                         return self.update(Message::CloseQuickJump);
                     }
                     keyboard::Key::Named(Named::ArrowUp) => {
@@ -7655,9 +7645,7 @@ impl App {
                     keyboard::Key::Named(Named::Escape) => {
                         return self.update(Message::CloseCommandPalette);
                     }
-                    keyboard::Key::Character("p")
-                        if modifiers.control() && modifiers.shift() =>
-                    {
+                    keyboard::Key::Character("p") if modifiers.control() && modifiers.shift() => {
                         return self.update(Message::CloseCommandPalette);
                     }
                     keyboard::Key::Named(Named::ArrowUp) => {

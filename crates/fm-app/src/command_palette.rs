@@ -21,9 +21,7 @@ pub struct CommandEntry {
 pub fn build_catalog(app: &App, strings: Strings) -> Vec<CommandEntry> {
     let tab = app.current_tab();
     let has_selection = tab.is_some_and(|t| t.selection.count() > 0);
-    let active_path = tab
-        .map(|t| t.current_path.clone())
-        .unwrap_or_default();
+    let active_path = tab.map(|t| t.current_path.clone()).unwrap_or_default();
     let selected_or_current_path = tab
         .and_then(|t| {
             t.visible_entries
@@ -35,9 +33,8 @@ pub fn build_catalog(app: &App, strings: Strings) -> Vec<CommandEntry> {
     let can_close_tab = app.tabs.len() > 1;
     let can_paste = app.clipboard.is_some();
     let can_undo = !app.undo_stack.is_empty();
-    let has_filter = tab.is_some_and(|t| {
-        !t.filter_query.trim().is_empty() || t.extension_filter.is_some()
-    });
+    let has_filter =
+        tab.is_some_and(|t| !t.filter_query.trim().is_empty() || t.extension_filter.is_some());
 
     vec![
         // Navegação & Abas
