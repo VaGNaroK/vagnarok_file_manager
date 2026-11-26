@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
@@ -987,6 +987,7 @@ pub struct App {
     pub metadata_cache: Option<Arc<DiskMetadataCache>>,
     pub disk_thumbnail_cache: Option<Arc<DiskThumbnailCache>>,
     pub gpu_thumbnails: HashMap<ThumbnailKey, image::Handle>,
+    pub gpu_thumbnails_order: VecDeque<ThumbnailKey>,
     pub in_flight_thumbs: HashSet<PathBuf>,
     pub gpu_system_icons: HashMap<(SystemIconKey, SystemIconBucket), image::Handle>,
     pub system_icon_misses: HashSet<(SystemIconKey, SystemIconBucket)>,
@@ -1147,6 +1148,7 @@ impl App {
             metadata_cache: None,
             disk_thumbnail_cache: None,
             gpu_thumbnails: HashMap::new(),
+            gpu_thumbnails_order: VecDeque::new(),
             in_flight_thumbs: HashSet::new(),
             gpu_system_icons: HashMap::new(),
             system_icon_misses: HashSet::new(),
@@ -3227,10 +3229,22 @@ impl App {
             Message::ThumbnailReady { key, rgba } => {
                 self.in_flight_thumbs.remove(&key.path);
                 if let Some(thumb) = rgba {
-                    if self.gpu_thumbnails.len() >= fm_preview::DEFAULT_THUMBNAIL_CACHE_CAPACITY {
-                        self.gpu_thumbnails.clear();
+                    const MAX_GPU_THUMBNAILS: usize = 512;
+                    if !self.gpu_thumbnails.contains_key(&key) {
+                        while self.gpu_thumbnails.len() >= MAX_GPU_THUMBNAILS {
+                            if let Some(oldest) = self.gpu_thumbnails_order.pop_front() {
+                                self.gpu_thumbnails.remove(&oldest);
+                            } else {
+                                self.gpu_thumbnails.clear();
+                                break;
+                            }
+                        }
+                        self.gpu_thumbnails_order.push_back(key.clone());
                     }
                     self.gpu_thumbnails.insert(key, rgba_arc_to_handle(thumb));
+                }
+                if self.in_flight_thumbs.is_empty() {
+                    return self.queue_visible_thumbnails();
                 }
                 Task::none()
             }
