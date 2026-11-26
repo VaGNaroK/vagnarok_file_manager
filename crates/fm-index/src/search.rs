@@ -1246,4 +1246,82 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn quick_jump_dirs_supports_path_separators_hidden_rules_and_skips_git() {
+        let dir = std::env::temp_dir().join(format!("fm_index_qj_rules_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("work/alpha/target_dir")).expect("mkdir work");
+        std::fs::create_dir_all(dir.join("personal/alpha/other")).expect("mkdir personal");
+        std::fs::create_dir_all(dir.join(".hidden_cache/secret_dir")).expect("mkdir hidden");
+        std::fs::create_dir_all(dir.join(".git/objects")).expect("mkdir git");
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt");
+
+        // Consulta com separador filtra pelo caminho completo
+        let path_hits = rt.block_on(quick_jump_dirs(
+            vec![dir.clone()],
+            "work/alpha".to_owned(),
+            10,
+            false,
+            CancellationToken::new(),
+        ));
+        assert!(!path_hits.is_empty());
+        assert!(path_hits[0].path.ends_with("work/alpha"));
+        assert!(!path_hits.iter().any(|h| h.path.ends_with("personal/alpha")));
+
+        // Ocultos desabilitados: não retorna `secret_dir` dentro de `.hidden_cache`
+        let no_hidden = rt.block_on(quick_jump_dirs(
+            vec![dir.clone()],
+            "secret_dir".to_owned(),
+            10,
+            false,
+            CancellationToken::new(),
+        ));
+        assert!(no_hidden.is_empty());
+
+        // Ocultos habilitados: encontra `secret_dir`, mas nunca entra em `.git`
+        let with_hidden = rt.block_on(quick_jump_dirs(
+            vec![dir.clone()],
+            "secret_dir".to_owned(),
+            10,
+            true,
+            CancellationToken::new(),
+        ));
+        assert_eq!(with_hidden.len(), 1);
+
+        let git_hits = rt.block_on(quick_jump_dirs(
+            vec![dir.clone()],
+            "objects".to_owned(),
+            10,
+            true,
+            CancellationToken::new(),
+        ));
+        assert!(git_hits.is_empty());
+
+        // Query começando com '.' ativa ocultos automaticamente
+        let dot_hits = rt.block_on(quick_jump_dirs(
+            vec![dir.clone()],
+            ".hidden_cache".to_owned(),
+            10,
+            false,
+            CancellationToken::new(),
+        ));
+        assert_eq!(dot_hits.len(), 1);
+
+        // Query vazia retorna vazio
+        let empty = rt.block_on(quick_jump_dirs(
+            vec![dir.clone()],
+            "   ".to_owned(),
+            10,
+            false,
+            CancellationToken::new(),
+        ));
+        assert!(empty.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

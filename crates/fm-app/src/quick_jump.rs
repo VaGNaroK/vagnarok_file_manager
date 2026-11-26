@@ -268,4 +268,46 @@ mod tests {
             PathBuf::from("/home/user/backup/vagnarok_old")
         );
     }
+
+    #[test]
+    fn rank_quick_jump_empty_query_orders_by_source_priority_and_truncates() {
+        let mem = vec![
+            (PathBuf::from("/tmp/recent"), QuickJumpSource::Recent),
+            (PathBuf::from("/tmp/fav"), QuickJumpSource::Favorite),
+            (PathBuf::from("/tmp/curr"), QuickJumpSource::CurrentDir),
+        ];
+        let disk = vec![QuickJumpDirHit {
+            path: PathBuf::from("/tmp/sub"),
+            name: CompactString::from("sub"),
+            score: 1000,
+        }];
+
+        let ranked = rank_quick_jump_items(&mem, &disk, "", 3);
+        assert_eq!(ranked.len(), 3);
+        assert_eq!(ranked[0].source, QuickJumpSource::CurrentDir);
+        assert_eq!(ranked[1].source, QuickJumpSource::Favorite);
+        assert_eq!(ranked[2].source, QuickJumpSource::Recent);
+    }
+
+    #[test]
+    fn rank_quick_jump_path_separator_matches_full_path_and_localizes_labels() {
+        let mem = vec![
+            (PathBuf::from("/home/user/docs/rust"), QuickJumpSource::Recent),
+            (
+                PathBuf::from("/home/user/projetos/rust"),
+                QuickJumpSource::Favorite,
+            ),
+        ];
+
+        let ranked = rank_quick_jump_items(&mem, &[], "projetos/rust", 10);
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].path, PathBuf::from("/home/user/projetos/rust"));
+
+        let pt = Strings::for_language(fm_core::Language::PtBr);
+        assert_eq!(QuickJumpSource::CurrentDir.label(pt), "Atual");
+        assert_eq!(QuickJumpSource::Favorite.label(pt), "Favorito");
+        let en = Strings::for_language(fm_core::Language::EnUs);
+        assert_eq!(QuickJumpSource::CurrentDir.label(en), "Current");
+        assert_eq!(QuickJumpSource::Subfolder.label(en), "Subfolder");
+    }
 }
