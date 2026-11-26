@@ -614,3 +614,13 @@ cmd-check-updates = Vérifier les mises à jour
 cmd-toggle-theme = Basculer thème clair/sombre
 cmd-view-grid = Vue Grille
 cmd-view-list = Vue Liste
+
+quick-jump-title = Accès Rapide (Quick Jump)
+quick-jump-placeholder = Tapez le nom ou le chemin du dossier...
+quick-jump-empty = Aucun dossier trouvé.
+quick-jump-hint = ↑↓ naviguer • Entrée ouvrir • Ctrl+Entrée nouvel onglet • Échap fermer
+quick-jump-src-current = Actuel
+quick-jump-src-favorite = Favori
+quick-jump-src-recent = Récent
+quick-jump-src-subfolder = Sous-dossier
+quick-jump-new-tab = Nouvel onglet

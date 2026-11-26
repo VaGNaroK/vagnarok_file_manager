@@ -122,6 +122,15 @@ pub struct Strings {
     pub cmd_toggle_theme: &'static str,
     pub cmd_view_grid: &'static str,
     pub cmd_view_list: &'static str,
+    pub quick_jump_title: &'static str,
+    pub quick_jump_placeholder: &'static str,
+    pub quick_jump_empty: &'static str,
+    pub quick_jump_hint: &'static str,
+    pub quick_jump_src_current: &'static str,
+    pub quick_jump_src_favorite: &'static str,
+    pub quick_jump_src_recent: &'static str,
+    pub quick_jump_src_subfolder: &'static str,
+    pub quick_jump_new_tab: &'static str,
     pub searching: &'static str,
     pub computing_hash: &'static str,
     pub new_folder: &'static str,
@@ -871,6 +880,15 @@ impl Strings {
         let cmd_toggle_theme = resolve("cmd-toggle-theme");
         let cmd_view_grid = resolve("cmd-view-grid");
         let cmd_view_list = resolve("cmd-view-list");
+        let quick_jump_title = resolve("quick-jump-title");
+        let quick_jump_placeholder = resolve("quick-jump-placeholder");
+        let quick_jump_empty = resolve("quick-jump-empty");
+        let quick_jump_hint = resolve("quick-jump-hint");
+        let quick_jump_src_current = resolve("quick-jump-src-current");
+        let quick_jump_src_favorite = resolve("quick-jump-src-favorite");
+        let quick_jump_src_recent = resolve("quick-jump-src-recent");
+        let quick_jump_src_subfolder = resolve("quick-jump-src-subfolder");
+        let quick_jump_new_tab = resolve("quick-jump-new-tab");
         let searching = resolve("searching");
         let computing_hash = resolve("computing-hash");
         let new_folder = resolve("new-folder");
@@ -1413,6 +1431,15 @@ impl Strings {
             cmd_toggle_theme,
             cmd_view_grid,
             cmd_view_list,
+            quick_jump_title,
+            quick_jump_placeholder,
+            quick_jump_empty,
+            quick_jump_hint,
+            quick_jump_src_current,
+            quick_jump_src_favorite,
+            quick_jump_src_recent,
+            quick_jump_src_subfolder,
+            quick_jump_new_tab,
             searching,
             computing_hash,
             new_folder,

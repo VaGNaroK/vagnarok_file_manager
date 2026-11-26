@@ -13,7 +13,9 @@ use fm_core::{
     VfsProvider, ViewMode, VolumeSpace, WindowDecorationsMode, should_auto_check_updates,
 };
 use fm_fs::LocalFs;
-use fm_index::{AdvancedSearchQuery, DateFilter, FileTypeFilter, SearchHit, SizeFilter};
+use fm_index::{
+    AdvancedSearchQuery, DateFilter, FileTypeFilter, QuickJumpDirHit, SearchHit, SizeFilter,
+};
 use fm_preview::{DiskThumbnailCache, ThumbnailKey, ThumbnailRgba, rasterize_system_icon};
 use fm_telemetry::{CachedFileTelemetry, DiskMetadataCache};
 use fm_theme::{Spacing, ThemePalette};
@@ -57,6 +59,10 @@ pub fn command_palette_input_id() -> Id {
     Id::new("fm_command_palette_input")
 }
 
+pub fn quick_jump_input_id() -> Id {
+    Id::new("fm_quick_jump_input")
+}
+
 pub fn dialog_input_id() -> Id {
     Id::new("fm_dialog_input")
 }
@@ -86,6 +92,7 @@ pub enum TextInputTarget {
     DeepSearchInput,
     DeepSearchContentInput,
     CommandPaletteInput,
+    QuickJumpInput,
     PathDraft,
 }
 
@@ -595,6 +602,21 @@ pub enum Message {
     CommandPaletteExecute(&'static str),
     FocusQuickFilter,
     ClearTabFilters,
+    OpenQuickJump,
+    CloseQuickJump,
+    QuickJumpQueryChanged(String),
+    QuickJumpMoveSelection(isize),
+    QuickJumpResults {
+        request_id: u64,
+        items: Vec<QuickJumpDirHit>,
+    },
+    QuickJumpOpenSelected {
+        new_tab: bool,
+    },
+    QuickJumpOpenPath {
+        path: PathBuf,
+        new_tab: bool,
+    },
     DeepSearchQueryChanged(String),
     DeepSearchContentQueryChanged(String),
     DeepSearchToggleNameRegex,
@@ -933,6 +955,13 @@ pub struct App {
     pub command_palette_query: String,
     pub command_palette_selected: usize,
     pub command_palette_recent: Vec<&'static str>,
+    pub quick_jump_open: bool,
+    pub quick_jump_query: String,
+    pub quick_jump_selected: usize,
+    pub quick_jump_items: Vec<crate::quick_jump::QuickJumpItem>,
+    pub quick_jump_request_id: u64,
+    pub quick_jump_cancel: Option<CancellationToken>,
+    pub quick_jump_recent: Vec<PathBuf>,
     pub active_dialog: Option<ActiveDialog>,
     pub bulk_rename_modal: Option<BulkRenameModalState>,
     pub last_bulk_rename_undo: Option<Vec<(PathBuf, PathBuf)>>,
@@ -1085,6 +1114,13 @@ impl App {
             command_palette_query: String::new(),
             command_palette_selected: 0,
             command_palette_recent: Vec::new(),
+            quick_jump_open: false,
+            quick_jump_query: String::new(),
+            quick_jump_selected: 0,
+            quick_jump_items: Vec::new(),
+            quick_jump_request_id: 0,
+            quick_jump_cancel: None,
+            quick_jump_recent: Vec::new(),
             active_dialog: None,
             bulk_rename_modal: None,
             last_bulk_rename_undo: None,
@@ -1458,6 +1494,7 @@ impl App {
             TextInputTarget::DeepSearchInput => self.deep_search_query.clone(),
             TextInputTarget::DeepSearchContentInput => self.deep_search_content_query.clone(),
             TextInputTarget::CommandPaletteInput => self.command_palette_query.clone(),
+            TextInputTarget::QuickJumpInput => self.quick_jump_query.clone(),
             TextInputTarget::PathDraft => self.path_draft.clone(),
         }
     }
@@ -1476,6 +1513,7 @@ impl App {
             TextInputTarget::CommandPaletteInput => {
                 self.update(Message::CommandPaletteQueryChanged(val))
             }
+            TextInputTarget::QuickJumpInput => self.update(Message::QuickJumpQueryChanged(val)),
             TextInputTarget::PathDraft => self.update(Message::PathDraftChanged(val)),
         }
     }
@@ -3007,6 +3045,76 @@ impl App {
                     apply_tab_filter(tab);
                 }
                 Task::none()
+            }
+            Message::OpenQuickJump => {
+                self.context_menu = None;
+                self.quick_jump_open = true;
+                self.quick_jump_query.clear();
+                self.quick_jump_selected = 0;
+                let task = self.spawn_quick_jump_task();
+                Task::batch([operation::focus(quick_jump_input_id()), task])
+            }
+            Message::CloseQuickJump => {
+                self.quick_jump_open = false;
+                if let Some(cancel) = self.quick_jump_cancel.take() {
+                    cancel.cancel();
+                }
+                Task::none()
+            }
+            Message::QuickJumpQueryChanged(query) => {
+                self.quick_jump_query = query;
+                self.quick_jump_selected = 0;
+                self.spawn_quick_jump_task()
+            }
+            Message::QuickJumpMoveSelection(delta) => {
+                self.quick_jump_selected = crate::command_palette::move_selection(
+                    self.quick_jump_selected,
+                    delta,
+                    self.quick_jump_items.len(),
+                );
+                Task::none()
+            }
+            Message::QuickJumpResults { request_id, items } => {
+                if request_id == self.quick_jump_request_id && self.quick_jump_open {
+                    let mem = crate::quick_jump::collect_memory_candidates(self);
+                    self.quick_jump_items = crate::quick_jump::rank_quick_jump_items(
+                        &mem,
+                        &items,
+                        &self.quick_jump_query,
+                        50,
+                    );
+                    if !self.quick_jump_items.is_empty() {
+                        self.quick_jump_selected =
+                            self.quick_jump_selected.min(self.quick_jump_items.len() - 1);
+                    } else {
+                        self.quick_jump_selected = 0;
+                    }
+                }
+                Task::none()
+            }
+            Message::QuickJumpOpenSelected { new_tab } => {
+                if let Some(item) = self.quick_jump_items.get(self.quick_jump_selected).cloned() {
+                    return self.update(Message::QuickJumpOpenPath {
+                        path: item.path,
+                        new_tab,
+                    });
+                }
+                Task::none()
+            }
+            Message::QuickJumpOpenPath { path, new_tab } => {
+                self.quick_jump_open = false;
+                if let Some(cancel) = self.quick_jump_cancel.take() {
+                    cancel.cancel();
+                }
+                self.quick_jump_recent.retain(|p| p != &path);
+                self.quick_jump_recent.insert(0, path.clone());
+                self.quick_jump_recent.truncate(12);
+                if new_tab {
+                    self.update(Message::OpenInNewTab(path))
+                } else {
+                    self.pending_select_path = None;
+                    self.navigate_active_tab(path)
+                }
             }
             Message::DeepSearchQueryChanged(query) => {
                 self.deep_search_query = query;
@@ -5527,6 +5635,8 @@ impl App {
             Some(views::inspector::command_palette_modal(
                 self, palette, strings,
             ))
+        } else if self.quick_jump_open {
+            Some(views::inspector::quick_jump_modal(self, palette, strings))
         } else if self.deep_search_open {
             Some(views::inspector::deep_search_modal(self, palette, strings))
         } else if let Some((root, folders)) = &self.breadcrumb_menu {
@@ -7012,6 +7122,54 @@ impl App {
         )
     }
 
+    fn spawn_quick_jump_task(&mut self) -> Task<Message> {
+        if let Some(prev) = self.quick_jump_cancel.take() {
+            prev.cancel();
+        }
+        let mem = crate::quick_jump::collect_memory_candidates(self);
+        self.quick_jump_items = crate::quick_jump::rank_quick_jump_items(
+            &mem,
+            &[],
+            &self.quick_jump_query,
+            50,
+        );
+        self.quick_jump_selected = 0;
+
+        let trimmed = self.quick_jump_query.trim().to_owned();
+        if trimmed.is_empty() {
+            return Task::none();
+        }
+
+        let mut roots = Vec::new();
+        let mut include_hidden = false;
+        if let Some(tab) = self.current_tab() {
+            include_hidden = tab.show_hidden;
+            if !fm_core::is_virtual_readonly_dir(&tab.current_path) {
+                roots.push(tab.current_path.clone());
+            }
+        }
+        if !roots.contains(&self.places.home) {
+            roots.push(self.places.home.clone());
+        }
+        if roots.is_empty() {
+            return Task::none();
+        }
+
+        self.quick_jump_request_id += 1;
+        let req_id = self.quick_jump_request_id;
+        let cancel = CancellationToken::new();
+        self.quick_jump_cancel = Some(cancel.clone());
+
+        Task::perform(
+            async move {
+                let items =
+                    fm_index::quick_jump_dirs(roots, trimmed, 40, include_hidden, cancel).await;
+                (req_id, items)
+            },
+            |(request_id, items)| Message::QuickJumpResults { request_id, items },
+        )
+    }
+
     fn spawn_deep_search_task(&mut self) -> Task<Message> {
         if let Some(prev) = self.deep_search_cancel.take() {
             prev.cancel();
@@ -7409,11 +7567,36 @@ impl App {
             || disk_modal_visible
             || self.active_dialog.is_some()
             || self.command_palette_open
+            || self.quick_jump_open
             || self.deep_search_open
             || self.path_editing
             || self.prefs_open
             || filter_menu_open;
         if text_input_modal_active {
+            if self.quick_jump_open {
+                match key.as_ref() {
+                    keyboard::Key::Named(Named::Escape) => {
+                        return self.update(Message::CloseQuickJump);
+                    }
+                    keyboard::Key::Character("p")
+                        if modifiers.control() && !modifiers.shift() =>
+                    {
+                        return self.update(Message::CloseQuickJump);
+                    }
+                    keyboard::Key::Named(Named::ArrowUp) => {
+                        return self.update(Message::QuickJumpMoveSelection(-1));
+                    }
+                    keyboard::Key::Named(Named::ArrowDown) => {
+                        return self.update(Message::QuickJumpMoveSelection(1));
+                    }
+                    keyboard::Key::Named(Named::Enter) => {
+                        return self.update(Message::QuickJumpOpenSelected {
+                            new_tab: modifiers.control(),
+                        });
+                    }
+                    _ => return Task::none(),
+                }
+            }
             if self.command_palette_open {
                 match key.as_ref() {
                     keyboard::Key::Named(Named::Escape) => {
@@ -7543,6 +7726,9 @@ impl App {
             }
             keyboard::Key::Character("p") if modifiers.control() && modifiers.shift() => {
                 self.update(Message::OpenCommandPalette)
+            }
+            keyboard::Key::Character("p") if modifiers.control() && !modifiers.shift() => {
+                self.update(Message::OpenQuickJump)
             }
             keyboard::Key::Character("l") if modifiers.control() => {
                 self.update(Message::TogglePathEdit)
@@ -8764,6 +8950,7 @@ fn text_input_id_for_target(target: &TextInputTarget) -> Id {
         TextInputTarget::DeepSearchInput => deep_search_input_id(),
         TextInputTarget::DeepSearchContentInput => deep_search_content_input_id(),
         TextInputTarget::CommandPaletteInput => command_palette_input_id(),
+        TextInputTarget::QuickJumpInput => quick_jump_input_id(),
         TextInputTarget::PathDraft => path_input_id(),
     }
 }

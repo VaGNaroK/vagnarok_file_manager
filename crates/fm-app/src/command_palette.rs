@@ -141,6 +141,15 @@ pub fn build_catalog(app: &App, strings: Strings) -> Vec<CommandEntry> {
             message: Message::TogglePathEdit,
         },
         CommandEntry {
+            id: "nav.quick_jump",
+            category: strings.cmd_cat_nav,
+            title: strings.quick_jump_title,
+            keywords: "quick jump ir pasta folder goto",
+            shortcut: "Ctrl+P",
+            enabled: true,
+            message: Message::OpenQuickJump,
+        },
+        CommandEntry {
             id: "nav.refresh",
             category: strings.cmd_cat_nav,
             title: strings.refresh_drives,

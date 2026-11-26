@@ -898,6 +898,134 @@ fn advanced_search_blocking(
     hits.into_iter().map(|(hit, _)| hit).collect()
 }
 
+/// Resultado de busca rápida de diretórios para Quick Jump (`Ctrl+P`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuickJumpDirHit {
+    pub path: PathBuf,
+    pub name: CompactString,
+    pub score: u32,
+}
+
+/// Busca assíncrona rasa (BFS apenas em diretórios) para o Quick Jump (`Ctrl+P`).
+pub async fn quick_jump_dirs(
+    roots: Vec<PathBuf>,
+    query: String,
+    max_results: usize,
+    include_hidden: bool,
+    cancel: CancellationToken,
+) -> Vec<QuickJumpDirHit> {
+    let trimmed = query.trim().to_owned();
+    if trimmed.is_empty() || cancel.is_cancelled() {
+        return Vec::new();
+    }
+
+    tokio::task::spawn_blocking(move || {
+        quick_jump_dirs_blocking(&roots, &trimmed, max_results, include_hidden, &cancel)
+    })
+    .await
+    .unwrap_or_default()
+}
+
+fn quick_jump_dirs_blocking(
+    roots: &[PathBuf],
+    query: &str,
+    max_results: usize,
+    include_hidden: bool,
+    cancel: &CancellationToken,
+) -> Vec<QuickJumpDirHit> {
+    const MAX_DEPTH: usize = 5;
+    const MAX_VISITED: usize = 80_000;
+
+    let Some(mut matcher) = NameMatcher::build(query, false) else {
+        return Vec::new();
+    };
+    let effective_hidden = include_hidden || query.starts_with('.');
+
+    let mut queue: VecDeque<(PathBuf, usize)> = VecDeque::new();
+    let mut seen_dirs = std::collections::HashSet::new();
+    for root in roots {
+        if seen_dirs.insert(root.clone()) {
+            queue.push_back((root.clone(), 0));
+        }
+    }
+
+    let mut hits: Vec<(QuickJumpDirHit, usize)> = Vec::new();
+    let mut visited: usize = 0;
+
+    while let Some((dir, depth)) = queue.pop_front() {
+        if cancel.is_cancelled() {
+            return Vec::new();
+        }
+        if visited >= MAX_VISITED {
+            break;
+        }
+        let Ok(read_dir) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+
+        let mut subdirs: Vec<PathBuf> = Vec::new();
+        for entry_res in read_dir {
+            visited += 1;
+            if visited.is_multiple_of(256) && cancel.is_cancelled() {
+                return Vec::new();
+            }
+            if visited >= MAX_VISITED {
+                break;
+            }
+            let Ok(entry) = entry_res else {
+                continue;
+            };
+            let Ok(ft) = entry.file_type() else {
+                continue;
+            };
+            if !ft.is_dir() {
+                continue;
+            }
+            let os_name = entry.file_name();
+            let name = os_name.to_string_lossy();
+            if name == ".git" || (!effective_hidden && name.starts_with('.')) {
+                continue;
+            }
+
+            let path = entry.path();
+            if !seen_dirs.insert(path.clone()) {
+                continue;
+            }
+
+            let path_str = path.to_string_lossy();
+            if let Some(score) = matcher.score(name.as_ref(), path_str.as_ref()) {
+                hits.push((
+                    QuickJumpDirHit {
+                        path: path.clone(),
+                        name: CompactString::from(name.as_ref()),
+                        score,
+                    },
+                    depth + 1,
+                ));
+            }
+
+            if depth + 1 < MAX_DEPTH {
+                subdirs.push(path);
+            }
+        }
+
+        subdirs.sort();
+        for sub in subdirs {
+            queue.push_back((sub, depth + 1));
+        }
+    }
+
+    hits.sort_by(|(a, da), (b, db)| {
+        b.score
+            .cmp(&a.score)
+            .then_with(|| da.cmp(db))
+            .then_with(|| a.path.as_os_str().len().cmp(&b.path.as_os_str().len()))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    hits.truncate(max_results);
+    hits.into_iter().map(|(hit, _)| hit).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1079,6 +1207,42 @@ mod tests {
             cancel,
         ));
         assert!(cancelled_hits.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quick_jump_dirs_finds_folders_and_respects_cancellation() {
+        let dir = std::env::temp_dir().join(format!("fm_index_qj_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("projetos/vagnarok/src")).expect("mkdir");
+        std::fs::write(dir.join("projetos/vagnarok/README.md"), b"hi").expect("write");
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt");
+
+        let hits = rt.block_on(quick_jump_dirs(
+            vec![dir.clone()],
+            "vagnarok".to_owned(),
+            20,
+            false,
+            CancellationToken::new(),
+        ));
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].name, "vagnarok");
+
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let cancelled = rt.block_on(quick_jump_dirs(
+            vec![dir.clone()],
+            "vagnarok".to_owned(),
+            20,
+            false,
+            cancel,
+        ));
+        assert!(cancelled.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

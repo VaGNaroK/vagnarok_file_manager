@@ -614,3 +614,13 @@ cmd-check-updates = Buscar actualizaciones
 cmd-toggle-theme = Alternar tema claro/oscuro
 cmd-view-grid = Vista en Cuadrícula
 cmd-view-list = Vista en Lista
+
+quick-jump-title = Salto Rápido (Quick Jump)
+quick-jump-placeholder = Escribe el nombre o ruta de la carpeta...
+quick-jump-empty = No se encontraron carpetas.
+quick-jump-hint = ↑↓ navegar • Enter abrir • Ctrl+Enter nueva pestaña • Esc cerrar
+quick-jump-src-current = Actual
+quick-jump-src-favorite = Favorito
+quick-jump-src-recent = Reciente
+quick-jump-src-subfolder = Subcarpeta
+quick-jump-new-tab = Nueva pestaña

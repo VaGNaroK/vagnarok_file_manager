@@ -614,3 +614,13 @@ cmd-check-updates = Check for updates
 cmd-toggle-theme = Toggle light/dark theme
 cmd-view-grid = Grid View
 cmd-view-list = List View
+
+quick-jump-title = Quick Jump
+quick-jump-placeholder = Type a folder name or path...
+quick-jump-empty = No matching folders found.
+quick-jump-hint = ↑↓ navigate • Enter open • Ctrl+Enter new tab • Esc close
+quick-jump-src-current = Current
+quick-jump-src-favorite = Favorite
+quick-jump-src-recent = Recent
+quick-jump-src-subfolder = Subfolder
+quick-jump-new-tab = New tab

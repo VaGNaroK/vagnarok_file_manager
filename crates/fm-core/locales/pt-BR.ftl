@@ -614,3 +614,13 @@ cmd-check-updates = Verificar atualizações
 cmd-toggle-theme = Alternar tema claro/escuro
 cmd-view-grid = Visualização em Grade
 cmd-view-list = Visualização em Lista
+
+quick-jump-title = Ir para pasta (Quick Jump)
+quick-jump-placeholder = Digite o nome ou caminho da pasta...
+quick-jump-empty = Nenhuma pasta encontrada.
+quick-jump-hint = ↑↓ navegar • Enter abrir • Ctrl+Enter nova aba • Esc fechar
+quick-jump-src-current = Atual
+quick-jump-src-favorite = Favorito
+quick-jump-src-recent = Recente
+quick-jump-src-subfolder = Subpasta
+quick-jump-new-tab = Nova aba

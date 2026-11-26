@@ -614,3 +614,13 @@ cmd-check-updates = Nach Updates suchen
 cmd-toggle-theme = Helles/Dunkles Design wechseln
 cmd-view-grid = Rasteransicht
 cmd-view-list = Listenansicht
+
+quick-jump-title = Schnellsprung (Quick Jump)
+quick-jump-placeholder = Ordnername oder Pfad eingeben...
+quick-jump-empty = Keine passenden Ordner gefunden.
+quick-jump-hint = ↑↓ navigieren • Enter öffnen • Ctrl+Enter neuer Tab • Esc schließen
+quick-jump-src-current = Aktuell
+quick-jump-src-favorite = Favorit
+quick-jump-src-recent = Zuletzt
+quick-jump-src-subfolder = Unterordner
+quick-jump-new-tab = Neuer Tab

@@ -6,6 +6,7 @@ mod bulk_rename;
 mod command_palette;
 mod disk_analyzer;
 mod duplicate_finder;
+mod quick_jump;
 mod updater;
 mod views;
 

@@ -7,7 +7,7 @@ pub mod watcher;
 pub use quick_filter::quick_filter_entries;
 pub use search::{
     AdvancedSearchQuery, ContentMatchSnippet, DEFAULT_MAX_CONTENT_FILE_BYTES, DateFilter,
-    FileTypeFilter, SearchHit, SizeFilter, advanced_search, deep_search, deep_search_with_hidden,
-    fuzzy_rank_entries, fuzzy_rank_indices,
+    FileTypeFilter, QuickJumpDirHit, SearchHit, SizeFilter, advanced_search, deep_search,
+    deep_search_with_hidden, fuzzy_rank_entries, fuzzy_rank_indices, quick_jump_dirs,
 };
 pub use watcher::{WatchEvent, WatchEventKind, start_directory_watcher};
