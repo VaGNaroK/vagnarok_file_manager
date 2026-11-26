@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -8,6 +8,7 @@ use compact_str::CompactString;
 use fm_core::FileEntry;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
+use rayon::prelude::*;
 use regex::{Regex, RegexBuilder};
 use tokio_util::sync::CancellationToken;
 
@@ -515,14 +516,123 @@ fn truncate_snippet(line: &str) -> CompactString {
     }
 }
 
-/// Lê um arquivo em streaming procurando ocorrências de texto/regex.
+fn is_known_binary_extension(ext: &str) -> bool {
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "webp"
+            | "gif"
+            | "bmp"
+            | "ico"
+            | "tif"
+            | "tiff"
+            | "avif"
+            | "heic"
+            | "mp4"
+            | "mkv"
+            | "avi"
+            | "mov"
+            | "webm"
+            | "wmv"
+            | "flv"
+            | "m4v"
+            | "mp3"
+            | "flac"
+            | "ogg"
+            | "opus"
+            | "wav"
+            | "m4a"
+            | "aac"
+            | "wma"
+            | "zip"
+            | "7z"
+            | "rar"
+            | "tar"
+            | "gz"
+            | "bz2"
+            | "xz"
+            | "zst"
+            | "tgz"
+            | "exe"
+            | "dll"
+            | "so"
+            | "dylib"
+            | "o"
+            | "a"
+            | "rlib"
+            | "rmeta"
+            | "wasm"
+            | "pyc"
+            | "class"
+            | "pdf"
+            | "sqlite"
+            | "db"
+            | "ttf"
+            | "otf"
+            | "woff"
+            | "woff2"
+            | "bin"
+            | "iso"
+            | "img"
+            | "appimage"
+    )
+}
+
+fn find_ascii_needle(haystack: &[u8], needle: &[u8], case_sensitive: bool) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    let first = needle[0];
+    let first_alt = if case_sensitive {
+        first
+    } else {
+        first.to_ascii_lowercase()
+    };
+    let end = haystack.len() - needle.len();
+    let mut i = 0;
+    while i <= end {
+        let b = haystack[i];
+        let matches_first = if case_sensitive {
+            b == first
+        } else {
+            b.to_ascii_lowercase() == first_alt
+        };
+        if matches_first {
+            let slice = &haystack[i..i + needle.len()];
+            let ok = if case_sensitive {
+                slice == needle
+            } else {
+                slice.eq_ignore_ascii_case(needle)
+            };
+            if ok {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Lê um arquivo uma única vez em streaming/buffer procurando ocorrências de texto/regex.
 /// Pula arquivos binários (byte NUL nos primeiros 8 KiB) e aborta ao cancelar.
 fn search_file_content(
     path: &Path,
+    max_file_size_bytes: u64,
     matcher: &ContentMatcher,
     cancel: &CancellationToken,
-) -> Option<Vec<ContentMatchSnippet>> {
+) -> Option<(u64, Option<SystemTime>, Vec<ContentMatchSnippet>)> {
+    if cancel.is_cancelled() {
+        return None;
+    }
     let mut file = open_shared_read(path).ok()?;
+    let meta = file.metadata().ok()?;
+    let size_bytes = meta.len();
+    if size_bytes == 0 || size_bytes > max_file_size_bytes {
+        return None;
+    }
+    let modified_at = meta.modified().ok();
 
     let mut probe = [0u8; BINARY_PROBE_BYTES];
     let probe_len = file.read(&mut probe).ok()?;
@@ -530,32 +640,69 @@ fn search_file_content(
         return None;
     }
 
-    // Reabre ou reposiciona para ler do início em streaming.
-    let file = open_shared_read(path).ok()?;
-    let mut reader = BufReader::with_capacity(32 * 1024, file);
-    let mut raw_line = Vec::with_capacity(256);
-    let mut line_number = 0usize;
+    let mut buf = Vec::with_capacity((size_bytes as usize).min(64 * 1024).max(probe_len));
+    buf.extend_from_slice(&probe[..probe_len]);
+    if (probe_len as u64) < size_bytes {
+        file.read_to_end(&mut buf).ok()?;
+    }
+
+    if cancel.is_cancelled() {
+        return None;
+    }
+
     let mut snippets = Vec::new();
-
-    loop {
-        if line_number.is_multiple_of(64) && cancel.is_cancelled() {
-            return None;
+    match matcher {
+        ContentMatcher::Plain {
+            needle,
+            case_sensitive,
+            ..
+        } if needle.is_ascii() => {
+            let needle_bytes = needle.as_bytes();
+            let mut cursor = 0usize;
+            let mut line_number = 1usize;
+            while let Some(rel_pos) =
+                find_ascii_needle(&buf[cursor..], needle_bytes, *case_sensitive)
+            {
+                let match_pos = cursor + rel_pos;
+                line_number += buf[cursor..match_pos]
+                    .iter()
+                    .filter(|&&b| b == b'\n')
+                    .count();
+                let line_start = buf[..match_pos]
+                    .iter()
+                    .rposition(|&b| b == b'\n')
+                    .map_or(0, |p| p + 1);
+                let line_end = buf[match_pos..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .map_or(buf.len(), |p| match_pos + p);
+                let line_str = String::from_utf8_lossy(&buf[line_start..line_end]);
+                snippets.push(ContentMatchSnippet {
+                    line_number,
+                    line_text: truncate_snippet(line_str.as_ref()),
+                });
+                if snippets.len() >= MAX_SNIPPETS_PER_FILE || line_end >= buf.len() {
+                    break;
+                }
+                cursor = line_end + 1;
+                line_number += 1;
+            }
         }
-        raw_line.clear();
-        let bytes_read = reader.read_until(b'\n', &mut raw_line).ok()?;
-        if bytes_read == 0 {
-            break;
-        }
-        line_number += 1;
-
-        let text = String::from_utf8_lossy(&raw_line);
-        if matcher.matches_line(text.as_ref()) {
-            snippets.push(ContentMatchSnippet {
-                line_number,
-                line_text: truncate_snippet(text.as_ref()),
-            });
-            if snippets.len() >= MAX_SNIPPETS_PER_FILE {
-                break;
+        _ => {
+            for (idx, raw_line) in buf.split(|&b| b == b'\n').enumerate() {
+                if idx.is_multiple_of(128) && cancel.is_cancelled() {
+                    return None;
+                }
+                let text = String::from_utf8_lossy(raw_line);
+                if matcher.matches_line(text.as_ref()) {
+                    snippets.push(ContentMatchSnippet {
+                        line_number: idx + 1,
+                        line_text: truncate_snippet(text.as_ref()),
+                    });
+                    if snippets.len() >= MAX_SNIPPETS_PER_FILE {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -563,7 +710,7 @@ fn search_file_content(
     if snippets.is_empty() {
         None
     } else {
-        Some(snippets)
+        Some((size_bytes, modified_at, snippets))
     }
 }
 
@@ -729,6 +876,16 @@ fn advanced_search_blocking(
     };
 
     let now = SystemTime::now();
+    struct CandidateFile {
+        path: PathBuf,
+        relative_path: CompactString,
+        name: CompactString,
+        score: u32,
+        depth: usize,
+        size_bytes: Option<u64>,
+        modified_at: Option<SystemTime>,
+    }
+    let mut candidates: Vec<CandidateFile> = Vec::new();
     let mut hits: Vec<(SearchHit, usize)> = Vec::new();
 
     // Busca em largura (BFS) para alcançar pastas de usuário imediatamente antes de árvores profundas.
@@ -799,15 +956,18 @@ fn advanced_search_blocking(
             let rel_compact = CompactString::from(rel.to_string_lossy().as_ref());
 
             // 1. Nome / caminho
-            let Some(mut score) = name_matcher.score(name.as_ref(), rel_compact.as_str()) else {
+            let Some(score) = name_matcher.score(name.as_ref(), rel_compact.as_str()) else {
                 continue;
             };
 
-            // 2. Extensão inline (`ext:...`)
+            // 2. Extensão inline (`ext:...`) e skip imediato de binários conhecidos na busca de conteúdo
             let ext = path
                 .extension()
                 .and_then(|e| e.to_str())
                 .unwrap_or_default();
+            if has_content_query && is_known_binary_extension(ext) {
+                continue;
+            }
             if !resolved.extensions.is_empty()
                 && !resolved
                     .extensions
@@ -817,10 +977,19 @@ fn advanced_search_blocking(
                 continue;
             }
 
-            // 3. Metadados de sistema (tamanho e data)
-            let meta = entry.metadata().ok();
-            let size_bytes = meta.as_ref().map(|m| m.len());
-            let modified_at = meta.as_ref().and_then(|m| m.modified().ok());
+            // 3. Metadados de sistema (tamanho e data) — evita `stat` extra durante BFS na busca de conteúdo quando não há filtro
+            let need_bfs_meta = !has_content_query
+                || resolved.size_filter != SizeFilter::Any
+                || resolved.date_filter != DateFilter::Any;
+            let (size_bytes, modified_at) = if need_bfs_meta {
+                let meta = entry.metadata().ok();
+                (
+                    meta.as_ref().map(|m| m.len()),
+                    meta.as_ref().and_then(|m| m.modified().ok()),
+                )
+            } else {
+                (None, None)
+            };
 
             if resolved.size_filter != SizeFilter::Any {
                 let Some(sz) = size_bytes else {
@@ -844,35 +1013,37 @@ fn advanced_search_blocking(
                 continue;
             }
 
-            // 5. Conteúdo ("Pesquisar contendo...")
-            let content_matches = if let Some(cm) = &content_matcher {
+            // 5. Conteúdo ("Pesquisar contendo...") vai para varredura paralela com `rayon`
+            if has_content_query {
                 if let Some(sz) = size_bytes
                     && sz > resolved.max_file_size_bytes
                 {
                     continue;
                 }
-                let Some(snippets) = search_file_content(&path, cm, cancel) else {
-                    continue;
-                };
-                score = score.saturating_add((snippets.len() as u32) * 500);
-                snippets
-            } else {
-                Vec::new()
-            };
-
-            hits.push((
-                SearchHit {
+                candidates.push(CandidateFile {
                     path,
                     relative_path: rel_compact,
                     name: CompactString::from(name.as_ref()),
-                    is_dir,
                     score,
+                    depth: depth + 1,
                     size_bytes,
                     modified_at,
-                    content_matches,
-                },
-                depth + 1,
-            ));
+                });
+            } else {
+                hits.push((
+                    SearchHit {
+                        path,
+                        relative_path: rel_compact,
+                        name: CompactString::from(name.as_ref()),
+                        is_dir,
+                        score,
+                        size_bytes,
+                        modified_at,
+                        content_matches: Vec::new(),
+                    },
+                    depth + 1,
+                ));
+            }
         }
 
         visible_subdirs.sort();
@@ -885,6 +1056,38 @@ fn advanced_search_blocking(
                 queue.push_back((sub, depth + 1));
             }
         }
+    }
+
+    if let Some(cm) = &content_matcher {
+        let parallel_hits: Vec<(SearchHit, usize)> = candidates
+            .into_par_iter()
+            .filter_map(|cand| {
+                let (sz, mod_at, snippets) = search_file_content(
+                    &cand.path,
+                    resolved.max_file_size_bytes,
+                    cm,
+                    cancel,
+                )?;
+                let boosted = cand.score.saturating_add((snippets.len() as u32) * 500);
+                Some((
+                    SearchHit {
+                        path: cand.path,
+                        relative_path: cand.relative_path,
+                        name: cand.name,
+                        is_dir: false,
+                        score: boosted,
+                        size_bytes: cand.size_bytes.or(Some(sz)),
+                        modified_at: cand.modified_at.or(mod_at),
+                        content_matches: snippets,
+                    },
+                    cand.depth,
+                ))
+            })
+            .collect();
+        if cancel.is_cancelled() {
+            return Vec::new();
+        }
+        hits.extend(parallel_hits);
     }
 
     hits.sort_by(|(a, da), (b, db)| {

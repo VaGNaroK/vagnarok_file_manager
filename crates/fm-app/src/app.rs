@@ -593,6 +593,8 @@ pub enum Message {
     ResolveConflict(ConflictPolicy),
     OpenDeepSearch,
     OpenDeepSearchIn(PathBuf),
+    MinimizeDeepSearch,
+    RestoreDeepSearch,
     CloseDeepSearch,
     OpenCommandPalette,
     CloseCommandPalette,
@@ -936,6 +938,7 @@ pub struct App {
     pub resizing_properties_modal: Option<(window::Id, Point, f32, f32, f32, f32)>,
     pub dragging_properties_modal: Option<(window::Id, Point, f32, f32)>,
     pub deep_search_open: bool,
+    pub deep_search_minimized: bool,
     pub deep_search_root_override: Option<PathBuf>,
     pub deep_search_query: String,
     pub deep_search_name_regex: bool,
@@ -1095,6 +1098,7 @@ impl App {
             resizing_properties_modal: None,
             dragging_properties_modal: None,
             deep_search_open: false,
+            deep_search_minimized: false,
             deep_search_root_override: None,
             deep_search_query: String::new(),
             deep_search_name_regex: false,
@@ -2949,6 +2953,7 @@ impl App {
             }
             Message::OpenDeepSearch => {
                 self.deep_search_open = true;
+                self.deep_search_minimized = false;
                 self.deep_search_root_override = None;
                 if let Some(q) = self.current_tab().map(|t| t.filter_query.clone())
                     && !q.trim().is_empty()
@@ -2961,6 +2966,7 @@ impl App {
             Message::OpenDeepSearchIn(dir) => {
                 self.context_menu = None;
                 self.deep_search_open = true;
+                self.deep_search_minimized = false;
                 self.deep_search_root_override = Some(dir);
                 let search_task = self.spawn_deep_search_task();
                 Task::batch([
@@ -2968,8 +2974,23 @@ impl App {
                     search_task,
                 ])
             }
+            Message::MinimizeDeepSearch => {
+                self.deep_search_minimized = true;
+                Task::none()
+            }
+            Message::RestoreDeepSearch => {
+                self.deep_search_open = true;
+                self.deep_search_minimized = false;
+                let target_id = if self.deep_search_content_query.trim().is_empty() {
+                    deep_search_input_id()
+                } else {
+                    deep_search_content_input_id()
+                };
+                operation::focus(target_id)
+            }
             Message::CloseDeepSearch => {
                 self.deep_search_open = false;
+                self.deep_search_minimized = false;
                 self.deep_search_root_override = None;
                 self.deep_search_loading = false;
                 if let Some(cancel) = self.deep_search_cancel.take() {
@@ -5479,7 +5500,7 @@ impl App {
         {
             subs.push(Subscription::run_with(active_path, watch_directory_stream));
         }
-        if self.deep_search_open && self.deep_search_loading {
+        if self.deep_search_open && !self.deep_search_minimized && self.deep_search_loading {
             subs.push(
                 iced::time::every(Duration::from_millis(32))
                     .map(|_| Message::DeepSearchSpinnerTick),
@@ -5637,7 +5658,7 @@ impl App {
             ))
         } else if self.quick_jump_open {
             Some(views::inspector::quick_jump_modal(self, palette, strings))
-        } else if self.deep_search_open {
+        } else if self.deep_search_open && !self.deep_search_minimized {
             Some(views::inspector::deep_search_modal(self, palette, strings))
         } else if let Some((root, folders)) = &self.breadcrumb_menu {
             Some(views::modals::breadcrumb_menu_overlay(
@@ -7526,7 +7547,7 @@ impl App {
             if self.prefs_open {
                 return self.update(Message::ClosePreferences);
             }
-            if self.deep_search_open {
+            if self.deep_search_open && !self.deep_search_minimized {
                 return self.update(Message::CloseDeepSearch);
             }
             if self.active_dialog.is_some() {
@@ -7551,7 +7572,7 @@ impl App {
             && self.active_dialog.is_none()
             && !self.prefs_open
             && !self.quicklook_open
-            && !self.deep_search_open
+            && !(self.deep_search_open && !self.deep_search_minimized)
             && let Some(&top_prop_id) = self.properties_z_order.last()
         {
             return self.update(Message::ClosePropertiesWindow(top_prop_id));
@@ -7560,6 +7581,7 @@ impl App {
             self.context_menu.as_ref().map(|m| &m.kind),
             Some(ContextMenuKind::FilterMenu)
         );
+        let deep_search_modal_visible = self.deep_search_open && !self.deep_search_minimized;
         let text_input_modal_active = self.bulk_rename_modal.is_some()
             || self.archive_password_modal.is_some()
             || compress_modal_visible
@@ -7568,7 +7590,7 @@ impl App {
             || self.active_dialog.is_some()
             || self.command_palette_open
             || self.quick_jump_open
-            || self.deep_search_open
+            || deep_search_modal_visible
             || self.path_editing
             || self.prefs_open
             || filter_menu_open;

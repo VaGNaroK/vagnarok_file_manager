@@ -153,6 +153,11 @@ pub fn view<'a>(
         .style(move |_| styles::panel_surface(palette.accent_surface, palette.accent_border, 6.0));
         right = right.push(pill);
     }
+    if app.deep_search_open && app.deep_search_minimized {
+        right = right.push(crate::views::inspector::deep_search_minimized_pill(
+            app, palette, strings,
+        ));
+    }
     if let Some(modal) = &app.disk_analyzer
         && modal.minimized
     {

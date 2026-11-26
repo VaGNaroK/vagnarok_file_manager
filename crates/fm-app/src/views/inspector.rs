@@ -782,6 +782,10 @@ pub fn deep_search_modal<'a>(
                 ]
                 .spacing(2),
                 space::horizontal(),
+                button(text(strings.arch_minimize).size(12))
+                    .padding([4, 10])
+                    .style(styles::pill_secondary_button(palette))
+                    .on_press(Message::MinimizeDeepSearch),
                 button(
                     row![icon_x().size(14), text(strings.close).size(12)]
                         .spacing(4)
@@ -791,6 +795,7 @@ pub fn deep_search_modal<'a>(
                 .style(styles::pill_secondary_button(palette))
                 .on_press(Message::CloseDeepSearch),
             ]
+            .spacing(8)
             .align_y(Center),
             query_row,
             content_row,
@@ -1226,4 +1231,36 @@ pub fn quick_jump_modal<'a>(
     .style(styles::modal_card(palette));
 
     modal_overlay_backdrop(card)
+}
+
+pub fn deep_search_minimized_pill<'a>(
+    app: &'a App,
+    palette: ThemePalette,
+    strings: Strings,
+) -> Element<'a, Message> {
+    let label = if app.deep_search_loading {
+        strings.searching.to_owned()
+    } else {
+        format!(
+            "{} ({})",
+            strings.deep_search_title,
+            app.deep_search_results.len()
+        )
+    };
+
+    button(
+        row![
+            icon_search().size(13).color(palette.accent_primary),
+            text(label)
+                .size(11)
+                .font(FONT_UI_SEMIBOLD)
+                .color(palette.text_primary),
+        ]
+        .spacing(6)
+        .align_y(Center),
+    )
+    .padding([4, 10])
+    .style(styles::pill_secondary_button(palette))
+    .on_press(Message::RestoreDeepSearch)
+    .into()
 }
