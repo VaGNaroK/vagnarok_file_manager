@@ -639,7 +639,11 @@ pub(crate) fn host_command(program: &str) -> Command {
 pub(crate) fn spawn_detached(cmd: &mut Command) -> std::io::Result<()> {
     use std::os::unix::process::CommandExt;
 
-    cmd.stdin(Stdio::null())
+    // Remove tokens herdados/obsoletos de inicialização para que o gerenciador de janelas
+    // não abra o novo aplicativo atrás da janela atual por prevenção de roubo de foco.
+    cmd.env_remove("DESKTOP_STARTUP_ID")
+        .env_remove("XDG_ACTIVATION_TOKEN")
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 

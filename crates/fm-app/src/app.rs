@@ -502,6 +502,7 @@ pub enum Message {
     ToggleSortDirection,
     ToggleHidden,
     FilterChanged(String),
+    FilterSearchSubmit,
     TogglePathEdit,
     PathDraftChanged(String),
     PathAutocompleteLoaded {
@@ -2274,6 +2275,22 @@ impl App {
                 }
                 self.set_active_scroll_y(0.0);
                 self.queue_visible_thumbnails()
+            }
+            Message::FilterSearchSubmit => {
+                if let Some(target_idx) = self.current_tab().and_then(|t| {
+                    t.selection.focused.or_else(|| {
+                        (t.selection.selected_ids.len() == 1)
+                            .then(|| {
+                                t.visible_entries
+                                    .iter()
+                                    .position(|e| t.selection.selected_ids.contains(&e.id))
+                            })
+                            .flatten()
+                    })
+                }) {
+                    return self.update(Message::ActivateEntry(target_idx));
+                }
+                self.update(Message::OpenDeepSearch)
             }
             Message::TogglePathEdit => {
                 self.path_editing = !self.path_editing;

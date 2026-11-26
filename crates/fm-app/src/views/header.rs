@@ -246,7 +246,7 @@ fn navigation_row<'a>(
                 text_input(strings.search_placeholder, query)
                     .id(search_input_id())
                     .on_input(Message::FilterChanged)
-                    .on_submit(Message::OpenDeepSearch)
+                    .on_submit(Message::FilterSearchSubmit)
                     .size(12)
                     .padding([4, 6])
                     .style(styles::search_input_style(palette))
