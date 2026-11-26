@@ -806,6 +806,7 @@ pub enum SystemIconKey {
     Directory,
     Archive,
     Extension(CompactString),
+    FilePath(PathBuf),
     GenericFile,
     SpecialPlace(SystemPlaceKind),
     Drive(DriveKind),
@@ -826,6 +827,12 @@ impl SystemIconKey {
             .filter(|e| !e.is_empty())
             .map(str::to_ascii_lowercase)
         {
+            if matches!(
+                ext.as_str(),
+                "lnk" | "exe" | "ico" | "url" | "msi" | "desktop"
+            ) {
+                return Self::FilePath(entry.path.clone());
+            }
             return Self::Extension(CompactString::from(ext));
         }
         Self::GenericFile

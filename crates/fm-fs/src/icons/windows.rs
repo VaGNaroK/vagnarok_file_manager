@@ -82,6 +82,14 @@ pub(super) fn resolve_system_icon(
             let synthetic = format!("item.{ext}");
             sh_icon_for_name(&synthetic, false, size_flag)
         }
+        SystemIconKey::FilePath(path) => sh_icon_for_real_path(path, size_flag).or_else(|| {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("bin");
+            let synthetic = format!("item.{ext}");
+            sh_icon_for_name(&synthetic, false, size_flag)
+        }),
         SystemIconKey::SpecialPlace(place) => sh_icon_for_known_folder(*place, size_flag)
             .or_else(|| sh_icon_for_name("folder", true, size_flag)),
         SystemIconKey::Drive(kind) => sh_icon_for_drive(*kind, size_flag)
@@ -89,6 +97,28 @@ pub(super) fn resolve_system_icon(
     }?;
 
     hicon_to_rgba8(&hicon)
+}
+
+fn sh_icon_for_real_path(path: &std::path::Path, size_flag: SHGFI_FLAGS) -> Option<OwnedHicon> {
+    let wide = to_wide_null(path.as_os_str());
+    sh_icon_for_wide(&wide, size_flag)
+}
+
+fn sh_icon_for_wide(wide: &[u16], size_flag: SHGFI_FLAGS) -> Option<OwnedHicon> {
+    let mut info = SHFILEINFOW::default();
+    let ok = unsafe {
+        SHGetFileInfoW(
+            PCWSTR(wide.as_ptr()),
+            Default::default(),
+            Some(&mut info),
+            std::mem::size_of::<SHFILEINFOW>() as u32,
+            SHGFI_ICON | size_flag,
+        )
+    };
+    if ok == 0 || info.hIcon.is_invalid() {
+        return None;
+    }
+    Some(OwnedHicon(info.hIcon))
 }
 
 /// Extrai o ícone embutido de um executável `.exe`/`.ico` para exibição em "Abrir com...".
@@ -105,20 +135,7 @@ pub(super) fn resolve_icon_by_hint(
         return None;
     }
     let wide = to_wide_null(OsStr::new(clean_path));
-    let mut info = SHFILEINFOW::default();
-    let ok = unsafe {
-        SHGetFileInfoW(
-            PCWSTR(wide.as_ptr()),
-            Default::default(),
-            Some(&mut info),
-            std::mem::size_of::<SHFILEINFOW>() as u32,
-            SHGFI_ICON | size_flag,
-        )
-    };
-    if ok == 0 || info.hIcon.is_invalid() {
-        return None;
-    }
-    let hicon = OwnedHicon(info.hIcon);
+    let hicon = sh_icon_for_wide(&wide, size_flag)?;
     hicon_to_rgba8(&hicon)
 }
 

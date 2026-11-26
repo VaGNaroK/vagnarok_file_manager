@@ -42,10 +42,47 @@ pub(super) fn resolve_system_icon(
     key: &SystemIconKey,
     bucket: SystemIconBucket,
 ) -> Option<SystemIconPayload> {
+    if let SystemIconKey::FilePath(path) = key {
+        if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("desktop"))
+            && let Some(icon_name) = parse_desktop_icon_name(path)
+            && let Some(payload) = resolve_icon_by_hint(&icon_name, bucket)
+        {
+            return Some(payload);
+        }
+        let fallback_key = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .filter(|e| !e.is_empty())
+            .map(|e| SystemIconKey::Extension(e.to_ascii_lowercase().into()))
+            .unwrap_or(SystemIconKey::GenericFile);
+        return resolve_system_icon(&fallback_key, bucket);
+    }
     let index = ICON_INDEX.get_or_init(build_icon_index);
     let target_px = bucket.target_px();
     let names = candidate_icon_names(key, &index.mime);
     lookup_icon_file(index, &names, target_px).map(SystemIconPayload::File)
+}
+
+fn parse_desktop_icon_name(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut in_desktop_entry = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_desktop_entry = trimmed == "[Desktop Entry]";
+            continue;
+        }
+        if in_desktop_entry && let Some(icon) = trimmed.strip_prefix("Icon=") {
+            let val = icon.trim();
+            if !val.is_empty() {
+                return Some(val.to_owned());
+            }
+        }
+    }
+    None
 }
 
 /// Resolve ícone por nome FreeDesktop ou caminho absoluto para um aplicativo instalado.
@@ -529,7 +566,7 @@ fn candidate_icon_names(key: &SystemIconKey, mime: &MimeTable) -> Vec<String> {
             }
             names.push("drive-harddisk".to_owned());
         }
-        SystemIconKey::GenericFile => {
+        SystemIconKey::GenericFile | SystemIconKey::FilePath(_) => {
             names.push("text-x-generic".to_owned());
             names.push("application-octet-stream".to_owned());
         }
